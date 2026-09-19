@@ -184,12 +184,60 @@ def _cases_perp():
     ]
 
 
+def _cases_pm():
+    """СХЕМЫ POLYMARKET, НА КОТОРЫХ СТОИТ ЭКРАН РЕПУТАЦИИ ДЕРЖАТЕЛЕЙ.
+
+    Экран «кто держит рынок и как угадывал раньше» опирается на два эндпоинта, которых живая
+    проба ещё не касалась: `top-holders` (кто держит) и `address-summary` (винрейт и PnL за всё
+    время). Оба написаны по образцу соседей, то есть по догадке - а на этом экране догадка
+    особенно дорога: он стоит шесть запросов, и если имя поля с винрейтом другое, человек
+    получит «истории нет» по ВСЕМ держателям и решит, что у Nansen нет данных.
+
+    `market_id` В ПРОБЕ НЕТ И БЫТЬ НЕ МОЖЕТ: он живёт ровно столько, сколько открыт рынок.
+    Поэтому проба СНАЧАЛА берёт свежий id из скринера (он подтверждён 19.09) и подставляет его
+    в остальные запросы. Прошитый id дал бы 404 через неделю, и мы бы искали ошибку в схеме,
+    которой нет, - тот же ложный след, что с 404 на несуществующих путях.
+    """
+    mid = None
+    try:
+        rows = N.pm_market_screener(per_page=1)
+        mid = N.pm_market_id(rows[0]) if rows else None
+    except Exception as e:
+        print('    (свежий market_id не взялся: %s - пробую без него)' % str(e)[:80])
+    if not mid:
+        # БЕЗ ID ПРОБА БЕССМЫСЛЕННА, И ЭТО ГОВОРИТСЯ ПРЯМО, а не подставляется «например 1»:
+        # ответ на выдуманный id ничего не скажет о схеме.
+        return [('prediction-market/market-screener',
+                 'сперва нужен свежий market_id - без него остальное не проверить',
+                 {"order_by": [{"direction": "DESC", "field": "volume_24hr"}], "query": "",
+                  "status": "active", "pagination": {"page": 1, "per_page": 3}})]
+    _pg = {"pagination": {"page": 1, "per_page": 5}}
+    return [
+        ('prediction-market/top-holders', 'как в коде (ищем поля адреса и размера позиции)',
+         dict(_pg, market_id=str(mid),
+              order_by=[{"field": "position_size", "direction": "DESC"}])),
+        ('prediction-market/top-holders', 'без order_by - вдруг он лишний',
+         dict(_pg, market_id=str(mid))),
+        ('prediction-market/holders-positions', 'как в коде', dict(_pg, market_id=str(mid))),
+        ('prediction-market/pnl-by-market', 'как в коде',
+         dict(_pg, market_id=str(mid),
+              order_by=[{"direction": "DESC", "field": "total_pnl_usd"}])),
+        # ВИНРЕЙТ - ГЛАВНОЕ ПОЛЕ ЭКРАНА РЕПУТАЦИИ. Адрес публичный: билдер блоков.
+        ('prediction-market/address-summary', 'ищем поле винрейта и лайфтайм-PnL',
+         {"address": WALLET, "pagination": {"page": 1, "per_page": 10}}),
+        ('prediction-market/ohlcv', 'свечи рынка (под кнопку графика)',
+         {"market_id": str(mid), "hours": 48}),
+        ('prediction-market/orderbook', 'стакан (под кнопку стакана)',
+         {"market_id": str(mid)}),
+    ]
+
+
 GROUPS = {'wbs': _cases_wbs, 'profiler': _cases_profiler, 'tinfo': _cases_tinfo,
-          'new': _cases_new, 'perp': _cases_perp}
+          'new': _cases_new, 'perp': _cases_perp, 'pm': _cases_pm}
 #: группы, где схема не снята и починку по словам площадки включаем сразу.
 #: `perp` ремонт НЕ включает нарочно: там проверяется САМО СУЩЕСТВОВАНИЕ пути, а 404 ремонту
 #: не подлежит - чинить тело эндпоинта, которого нет, значит перебирать догадки вслепую.
-FIX_DEFAULT = ('new',)
+FIX_DEFAULT = ('new', 'pm')
 
 
 def _one(path, title, body):

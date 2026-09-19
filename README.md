@@ -178,7 +178,35 @@ schema treats the cause. The learned *shape difference* (which fields to drop, w
 remembered in `nansen_schema.json` — **not** the body, which carries arguments: remembering
 `{"token": "BTC"}` would answer a question about ETH with BTC.
 
-### 3.5 Presence is not usefulness
+### 3.5 The same law applied to a probability
+
+A prediction market shows one number — «78% Yes» — and that number looks identical in two
+opposite situations: the money came from wallets that were right in 70% of their markets, or
+from wallets with a 35% win rate. The first is a signal; the second is an invitation to take the
+other side. **The price cannot tell them apart.**
+
+```
+💰 Of $2.00M examined, $1.40M (70%) sits with wallets whose win rate is below 40%.
+📊 By side: Yes $1.60M · No $550.0K
+⚠️ 2 holder(s) have no history — their money is counted on NEITHER side.
+```
+
+Three things this screen refuses to do:
+
+- **money without a lifetime history is counted on neither side.** Assigning a win rate we do
+  not know would be fitting the answer — and that is exactly how convincing screens with no
+  measurement behind them get made;
+- **the number of such holders is stated out loud.** "5 of 10 examined" and "10 of 10" are
+  different claims;
+- **the threshold is printed inside the sentence.** You are allowed to disagree with 40%, but
+  only if you can see it.
+
+It costs 6 requests against 1 for the neighbouring screens, and that is said both in the tap
+acknowledgement and in the screen itself — priced in **requests, not credits**, because these
+endpoints have no published credit price and inventing one would be lying in the most verifiable
+part of the output.
+
+### 3.6 Presence is not usefulness
 
 A recurring bug class, caught three times in this project: code reads a boolean "is available"
 flag and shows it as if it were a result.
@@ -195,14 +223,14 @@ explicit line naming the fields the provider actually sent. `price_usd` is speci
 the price of one token shown as a trade size is not emptiness, it is a **wrong number** — and a
 plausible wrong number is worse than a visible gap.
 
-### 3.6 Attribution, with freshness
+### 3.7 Attribution, with freshness
 
 Every answer names Nansen as the source, and a cached answer says it is older. A number without
 a timestamp is useless on trading data. In the bot this also reversed a prior rule that told the
 model to hide which vendor the data came from — a rule that is exactly backwards when the data is
 worth naming.
 
-### 3.7 A contribution ledger
+### 3.8 A contribution ledger
 
 The bot is multi-user, so the layer records who asked what and at what cost — used to decide how
 a shared prize is split. Two design points worth stealing:

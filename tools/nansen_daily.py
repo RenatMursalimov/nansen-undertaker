@@ -20,6 +20,7 @@
     ./venv/bin/python3 tools/nansen_daily.py --range 2026-09-15 2026-09-27
     ./venv/bin/python3 tools/nansen_daily.py --range 2026-09-15 2026-09-27 --csv
     ./venv/bin/python3 tools/nansen_daily.py --contrib                # вклад людей, агрегаты
+    ./venv/bin/python3 tools/nansen_daily.py --submission 2026-09-15 2026-09-27  # блок в заявку
 """
 
 import csv
@@ -44,10 +45,78 @@ def _days(a, b):
     return out
 
 
+def _submission(days):
+    """ГОТОВЫЙ БЛОК ЧИСЕЛ ДЛЯ ЗАЯВКИ, собранный из ТОГО ЖЕ лога, что и суточные сводки.
+
+    ЗАЧЕМ ОТДЕЛЬНЫЙ РЕЖИМ, ЕСЛИ ЕСТЬ `--range`. `--range` печатает ленту суток для ЧЕЛОВЕКА,
+    который разбирается; в заявку нужен короткий блок, который можно вставить и который
+    ПРОВЕРЯЕМ: каждое число здесь пересчитывается из файлов телеметрии одной командой. Это и
+    есть главное отличие от «мы активно пользовались API» - утверждение против таблицы.
+
+    ЧИСЛА, КОТОРЫХ МЫ НЕ ИЗМЕРИЛИ, НЕ ПОДСТАВЛЯЮТСЯ. Цена части эндпоинтов в официальном
+    списке не названа, и такие вызовы идут ОТДЕЛЬНОЙ строкой «с неизвестной ценой», а не
+    подмешиваются в сумму кредитов. Красивая сумма, собранная из догадок, - ровно то, чего
+    этот прибор не должен делать (закон №22).
+
+    НИ ОДНОГО ИДЕНТИФИКАТОРА ЧЕЛОВЕКА: только счётчики и места. Блок уезжает наружу.
+    """
+    got = [s for s in (T.summary(d) for d in days) if s]
+    if not got:
+        print('ВЕРДИКТА НЕТ: ни одного файла телеметрии за %s..%s (каталог %s). '
+              'Это НЕ «ноль запросов» - это несобравшийся прибор.'
+              % (days[0], days[-1], T.TELE_DIR), file=sys.stderr)
+        return 2
+    _calls = sum(s['calls'] for s in got)
+    _net = sum(s['net'] for s in got)
+    _cr = sum(s['credits'] for s in got)
+    _fail = sum(s['fail'] for s in got)
+    _empty = sum(s['empty'] for s in got)
+    _nos = sum(s['noscene'] for s in got)
+    # КЛЮЧ `unpriced`, А НЕ ПРИДУМАННЫЙ: сводка называет его так, и `.get` с чужим именем
+    # молча отдавал бы ноль - то есть строка «вызовов с неизвестной ценой» ВСЕГДА была бы
+    # нулевой, и мы бы решили, что цена известна вся. Тихая ложь в самом проверяемом месте.
+    _unk = sum(s.get('unpriced', 0) for s in got)
+    _honest = sum(s.get('honest_refusals', 0) for s in got)
+    _rem = [s.get('rem_last') for s in got if s.get('rem_last') is not None]
+    tot = T.contrib_totals(len(days))
+    print('=== БЛОК В ЗАЯВКУ (пересчитывается этой же командой) ===')
+    print('Окно: %s..%s (суток с данными %d из %d)' % (days[0], days[-1], len(got), len(days)))
+    print('')
+    print('Запросов к Nansen:        %d' % _calls)
+    print('  из них по сети:         %d' % _net)
+    print('  из них из кэша:         %d' % (_calls - _net))
+    print('Кредитов (измерено):      %d' % _cr)
+    if _unk:
+        # ОТДЕЛЬНОЙ СТРОКОЙ, А НЕ В СУММЕ: «184 вызова с неизвестной ценой» полезнее
+        # красивого итога, собранного из догадок.
+        print('  вызовов с НЕизвестной ценой (в сумму не вошли): %d' % _unk)
+    print('Сбоев всего:              %d' % _fail)
+    print('  из них с НАЗВАННОЙ причиной: %d' % _honest)
+    print('Пустых ответов (200, данных нет): %d' % _empty)
+    print('Вызовов без сцены:        %d' % _nos)
+    if _rem:
+        print('Остаток кредитов на конце окна: %s' % _rem[-1])
+    print('')
+    print('Людей в зачёте:           %d' % tot['people'])
+    print('Вызовов в зачёт:          %d' % tot['calls'])
+    print('Не в зачёт (антинакрутка, повтор чаще %d мин): %d' % (T.REPEAT_MIN, tot['skipped']))
+    if tot['by_scene']:
+        print('')
+        print('По сценариям (сцена = вопрос человека, а не имя эндпоинта):')
+        for sc, (n, cr) in sorted(tot['by_scene'].items(), key=lambda kv: -kv[1][0]):
+            print('  %-24s вызовов %-6d кредитов %d' % (sc, n, int(cr)))
+    print('')
+    print('Проверить: ./venv/bin/python3 tools/nansen_daily.py --range %s %s --csv'
+          % (days[0], days[-1]))
+    print('В выгрузке нет ни одного идентификатора человека - только числа и места.')
+    return 0
+
+
 def main(argv):
     args = [a for a in argv[1:]]
     as_csv = '--csv' in args
     contrib = '--contrib' in args
+    submission = '--submission' in args
     args = [a for a in args if not a.startswith('--') or a == '--range']
 
     if '--range' in args:
@@ -66,6 +135,9 @@ def main(argv):
         days = [args[0]]
     else:
         days = [T._day(__import__('time').time() - 86400)]      # по умолчанию за вчера
+
+    if submission:
+        return _submission(days)
 
     if as_csv:
         rows = T.csv_rows(days)

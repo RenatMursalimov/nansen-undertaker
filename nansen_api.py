@@ -2561,6 +2561,211 @@ def pm_markets_block(query="", top=10, lang='ru', rows=None):
     return with_source("\n".join(L), lang)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# РЫНОК, ВЗВЕШЕННЫЙ ПО РЕПУТАЦИИ ДЕРЖАТЕЛЕЙ
+#
+# ВОПРОС, НА КОТОРЫЙ ЦЕНА НЕ ОТВЕЧАЕТ. «78% Yes» - это консенсус, но КОГО? Предсказательный
+# рынок показывает одно число, и оно одинаково выглядит в двух противоположных случаях:
+#   * $2.1M на Yes поставили кошельки, которые угадывали в 70% рынков;
+#   * те же $2.1M поставили кошельки с винрейтом 35%, то есть толпа, которая систематически
+#     ошибается.
+# Первое - сигнал, второе - приглашение встать против. Цена их не различает вовсе.
+#
+# ЭТО ТОТ ЖЕ ЗАКОН «ВЕЛИЧИНА ВМЕСТО ФЛАГА», ПРИМЕНЁННЫЙ К ВЕРОЯТНОСТИ. «Рынок верит в Yes» -
+# флаг. «$1.4M из $2.1M на Yes лежат у кошельков с винрейтом ниже 40%» - величина.
+#
+# ЧЕГО ЗДЕСЬ НЕТ: совета и предсказания. Винрейт в прошлом не обещает будущего, и подпись
+# говорит это словами - иначе экран читается как «ставь против толпы», а мы такого не мерили.
+#
+# ЦЕНА ЭКРАНА НАЗЫВАЕТСЯ ЧЕСТНО И ЧИСЛОМ ЗАПРОСОВ, А НЕ КРЕДИТОВ: цена этих эндпоинтов в
+# официальном списке не названа (они в `_EP_UNKNOWN`), и придумать её значило бы соврать в
+# самой проверяемой части. Запросов ровно `1 + top`.
+# ═══════════════════════════════════════════════════════════════════════════════
+#: сколько держателей разбираем по репутации. Пять - не «чтобы дешевле»: на крупных рынках
+#: первые пять адресов держат основную часть денег, а шестой-десятый уже не меняют вывод,
+#: зато удваивают цену экрана.
+PM_REP_TOP = 5
+#: винрейт, ниже которого деньги считаются «деньгами тех, кто чаще ошибался». 40% - не
+#: истина, а ПОРОГ ДЛЯ АРИФМЕТИКИ, и он назван в тексте, чтобы человек мог не согласиться.
+PM_WEAK_WR = 40.0
+
+
+def pm_holder_side(row):
+    """Сторону держателя - словом. -> str ('Yes'/'No'/имя исхода/'?').
+
+    Отдельной функцией, потому что имя поля у этого эндпоинта живым ключом не снято, а сторона
+    здесь - половина смысла: «$800K у кошелька с винрейтом 30%» без стороны не говорит НИЧЕГО.
+    """
+    v = _first(row, ('outcome', 'outcome_name', 'side', 'position_side', 'token_outcome'))
+    if v in (None, ''):
+        i = _first(row, ('outcome_index', 'outcomeIndex'))
+        if i in (None, ''):
+            return '?'
+        try:
+            return 'Yes' if int(i) == 0 else 'No'
+        except (TypeError, ValueError):
+            return '?'
+    return str(v)[:12]
+
+
+def pm_reputation(market_id, top=PM_REP_TOP):
+    """Кто держит рынок и КАК ОНИ УГАДЫВАЛИ РАНЬШЕ. -> dict | None.
+
+    Запросов: 1 (держатели) + top (лайфтайм-сводка каждого). Схемы обоих эндпоинтов живым
+    ключом НЕ сняты, поэтому оба идут через ремонт по словам площадки, а имена полей читаются
+    с запасом кандидатов и по соглашению (`*_usd`).
+
+    -> {'holders': [...], 'by_side': {...}, 'weak_usd', 'strong_usd', 'known', 'unknown',
+        'total_usd', 'calls'} либо None, если держателей не отдали вовсе.
+
+    ЧТО СЧИТАЕТСЯ И ПОЧЕМУ ИМЕННО ТАК:
+      * `weak_usd` - деньги держателей с винрейтом НИЖЕ порога. Это и есть главное число;
+      * `unknown` - сколько держателей БЕЗ лайфтайм-истории. Их деньги не попадают ни в
+        `weak`, ни в `strong`: приписать кошельку винрейт, которого мы не знаем, значит
+        подогнать вывод. Число названо отдельно, и вызывающий обязан его показать.
+    """
+    rows = _rows(_post_fix("prediction-market/top-holders",
+                           {"market_id": str(market_id),
+                            "pagination": {"page": 1, "per_page": max(int(top) * 2, 10)},
+                            "order_by": [{"field": "position_size", "direction": "DESC"}]},
+                           ckey=f"pmth:{market_id}:{max(int(top) * 2, 10)}"))
+    if not rows:
+        return None
+    holders, calls = [], 1
+    by_side, total = {}, 0.0
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        _shape('pm-top-holders', r)
+        addr = _first(r, ('address', 'wallet_address', 'holder_address', 'user_address'))
+        val, _vf = _usd_any(r, ('position_value_usd', 'value_usd', 'position_size_usd',
+                                'size_usd'))
+        if val in (None, ''):
+            # РАЗМЕР МОЖЕТ ПРИЕХАТЬ В ДОЛЯХ, А НЕ В ДОЛЛАРАХ. Тогда это НЕ деньги, и
+            # складывать их с деньгами нельзя - берём как есть и помечаем.
+            val = _first(r, ('position_size', 'size', 'shares'))
+        try:
+            val = float(val) if val not in (None, '') else None
+        except (TypeError, ValueError):
+            val = None
+        side = pm_holder_side(r)
+        holders.append({'addr': str(addr or ''), 'who': _who(r), 'side': side, 'usd': val,
+                        'wr': None, 'pnl': None, 'markets': None})
+        if val:
+            total += val
+            by_side[side] = by_side.get(side, 0.0) + val
+    if not holders:
+        return None
+    weak = strong = 0.0
+    known = unknown = 0
+    for h in holders[:int(top)]:
+        if not h['addr']:
+            unknown += 1
+            continue
+        s = pm_address_summary(h['addr'])
+        calls += 1
+        if not isinstance(s, dict) or not s:
+            unknown += 1
+            continue
+        _shape('pm-address-summary', s)
+        wr = _winrate_pct(_first(s, ('win_rate', 'winrate', 'win_rate_pct')))
+        h['wr'] = wr
+        h['pnl'] = _first(s, ('total_pnl_usd', 'total_pnl', 'realized_pnl_usd'))
+        h['markets'] = _first(s, ('markets_traded', 'markets_count', 'total_markets'))
+        if wr is None:
+            unknown += 1
+            continue
+        known += 1
+        if h['usd']:
+            if wr < PM_WEAK_WR:
+                weak += h['usd']
+            else:
+                strong += h['usd']
+    # ХВОСТ ДЕРЖАТЕЛЕЙ, КОТОРЫХ МЫ НЕ РАЗБИРАЛИ, тоже считается неизвестным: иначе «известно
+    # про 5 из 10» выглядело бы как «известно про всех».
+    unknown += max(0, len(holders) - int(top))
+    return {'holders': holders, 'by_side': by_side, 'weak_usd': weak, 'strong_usd': strong,
+            'known': known, 'unknown': unknown, 'total_usd': total, 'calls': calls,
+            'market_id': str(market_id)}
+
+
+def pm_reputation_block(rep, market_id='', lang='ru', top=PM_REP_TOP):
+    """Рынок, взвешенный по репутации держателей. -> str | None.
+
+    ГЛАВНАЯ СТРОКА - ВЕЛИЧИНА, и она первая. Дальше стороны, дальше сами держатели, и в конце
+    оговорки: про кого мы НЕ знаем и что винрейт в прошлом не обещает будущего.
+    """
+    if not isinstance(rep, dict) or not rep.get('holders'):
+        return None
+    en = (lang == 'en')
+    L = [('🎭 <b>Кто держит этот рынок</b>' if not en else '🎭 <b>Who holds this market</b>')]
+    if market_id:
+        L.append('<code>%s</code>' % market_id)
+    L.append('')
+    _w, _s, _tot = rep['weak_usd'], rep['strong_usd'], rep['total_usd']
+    if _w or _s:
+        _sum = _w + _s
+        _pct = (100.0 * _w / _sum) if _sum else 0.0
+        # ВЕДЁМ ЧИСЛОМ: сколько денег у тех, кто чаще ошибался. Порог назван прямо в строке -
+        # человек имеет право с ним не согласиться, а для этого должен его видеть.
+        L.append((('💰 Из $%s разобранных денег <b>$%s (%.0f%%)</b> лежат у кошельков с '
+                   'винрейтом ниже %.0f%%.')
+                  if not en else
+                  ('💰 Of $%s examined, <b>$%s (%.0f%%)</b> sits with wallets whose win rate '
+                   'is below %.0f%%.'))
+                 % (_usd(_sum), _usd(_w), _pct, PM_WEAK_WR))
+    elif _tot:
+        L.append(('💰 Всего у держателей $%s, но лайфтайм-историю не отдали ни по одному - '
+                  'взвесить по репутации нечем.' if not en else
+                  '💰 Holders hold $%s in total, but no lifetime history came back - nothing '
+                  'to weigh by.') % _usd(_tot))
+    if rep['by_side']:
+        _sides = sorted(rep['by_side'].items(), key=lambda x: -x[1])
+        L.append(('📊 По сторонам: ' if not en else '📊 By side: ')
+                 + ' · '.join('%s $%s' % (k, _usd(v)) for k, v in _sides[:4]))
+    L.append('')
+    L.append(('<b>Держатели</b> (разобрано %d из %d):' if not en
+              else '<b>Holders</b> (%d of %d examined):')
+             % (min(int(top), len(rep['holders'])), len(rep['holders'])))
+    for i, h in enumerate(rep['holders'][:int(top)], 1):
+        seg = []
+        if h['usd']:
+            seg.append('$%s' % _usd(h['usd']))
+        if h['wr'] is not None:
+            seg.append(('винрейт %.0f%%' if not en else 'win rate %.0f%%') % h['wr'])
+        else:
+            # ПРОЧЕРК ИМЕНЕМ, А НЕ ПУСТОТОЙ: «истории нет» и «винрейт нулевой» - разные вещи,
+            # и вторая читалась бы как приговор кошельку.
+            seg.append('истории нет' if not en else 'no history')
+        if h['pnl'] not in (None, ''):
+            try:
+                seg.append(('PnL +$' if float(h['pnl']) >= 0 else 'PnL -$')
+                           + _usd(abs(float(h['pnl']))))
+            except (TypeError, ValueError):
+                pass
+        if h['markets'] not in (None, ''):
+            try:
+                seg.append(('%d рынков' if not en else '%d markets') % int(float(h['markets'])))
+            except (TypeError, ValueError):
+                pass
+        L.append('%d. %s [%s] · %s' % (i, h['who'], h['side'], ' · '.join(seg)))
+    if rep['unknown']:
+        L.append('')
+        L.append((('⚠️ <i>По %d держател(ям) истории нет - их деньги НЕ посчитаны ни в одну '
+                   'сторону. Приписать кошельку винрейт, которого мы не знаем, значит подогнать '
+                   'вывод.</i>') if not en else
+                  ('⚠️ <i>%d holder(s) have no history - their money is counted on NEITHER '
+                   'side. Assigning a win rate we do not know would be fitting the answer.</i>'))
+                 % rep['unknown'])
+    L.append('')
+    L.append(('<i>Винрейт в прошлом не обещает будущего: это состав денег, а не прогноз и не '
+              'совет. Запросов на экран: %d.</i>' if not en else
+              '<i>Past win rate does not promise the future: this is the composition of the '
+              'money, not a forecast or advice. Requests spent on this screen: %d.</i>')
+             % rep.get('calls', 0))
+    return with_source('\n'.join(L), lang)
+
+
 def pm_wallet_block(address):
     """Профиль трейдера Polymarket: PnL/winrate/возраст + топ-рынки по PnL. -> str | None."""
     s = pm_address_summary(address)

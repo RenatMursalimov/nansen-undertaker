@@ -278,6 +278,18 @@ def c_pm(argv):
     return 0
 
 
+def c_pm_rep(argv):
+    """Кто держит рынок и как угадывал раньше. ДОРОЖЕ соседних команд: 6 запросов."""
+    if not argv:
+        return _need('pm-rep <market_id>', 'pm-rep 654412  (id берётся из команды pm)')
+    with T.scene('polymarket'):
+        rep = N.pm_reputation(argv[0])
+        _why = None if rep else N.fail_reason('empty')
+    _say(N.pm_reputation_block(rep, argv[0], LANG) if rep else None,
+         _w('держателей этого рынка', 'holders of this market'), _why)
+    return 0
+
+
 def c_pm_book(argv):
     if not argv:
         return _need('pm-book <market_id>', 'pm-book 654412  (id берётся из команды pm)')
@@ -417,6 +429,8 @@ CMDS = [
     ('pm', c_pm, 'трендовые рынки Polymarket (с market_id)',
      'trending Polymarket markets (with market_id)'),
     ('pm-book', c_pm_book, 'стакан рынка Polymarket', 'Polymarket market orderbook'),
+    ('pm-rep', c_pm_rep, 'кто держит рынок и как угадывал раньше (6 запросов)',
+     'who holds the market and how they guessed before (6 requests)'),
     ('pm-wallet', c_pm_wallet, 'профиль трейдера Polymarket', 'Polymarket trader profile'),
     ('pm-leaders', c_pm_leaders, 'топ-трейдеры конкретного рынка',
      'top traders of a specific market'),
