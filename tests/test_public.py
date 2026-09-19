@@ -251,7 +251,11 @@ def t_422_is_repaired_by_the_providers_own_words():
         check('FIX: после ремонта данные приехали', len(got) == 1, got)
         check('FIX: лишнее поле убрано по слову площадки', 'order_by' not in seen[-1], seen[-1])
         check('FIX: обязательное подставлено', 'date' in seen[-1], seen[-1])
-        check('FIX: наш аргумент не потерян', seen[-1].get('token') == 'BTC', seen[-1])
+        # ПОЛЕ НАЗЫВАЕТСЯ token_symbol - снято живой пробой 19.09 (мы посылали `token` по
+        # образцу соседних эндпоинтов и получали 422 на каждом тапе). Ремонт обязан сохранять
+        # НАШ аргумент, что бы он ни правил в остальном теле.
+        check('FIX: наш аргумент не потерян',
+              seen[-1].get('token_symbol') == 'BTC', seen[-1])
         blk = N.perp_positions_block(got, 'BTC', 'ru')
         check('FIX: человек видит цену ликвидации', blk and 'ликв' in blk, blk)
         # ПОТОЛОК КРУГОВ: вечное 422 не молотит кредиты бесконечно

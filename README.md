@@ -11,8 +11,9 @@ Most tools collapse those two into one blank panel. This layer refuses to. Every
 **which of seven states** it is in, **what it cost in credits**, and **how fresh the data is** —
 and it is built so that a silent failure becomes a loud one.
 
-**50 Nansen endpoints** · **19 ready-made screens** · **20 named scenes with per-scene credit
-accounting** · **runs without an API key** (honestly telling you so)
+**47 Nansen endpoints** · **18 ready-made screens** · **19 named scenes with per-scene credit
+accounting** · **eight named failure states** · **runs without an API key** (honestly telling
+you so)
 
 ```bash
 git clone https://github.com/RenatMursalimov/nansen-undertaker && cd nansen-undertaker
@@ -105,11 +106,24 @@ On wallet labels that is actively dangerous: **"no labels" reads as "clean addre
 | `ratelimit` | we were throttled, retry shortly |
 | `timeout` | we asked and got no answer in time |
 | `badreq` | **our** request was rejected (422) — provider is fine, we are not |
+| `unsupported` | the endpoint does not cover this asset, and said so itself |
 | `http` | the provider errored |
 | `empty` | we asked correctly and there is genuinely nothing |
 
 `badreq` is deliberately worded as our fault. A 422 is addressed *to us*, and calling it
 "Nansen returned an error" points the reader away from the only place it can be fixed.
+
+`unsupported` is the eighth state, and it was **discovered, not designed** — a live probe on
+19.09 got a 422 that said something substantive instead of "bad schema":
+
+> Token 0x… on base is a stablecoin. The TGM flows endpoint does not support stablecoins.
+
+The provider answers with the *same* 422 for a malformed body and for a coverage boundary; only
+the text tells them apart. Folding this into `badreq` would send the reader hunting for a bug in
+a request body that is perfectly fine; folding it into `empty` would read as a property of the
+token. It is neither: the request is correct, the provider is healthy, and this asset is simply
+outside the endpoint. The class is also carried into the daily rollup, because `bad_request` and
+`unsupported` lead to **opposite** decisions: one we fix, the other we cannot.
 
 ### 3.2 A closed registry of scenes, and credits counted per scene
 
@@ -150,8 +164,15 @@ suggested value, supply the missing one — **but only from the small set we can
 (a date window, a page). What we cannot build we do not invent; the loop ends and the user is
 told why.
 
+It works: on 19.09 it repaired `tgm/flows` on its own in two steps (added the required `date`,
+dropped the `timeframe` field the endpoint does not know), and on `tgm/perp-positions` it stopped
+honestly — "needs required field `token_symbol`, and we have nothing to build it from" — which is
+exactly how we learned the field's real name. We had been sending `token`, by analogy with
+neighbouring endpoints, and getting a 422 on every single tap.
+
 Guard rails, so this never becomes a guessing machine: a hard cap on rounds; only endpoints with
 unverified schemas use it; non-422 is never "repaired" (our request is not the problem there);
+a coverage boundary (`unsupported`) is never "repaired" either — there is nothing to fix;
 and the working body is printed to the log, because repair treats the symptom while a pinned
 schema treats the cause. The learned *shape difference* (which fields to drop, which to add) is
 remembered in `nansen_schema.json` — **not** the body, which carries arguments: remembering
@@ -197,7 +218,7 @@ a shared prize is split. Two design points worth stealing:
 
 | file | what it is |
 |---|---|
-| `nansen_api.py` | the client: 50 endpoints, 19 screen formatters, failure classification, attribution, cache, schema repair |
+| `nansen_api.py` | the client: 47 endpoints, 18 screen formatters, failure classification, attribution, cache, schema repair |
 | `nansen_log.py` | telemetry (one row per call), credit accounting per scene, the contribution ledger, daily rollup |
 | `nansen_limits.py` | per-user daily question caps and a shared credit ceiling |
 | `oc_nansen_viz.py` | two charts: holder-segment flows, market probability over time |
@@ -213,15 +234,17 @@ a shared prize is split. Two design points worth stealing:
 
 ### API coverage
 
-46 structured endpoints plus 4 trading calls:
+43 structured endpoints plus 4 trading calls. Three more were removed on 19.09 after a live
+probe answered **404** on them — a client that always 404s is a door into a wall, and keeping it
+«just in case» means promising a screen that will never open:
 
 | group | endpoints |
 |---|---|
-| `tgm/*` (Token God Mode) | 18 |
+| `tgm/*` (Token God Mode) | 17 |
 | `prediction-market/*` (Polymarket) | 12 |
-| `profiler/*` | 9 |
+| `profiler/*` | 8 |
 | `smart-money/*` | 4 |
-| `perp-leaderboard`, `portfolio/*`, `token-screener*` | 3 |
+| `perp-leaderboard`, `token-screener*` | 2 |
 | `trade/*` (quote, prepare, execute, bridge status) | 4 |
 
 The agent endpoints (`agent/fast`, `agent/expert`) are wired in the bot but are the expensive

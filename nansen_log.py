@@ -78,9 +78,11 @@ SCENES = (
     # Ren прочитал это на живой «нансен стата» 15.09 («? 5 кр» рядом с named-сценами).
     # Класс бага ровно тот, от которого закрытый реестр и защищает, - поэтому ниже
     # инвариант: тест сверяет ВСЕ scene(...) в репозитории с этим списком (test_nansen_contest).
-    'perp_positions',          # «перп позиции BTC» / кнопка ⚡ на биржевой карточке
+    'perp_positions',          # «перп позиции BTC» / кнопка 💥 Ликвид. на карточке токена
     'smart_trades',            # «смарт сделки» (отдельные сделки, не агрегат netflow)
-    'wallet_perps',            # «нансен перпы 0x…» (здоровье счёта, запас до ликвидации)
+    # ИМЯ 'wallet_perps' УБРАНО 19.09: его эндпоинт (profiler/address/perp-positions) отвечает
+    # 404, экран удалён, звать сцену больше некому. Мёртвое имя в реестре обещает в суточной
+    # сводке разрез, которого нет, - и тест-инвариант это ловит в обе стороны.
     'digest_cron',             # утренний дайджест
     'tweet_cron',              # твит-джобы
     'admin_backfill',          # бэкфилл истории потоков (владелец)
@@ -187,8 +189,17 @@ _FLIGHT = {'n': 0, 'rem': None}  # сколько вызовов в полёте
 #: `badreq` (400/422 - площадка отвергла НАШ запрос) стоит выше общего `http`, потому что он
 #: КОНКРЕТНЕЕ: у него есть адресат правки, и в смешанном блоке сказать надо именно его.
 #: Ниже внешних ограничений (частота, кредиты) - те блокируют всё и узнать о них надо первым.
-_SEV = {'ok': 0, 'empty': 1, 'http': 2, 'badreq': 3, 'timeout': 4, 'ratelimit': 5,
-        'nocredits': 6, 'nokey': 7}
+# ТЯЖЕСТЬ ИСХОДОВ. `outcome()` отдаёт САМЫЙ ТЯЖЁЛЫЙ из коробки, поэтому порядок здесь - это
+# решение о том, о чём человеку скажут, когда в одном блоке случилось два разных отказа.
+#
+# 'unsupported' СТОИТ ВЫШЕ 'empty' И НИЖЕ ВСЕГО ОСТАЛЬНОГО, и это не на глаз:
+#   * выше 'empty', потому что «эндпоинт не покрывает стейблкоины» - конкретный ответ, а
+#     «данных нет» рядом с ним звучит как свойство токена, то есть врёт;
+#   * ниже 'http'/'badreq'/таймаута, потому что те означают «мы не знаем вообще ничего», а
+#     здесь мы знаем много: запрос верный, площадка жива, покрытия по этому активу нет.
+# Класс появился из живой пробы 19.09 - до неё мы такой ответ читали как свой баг.
+_SEV = {'ok': 0, 'empty': 1, 'unsupported': 2, 'http': 3, 'badreq': 4, 'timeout': 5,
+        'ratelimit': 6, 'nocredits': 7, 'nokey': 8}
 
 
 def _new_box(scene_name=None, uid=None):
@@ -414,7 +425,7 @@ def flight_end(rem=None):
 
 
 def record(ep, ms=0, http=0, ok=False, empty=False, cache=False, rem=None, used=None,
-           rem_before=None, parallel=1, sig=None):
+           rem_before=None, parallel=1, sig=None, cls=None):
     """Одна строка на один вызов. -> dict записанных полей (для тестов и сводки).
 
     `ok` и `empty` — РАЗНЫЕ вопросы, и склеивать их нельзя: `ok=0,empty=0` (сбой) и
@@ -448,7 +459,8 @@ def record(ep, ms=0, http=0, ok=False, empty=False, cache=False, rem=None, used=
         est, credits = 2, 0
     row = {'ts': ts, 'scene': b.get('scene') or '?', 'ep': ep, 'ms': int(ms or 0),
            'http': int(http or 0), 'ok': 1 if ok else 0, 'empty': 1 if empty else 0,
-           'cache': 1 if cache else 0, 'out': _outcome_slug(cache, http, ok, empty),
+           'cache': 1 if cache else 0,
+           'out': _outcome_slug(cache, http, ok, empty, cls),
            'rem': rem, 'used': used, 'd': d,
            'est': est, 'cr': credits, 'u': u, 'rep': rep}
     _write(day, row)
@@ -461,10 +473,20 @@ def record(ep, ms=0, http=0, ok=False, empty=False, cache=False, rem=None, used=
 #: `ok/empty/cache/http`, и это сделано нарочно: читателю лога и сводке нужен ОДИН словарь
 #: классов, иначе каждый читающий соберёт свой - и они разойдутся на первом же 402.
 OUTCOMES = ('ok', 'empty', 'cache', 'http_error', 'bad_request', 'rate_limited',
-            'no_credits', 'timeout', 'nokey', 'quota_user')
+            'no_credits', 'timeout', 'nokey', 'quota_user', 'unsupported')
 
 
-def _outcome_slug(cache, http, ok, empty):
+def _outcome_slug(cache, http, ok, empty, cls=None):
+    """Класс исхода одним словом для строки телеметрии. -> str.
+
+    `cls` - УЖЕ ВЫЧИСЛЕННЫЙ класс из горловины, и он нужен ровно для одного случая: 'unsupported'
+    («эндпоинт не покрывает этот актив») отличается от 'bad_request' ТОЛЬКО ТЕКСТОМ ответа, а
+    сюда текст не доезжает - здесь есть лишь код. Без этого аргумента граница покрытия легла бы
+    в сводку как «наш кривой запрос», и месячная строка «41 bad_request» смешала бы то, что
+    чиним мы, с тем, чего у площадки нет вовсе. Решения по этим числам противоположные.
+    """
+    if cls == 'unsupported':
+        return 'unsupported'
     if cache:
         return 'cache'
     if ok:

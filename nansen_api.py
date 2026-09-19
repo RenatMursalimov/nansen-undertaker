@@ -483,6 +483,23 @@ _REFUSAL = {
         'en': ('🔍 Nansen answered, but has no {what}. This does NOT mean "clean": a missing '
                'label is a missing label, not safety. Fresh addresses and listings get '
                'covered later.')},
+    # ═══ ВОСЬМОЙ КЛАСС, И ОН ПОЯВИЛСЯ ИЗ ЖИВОЙ ПРОБЫ 19.09 ═══
+    # Площадка ответила 422, но сказала не «схема не та», а СОДЕРЖАТЕЛЬНОЕ: «токен на base -
+    # стейблкоин, эндпоинт потоков стейблкоины не поддерживает». Это ни одно из семи прежних
+    # состояний: запрос верный (значит не badreq), данные существуют (значит не empty), и
+    # площадка работает (значит не http). Это ГРАНИЦА ПОКРЫТИЯ, названная самой площадкой.
+    #
+    # Сваливать её в badreq было бы вдвойне неверно: человек читал бы «наш баг, смотри лог»
+    # там, где чинить нечего, а мы бы неделю искали ошибку в теле запроса, которой нет.
+    # А сваливать в empty - тот самый запрет: «потоков нет» прочиталось бы как свойство
+    # токена, хотя на деле эндпоинт просто не про эти токены.
+    'unsupported': {
+        'ru': ('🚧 У Nansen нет {what} для этого актива: эндпоинт его не покрывает (так и '
+               'ответил). Это не пустота и не наша ошибка - это граница покрытия. Причина '
+               'из ответа площадки в логе бота.'),
+        'en': ('🚧 Nansen does not cover {what} for this asset: the endpoint said so itself. '
+               'This is neither emptiness nor our bug - it is a coverage boundary. The '
+               "provider's own reason is in the bot log.")},
 }
 
 #: во что подставляется {what} по умолчанию (родительный падеж)
@@ -492,7 +509,8 @@ _WHAT = {'ru': 'данных', 'en': 'the data'}
 def refusal(reason, lang='ru', what=None):
     """Отказ ЧЕЛОВЕКУ, называющий причину. -> str.
 
-    reason: 'nokey' | 'nocredits' | 'ratelimit' | 'timeout' | 'http' | 'empty' | None.
+    reason: 'nokey' | 'nocredits' | 'ratelimit' | 'timeout' | 'badreq' | 'http' | 'empty' |
+    'unsupported' | None.
     None означает «вызовов не было вовсе» - и это тоже наш отказ, а не пустота у Nansen."""
     lang = 'en' if lang == 'en' else 'ru'
     if reason is None:
@@ -842,6 +860,10 @@ def _post_fix(path, body, ckey=None, timeout=60):
         if _classify(http) != 'badreq' or rnd >= _FIX_ROUNDS:
             return None
         nb, why = _apply_hint(b, _LAST_ERR.get('text') or '')
+        # ГРАНИЦА ПОКРЫТИЯ РЕМОНТУ НЕ ПОДЛЕЖИТ. Проверка выше пропускает сюда только
+        # 'badreq', так что этот случай уже отсечён классификатором - но проверка стоит
+        # рядом с ремонтом нарочно: правило «чинить можно только схему» должно быть видно
+        # там, где чинят, а не только там, где классифицируют.
         if nb is None:
             print('[nansen] %s: ремонт остановлен - %s' % (path, why))
             return None
@@ -850,12 +872,28 @@ def _post_fix(path, body, ckey=None, timeout=60):
     return None
 
 
-def _classify(status):
-    """HTTP-код -> класс отказа. Состояния разводятся ИМЕННО ЗДЕСЬ, один раз."""
+#: ФРАЗЫ, КОТОРЫМИ ПЛОЩАДКА ГОВОРИТ «ЭТОГО Я НЕ УМЕЮ» вместо «ты прислал не то».
+#: Снято с живого ответа 19.09: `{"code":"invalid_field_value","message":"Token 0x… on base is
+#: a stablecoin. The TGM flows endpoint does not support stablecoins."}`.
+#: Ведём по ФРАЗЕ, а не по коду `invalid_field_value`: тем же кодом площадка отвечает и на
+#: настоящую ошибку значения (её чинит ремонт тела), а различает их именно текст.
+_UNSUPPORTED_MARKS = ('does not support', 'not supported', 'unsupported')
+
+
+def _classify(status, text=''):
+    """HTTP-код (+ текст ответа) -> класс отказа. Состояния разводятся ИМЕННО ЗДЕСЬ, один раз.
+
+    `text` понадобился, когда выяснилось, что ОДНИМ кодом 422 площадка отвечает на две
+    совершенно разные вещи: «схема тела не та» (наш баг, чинится ремонтом) и «этот актив
+    эндпоинт не покрывает» (граница покрытия, чинить нечего). Без текста они неразличимы, и
+    человек читал бы «наш баг, смотри лог» там, где в логе искать нечего.
+    """
     if status == 402:
         return 'nocredits'          # кредиты кончились
     if status == 429:
         return 'ratelimit'          # придержали по частоте
+    if status in (400, 422) and any(m in str(text).lower() for m in _UNSUPPORTED_MARKS):
+        return 'unsupported'        # площадка сказала: этого актива у эндпоинта нет вовсе
     if status in (400, 422):
         # НАШ ЗАПРОС НЕ ПРИНЯТ, И ЭТО НЕ ОТКАЗ ПЛОЩАДКИ. 422 адресован НАМ: схема тела не
         # та, поле переехало, значение невалидно. Живой прогон 14.09 дал ровно это - два из
@@ -896,13 +934,13 @@ def _http_post(base, path, body, timeout, tag):
     t0 = time.time()
     _fb = _tele.flight_begin() or (None, 1)
     rem_before, parallel = _fb[0], _fb[1]
-    http, j = 0, None
+    http, j, _cls = 0, None, None
     try:
         r = httpx.post("%s/%s" % (base, path), headers=_headers(), json=body, timeout=timeout)
         http = r.status_code
         _note_credits(r.headers)
         if http != 200:
-            _cls = _classify(http)
+            _cls = _classify(http, r.text)
             # ТЕКСТ ОШИБКИ СОХРАНЯЕМ, А НЕ ТОЛЬКО ПЕЧАТАЕМ. Он машиночитаемый и содержит
             # ровно то, что надо поправить в теле («Field 'side' is not recognized»).
             # Печать в лог помогает ЧЕЛОВЕКУ через сутки, `_post_fix` чинит СЕЙЧАС - и без
@@ -939,10 +977,14 @@ def _http_post(base, path, body, timeout, tag):
     _rem = _CREDITS.get('remaining')
     _rem = _rem if isinstance(_rem, int) else None
     _tele.flight_end(_rem)
+    # КЛАСС ОТКАЗА ЕДЕТ В СТРОКУ ТЕЛЕМЕТРИИ ГОТОВЫМ. Пересчитать его там нельзя: 'unsupported'
+    # отличается от 'bad_request' только ТЕКСТОМ ответа, а в `record` доезжает лишь код. Без
+    # этого граница покрытия легла бы в сводку как «наш кривой запрос», и месячная строка
+    # смешала бы то, что чиним мы, с тем, чего у площадки нет вовсе.
     _tele.record(path, ms=int((time.time() - t0) * 1000), http=http, ok=(http == 200),
                  empty=empty, cache=False, rem=_rem,
                  used=_CREDITS.get('used'), rem_before=rem_before, parallel=parallel,
-                 sig=_tele.sig_of(path, body))
+                 sig=_tele.sig_of(path, body), cls=_cls)
     return j, http
 
 
@@ -1720,14 +1762,26 @@ def sm_netflow_block(chains=None, tf="24h", top=10, rows=None, bot_un=None):
 # ═══════════════════════════════════════════════════════════════════════════
 
 # ── Token God Mode: то, чего не было ──────────────────────────────────────────
-def tgm_flows(chain, token_address, timeframe="1d"):
+def tgm_flows(chain, token_address, days=1):
     """Приток и отток токена по сегментам (биржи, smart money, публ.фигуры, киты).
     -> [dict]. ~1 кр. ОТЛИЧАЕТСЯ от flow-intelligence: там нетто по сегментам, здесь
-    раздельно вход и выход - «набирают» и «сливают» видно порознь."""
-    return _rows(_post("tgm/flows",
+    раздельно вход и выход - «набирают» и «сливают» видно порознь.
+
+    СХЕМА СНЯТА ЖИВОЙ ПРОБОЙ 19.09, и она оказалась другой: эндпоинт требует `date` (окно) и
+    НЕ ЗНАЕТ поля `timeframe`, которое мы ему посылали. Ремонт по словам площадки прошёл ровно
+    эти два шага сам («подставил обязательное поле date», «убрал поле timeframe»), и здесь
+    результат пришпилен - чтобы каждый холодный старт не платил за то, что уже выяснено.
+
+    И ГЛАВНАЯ НЕОЖИДАННОСТЬ ТОЙ ЖЕ ПРОБЫ: на USDC эндпоинт ответил не пустотой, а словами -
+    «этот токен стейблкоин, потоки стейблкоинов эндпоинт не поддерживает». Это ГРАНИЦА
+    ПОКРЫТИЯ, а не наш баг и не отсутствие данных; под неё заведён отдельный класс отказа
+    `unsupported` (см. `_REFUSAL`), иначе человек читал бы «потоков нет» как свойство токена.
+    """
+    return _rows(_post_fix("tgm/flows",
                        {"chain": _nc(chain), "token_address": token_address,
-                        "timeframe": timeframe},
-                       ckey=f"tgmflows:{chain}:{token_address}:{timeframe}"))
+                        "date": _date_range(days),
+                        "pagination": {"page": 1, "per_page": 20}},
+                       ckey=f"tgmflows:{chain}:{token_address}:{days}"))
 
 
 def tgm_dex_trades(chain, token_address, per_page=20, days=1):
@@ -1759,12 +1813,25 @@ def tgm_price_ohlcv(chain, token_address, timeframe="1d", days=30):
                        ckey=f"tgmohlcv:{chain}:{token_address}:{timeframe}:{days}"))
 
 
-def perp_screener(per_page=15, order_field="volume_24h"):
-    """Токены Hyperliquid по объёму и активности smart money. -> [dict]. ~1 кр."""
-    return _rows(_post("tgm/perp-screener",
-                       {"pagination": {"page": 1, "per_page": per_page},
-                        "order_by": [{"field": order_field, "direction": "DESC"}]},
-                       ckey=f"perpscr:{per_page}:{order_field}"))
+# ═══════════════════════════════════════════════════════════════════════════════
+# ТРИ ЭНДПОИНТА, КОТОРЫХ У ПЛОЩАДКИ НЕТ. Похоронены, а не оставлены «на всякий случай».
+#
+# Живая проба 19.09 (tools/nansen_probe.py --run --only new) ответила на них 404 Not Found:
+#   * tgm/perp-screener              - был `perp_screener()`
+#   * profiler/address/perp-positions - был `profiler_perp_positions()` + экран «нансен перпы»
+#   * portfolio/positions            - был `portfolio_positions()`
+#
+# ПОЧЕМУ УДАЛЕНЫ, А НЕ ОСТАВЛЕНЫ С ПОМЕТКОЙ. Клиент, который всегда получает 404, - это дверь
+# в стену: в коде она есть, в меню она есть, а человек за ней получает отказ. Ровно тот дефект,
+# который ТЗ B чинило у четырёх мёртвых клиентов («клиент написан, провода нет»), только
+# вывернутый: провод есть, а на другом конце ничего. Держать такое «пока разберёмся» значит
+# обещать экран, которого не будет.
+#
+# ЧТО ЕСЛИ ПУТЬ ПРОСТО ПЕРЕЕХАЛ. Возможно; поэтому в пробу добавлена группа `perp` с
+# кандидатами путей (tools/nansen_probe.py --run --only perp). Найдётся - вернём из git одной
+# командой, и тогда это будет решение по факту, а не надежда в коде. 404 в ответе - тоже факт,
+# и он написан здесь, чтобы следующий человек не искал этот эндпоинт заново.
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 def perp_positions(token, per_page=20):
@@ -1772,11 +1839,18 @@ def perp_positions(token, per_page=20):
 
     Это то, чего у нас не было ни в каком виде: раньше про ликвидации мы могли только
     догадываться по цене."""
-    # `_post_fix`, А НЕ `_post`: схема этого тела НЕ снята живым ключом, написана по образцу
-    # соседей, и живой прогон 15.09 дал на ней 422. Ремонт исполняет инструкцию площадки
-    # («такого поля нет», «нужно поле date»), а не нашу следующую догадку.
+    # ПОЛЕ НАЗЫВАЕТСЯ `token_symbol`, И ЭТО СНЯТО ЖИВОЙ ПРОБОЙ 19.09, а не угадано:
+    #   {"error":"Missing field","message":"Required field 'body -> token_symbol' is missing"}
+    # Мы посылали `token` - по образцу соседних эндпоинтов, - и получали 422 на каждом тапе.
+    # Ремонт по словам площадки остановился здесь честно («нужно обязательное поле
+    # token_symbol, а построить его нам нечем») и тем самым НАЗВАЛ имя: построить-то нечем,
+    # а вот подставить значение аргумента - как раз есть чем, и теперь оно на месте.
+    #
+    # `_post_fix` ОСТАЁТСЯ, хотя главное поле известно: про `order_by` и `pagination` этого
+    # эндпоинта мы по-прежнему знаем только по образцу соседей. Ремонт стоит ноль, когда
+    # чинить нечего, и экономит круг живого прогона, когда есть.
     return _rows(_post_fix("tgm/perp-positions",
-                       {"token": str(token).upper(),
+                       {"token_symbol": str(token).upper(),
                         "pagination": {"page": 1, "per_page": per_page},
                         "order_by": [{"field": "position_value_usd", "direction": "DESC"}]},
                        ckey=f"perppos:{token}:{per_page}"))
@@ -1806,7 +1880,14 @@ def sm_dex_trades(chains=None, per_page=25):
 
 
 def sm_perp_trades(per_page=25):
-    """Что smart money торгует на Hyperliquid. -> [dict]. ~1-5 кр."""
+    """Что smart money торгует на Hyperliquid. -> [dict]. ~1-5 кр.
+
+    СХЕМА ПОДТВЕРЖДЕНА ЖИВОЙ ПРОБОЙ 19.09 (200, строки есть). Поля ответа:
+    action, side, type, token_symbol, token_amount, price_usd, value_usd, block_timestamp,
+    trader_address, trader_address_label, transaction_hash.
+    ВАЖНОЕ ПРО ДЕНЬГИ: размер сделки - `value_usd`, а `price_usd` это ЦЕНА ОДНОГО токена.
+    Спутать их значит показать $0.99 вместо $48K, то есть не пустоту, а неверное число -
+    поэтому `price_usd` стоит в списке `_NOT_MONEY` и под сумму не берётся никогда."""
     return _rows(_post_fix("smart-money/perp-trades",
                        {"pagination": {"page": 1, "per_page": per_page},
                         "order_by": [{"field": "block_timestamp", "direction": "DESC"}]},
@@ -1830,17 +1911,6 @@ def profiler_dex_trades(address, chain="ethereum", per_page=20, days=30):
                        ckey=f"pdex:{chain}:{address}:{per_page}:{days}"))
 
 
-def profiler_perp_positions(address):
-    """Позиции, PnL и здоровье счёта адреса на перпах. -> dict | None.
-
-    ЗДОРОВЬЕ СЧЁТА - ТО, ЧЕГО НЕ БЫЛО: раньше мы видели позиции кита, но не его запас до
-    ликвидации, а это и есть главный вопрос про кита с плечом."""
-    rows = _rows(_post_fix("profiler/address/perp-positions",
-                       {"address": address, "pagination": {"page": 1, "per_page": 50}},
-                       ckey=f"pperp:{address}"))
-    return rows[0] if rows else None
-
-
 def profiler_perp_trades(address, per_page=20, days=30):
     """Сделки адреса на Hyperliquid. -> [dict]."""
     return _rows(_post("profiler/address/perp-trades",
@@ -1855,17 +1925,6 @@ def profiler_historical_balances(address, chain="ethereum", days=30, per_page=50
                        {"address": address, "chain": _nc(chain), "date": _date_range(days),
                         "pagination": {"page": 1, "per_page": per_page}},
                        ckey=f"phist:{chain}:{address}:{days}:{per_page}"))
-
-
-def portfolio_positions(address):
-    """DeFi-позиции адреса (Portfolio API). -> [dict].
-
-    ЗАЧЕМ, ЕСЛИ ЕСТЬ DeBank: DeBank у нас платный ($0.0002 за unit, 30 units на вызов), а это
-    входит в тот же ключ Nansen. Замена не автоматическая - сначала сверить полноту на живых
-    адресах, - но альтернатива теперь есть."""
-    return _rows(_post("portfolio/positions",
-                       {"address": address, "pagination": {"page": 1, "per_page": 100}},
-                       ckey=f"pfolio:{address}"))
 
 
 # ── Prediction Market: было 4 из 12 ───────────────────────────────────────────
@@ -2214,53 +2273,13 @@ def perp_positions_block(rows, token, lang='ru'):
     return with_source('\n'.join(L), lang)
 
 
-def wallet_perp_block(d, address, lang='ru'):
-    """Счёт кошелька на перпах: позиции, PnL и ЗАПАС ДО ЛИКВИДАЦИИ. -> str | None.
-
-    Запас до ликвидации - тот вопрос про кита с плечом, на который мы раньше не отвечали:
-    позиции видели, а сколько ему осталось - нет."""
-    if not isinstance(d, dict) or not d:
-        return None
-    _shape('wallet-perp', d)
-    short = '%s…%s' % (address[:6], address[-4:])
-    L = [('🩺 <b>Счёт на перпах</b> <code>%s</code>' % short) if lang != 'en'
-         else ('🩺 <b>Perp account</b> <code>%s</code>' % short)]
-    eq = _first(d, ('account_value', 'equity', 'account_value_usd'))
-    mar = _first(d, ('margin_used', 'margin_used_usd', 'total_margin_used'))
-    pnl = _first(d, ('unrealized_pnl', 'unrealized_pnl_usd'))
-    health = _first(d, ('account_health', 'health', 'margin_ratio'))
-    seg = []
-    if eq not in (None, ''):
-        seg.append(('капитал $%s' if lang != 'en' else 'equity $%s') % _usd(eq))
-    if mar not in (None, ''):
-        seg.append(('под залогом $%s' if lang != 'en' else 'margin $%s') % _usd(mar))
-    if pnl not in (None, ''):
-        try:
-            seg.append(('нереализ. +$' if float(pnl) >= 0 else 'нереализ. -$') + _usd(abs(float(pnl)))
-                       if lang != 'en' else
-                       ('unrealized +$' if float(pnl) >= 0 else 'unrealized -$') + _usd(abs(float(pnl))))
-        except (TypeError, ValueError):
-            pass
-    if seg:
-        L.append('📈 ' + ' · '.join(seg))
-    if health not in (None, ''):
-        L.append(('🩺 здоровье счёта: %s' if lang != 'en' else '🩺 account health: %s') % health)
-    pos = d.get('positions') if isinstance(d.get('positions'), list) else []
-    for p in pos[:8]:
-        if not isinstance(p, dict):
-            continue
-        _c = _first(p, ('coin', 'token', 'symbol')) or '?'
-        _sd = (_first(p, ('side', 'direction')) or '').upper()[:5]
-        _lv = _first(p, ('leverage', 'leverage_x'))
-        _lq = _first(p, ('liquidation_price', 'liq_price'))
-        _bits = [x for x in (
-            ('%sx' % int(float(_lv))) if _lv not in (None, '') else None,
-            (('ликв. $%s' if lang != 'en' else 'liq $%s') % _money(_lq))
-            if _lq not in (None, '') else None) if x]
-        L.append('• %s %s %s' % (_c, _sd, ' · '.join(_bits)))
-    if len(L) == 1:
-        return None
-    return with_source('\n'.join(L), lang)
+# ФОРМАТТЕР `wallet_perp_block` УДАЛЁН ВМЕСТЕ СО СВОИМ ЭНДПОИНТОМ. Он рисовал счёт кошелька
+# на перпах по `profiler/address/perp-positions`, а тот отвечает 404 (живая проба 19.09) - то
+# есть данных для него не существует. Форматтер без источника данных - мёртвый код, и хуже
+# того: он выглядит как работающая фича при чтении файла. Вернётся вместе с эндпоинтом, если
+# проба найдёт его новый путь (группа `perp` в tools/nansen_probe.py); в git он никуда не
+# пропал. Заодно из закрытого реестра сцен убрана сцена `wallet_perps` - имя, которым больше
+# некому звать, обещает в сводке разрез, которого нет.
 
 
 def sm_trades_block(rows, bot_un=None, lang='ru', top=12):
@@ -2281,10 +2300,12 @@ def sm_trades_block(rows, bot_un=None, lang='ru', top=12):
             _first_row = r
         sym = _first(r, ('token_bought_symbol', 'token_symbol', 'symbol')) or '?'
         addr = (_first(r, ('token_bought_address', 'token_address')) or '').strip()
-        # СУММУ ИЩЕМ ПО СОГЛАШЕНИЮ, А НЕ ТОЛЬКО ПО ТРЁМ УГАДАННЫМ ИМЕНАМ (живой прогон
-        # 15.09: все 12 строк с `$?` при читаемых тикерах и адресах - значит строки-то
-        # приехали, а имя поля с деньгами у этого эндпоинта другое).
-        val, _vf = _usd_any(r, ('value_usd', 'volume_usd', 'amount_usd'))
+        # ИМЯ ДЕНЕЖНОГО ПОЛЯ - `trade_value_usd`, СНЯТО ЖИВОЙ ПРОБОЙ 19.09. Раньше здесь
+        # стояли три имени, угаданных по соседним эндпоинтам, ни одно не совпало, и человек
+        # видел прочерк во всех двенадцати строках. Поиск по соглашению (`*_usd`) оставлен
+        # вторым этажом: он и нашёл бы это поле, но названное имя не требует перебора и не
+        # может однажды выбрать не то поле.
+        val, _vf = _usd_any(r, ('trade_value_usd', 'value_usd', 'volume_usd', 'amount_usd'))
         who = _who(r)
         ch = _first(r, ('chain',)) or ''
         _sym = '<b>%s</b>' % sym
@@ -2293,8 +2314,35 @@ def sm_trades_block(rows, bot_un=None, lang='ru', top=12):
         _shown += 1
         if val not in (None, ''):
             _with_val += 1
-        L.append('%d. %s %s%s · $%s' % (i, who, _sym, (' [%s]' % ch) if ch else '',
-                                        _usd(val) if val not in (None, '') else '?'))
+        # ═══ КАПИТАЛИЗАЦИЯ И ВОЗРАСТ ТОКЕНА ПРИЕЗЖАЮТ В ЭТОМ ЖЕ ОТВЕТЕ - БЕСПЛАТНО ═══
+        # Проба показала, что `smart-money/dex-trades` отдаёт `token_bought_market_cap` и
+        # `token_bought_age_days` вместе со сделкой. Мы их не читали, и зря: «$48K зашли в
+        # токен» - это ни о чём, пока не сказано, во ЧТО именно. $48K в токен на $2.1M - это
+        # 2.3% всей капитализации и настоящий сигнал; те же $48K в токен на $50B - шум.
+        # Ровно закон «признак наличия ≠ признак пользы»: раньше строка сообщала ФАКТ покупки,
+        # теперь - ВЕЛИЧИНУ относительно размера токена. Дополнительных запросов ноль.
+        _mc = _first(r, ('token_bought_market_cap', 'market_cap'))
+        _age = _first(r, ('token_bought_age_days', 'age_days'))
+        _tail = []
+        if _mc not in (None, ''):
+            try:
+                _tail.append(('капа $%s' if lang != 'en' else 'mcap $%s') % _usd(_mc))
+                if val not in (None, '') and float(_mc) > 0:
+                    _pct = 100.0 * float(val) / float(_mc)
+                    if _pct >= 0.1:
+                        _tail.append(('%.1f%% капы' if lang != 'en' else '%.1f%% of mcap')
+                                     % _pct)
+            except (TypeError, ValueError):
+                pass
+        if _age not in (None, ''):
+            try:
+                _tail.append(('%dд' if lang != 'en' else '%dd') % int(float(_age)))
+            except (TypeError, ValueError):
+                pass
+        L.append('%d. %s %s%s · $%s%s'
+                 % (i, who, _sym, (' [%s]' % ch) if ch else '',
+                    _usd(val) if val not in (None, '') else '?',
+                    (' · ' + ' · '.join(_tail)) if _tail else ''))
     if len(L) == 1:
         return None
     # ПРОЧЕРК В КАЖДОЙ СТРОКЕ - НЕ ОТВЕТ. Если суммы не нашлось НИ У ОДНОЙ строки, это не

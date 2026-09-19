@@ -40,6 +40,7 @@ ALLOWED_ADDR = {
     '0xada100db00ca00073811820692005400218fce1f',   # CtfCollateralAdapter, контракт
     '0xada2005600dec949baf300f4c6120000bdb6eaab',   # NegRiskCtfCollateralAdapter, контракт
     '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',   # условный адрес нативной монеты в trade API
+    '0x4200000000000000000000000000000000000006',   # WETH на Base, контракт (проба потоков)
 }
 #: @-ручки, которым здесь место: площадка, у которой мы берём данные.
 #: Питоновские декораторы и ссылки на модули (`@contextlib.contextmanager`) отсекаются не

@@ -236,16 +236,6 @@ def c_perps(argv):
     return 0
 
 
-def c_wallet_perps(argv):
-    if not argv:
-        return _need('wallet-perps <адрес>', 'wallet-perps %s' % BUILDER)
-    with T.scene('wallet_perps'):
-        d = N.profiler_perp_positions(argv[0])
-        _say(N.wallet_perp_block(d, argv[0], LANG) if d else None,
-             _w('позиций этого адреса на перпах', 'perp positions of this address'))
-    return 0
-
-
 def c_pm(argv):
     with T.scene('polymarket'):
         rows = N.pm_market_screener(query=(argv[0] if argv else ''), per_page=10)
@@ -389,8 +379,6 @@ CMDS = [
     ('perp-leaders', c_perp_leaders, 'топ перп-трейдеров', 'top perp traders'),
     ('perps', c_perps, 'позиции с плечом по токену: плечо и ЦЕНА ЛИКВИДАЦИИ',
      'leveraged positions on a token: leverage and LIQUIDATION price'),
-    ('wallet-perps', c_wallet_perps, 'счёт кошелька на перпах и запас до ликвидации',
-     'wallet perp account and how much room is left before liquidation'),
     ('pm', c_pm, 'трендовые рынки Polymarket (с market_id)',
      'trending Polymarket markets (with market_id)'),
     ('pm-book', c_pm_book, 'стакан рынка Polymarket', 'Polymarket market orderbook'),

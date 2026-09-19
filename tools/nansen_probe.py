@@ -46,6 +46,11 @@ import nansen_api as N          # noqa: E402
 #: публичные сущности, не адреса людей (OPSEC): USDC на Base и публичный билдер блоков ETH
 TOKEN = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
 WALLET = '0x1f9090aaE28b8a3dCeaDf281B0F12828e676c326'
+#: НЕ СТЕЙБЛКОИН, и это отдельная сущность не для красоты. Проба 19.09 на USDC получила от
+#: `tgm/flows` содержательный отказ: «этот токен стейблкоин, потоки стейблкоинов эндпоинт не
+#: поддерживает». То есть тем токеном этот эндпоинт проверить НЕЛЬЗЯ В ПРИНЦИПЕ, и прошлый
+#: прогон измерил не схему, а неудачный выбор токена. WETH на Base - публичный контракт.
+TOKEN_NONSTABLE = '0x4200000000000000000000000000000000000006'
 
 
 def _cases_wbs():
@@ -124,36 +129,66 @@ def _cases_new():
     один прогон по инструкции стоит дешевле десяти догадок.
     """
     return [
-        ('tgm/perp-positions', 'как в коде (422 на живом прогоне 15.09)',
-         {"token": "BTC", "pagination": {"page": 1, "per_page": 5},
+        # СХЕМА СНЯТА: поле называется `token_symbol`, а не `token` (проба 19.09). Оставлено в
+        # пробе, чтобы следующий прогон подтвердил ПОЛНОЕ тело - про order_by и pagination
+        # этого эндпоинта мы всё ещё знаем только по образцу соседей.
+        ('tgm/perp-positions', 'со снятым полем token_symbol (было token -> 422)',
+         {"token_symbol": "BTC", "pagination": {"page": 1, "per_page": 5},
           "order_by": [{"field": "position_value_usd", "direction": "DESC"}]}),
-        ('tgm/perp-screener', 'как в коде',
-         {"pagination": {"page": 1, "per_page": 5},
-          "order_by": [{"field": "open_interest_usd", "direction": "DESC"}]}),
-        ('tgm/flows', 'как в коде',
-         {"chain": "base", "token_address": TOKEN, "timeframe": "1d",
+        ('tgm/perp-positions', 'без order_by - вдруг он и есть лишний',
+         {"token_symbol": "BTC", "pagination": {"page": 1, "per_page": 5}}),
+        # СХЕМА СНЯТА: нужен `date`, поля `timeframe` эндпоинт не знает. И токен ДРУГОЙ:
+        # на стейблкоине этот эндпоинт не отвечает по определению.
+        ('tgm/flows', 'со снятым date, без timeframe, НЕ стейблкоин',
+         {"chain": "base", "token_address": TOKEN_NONSTABLE, "date": N._date_range(1),
           "pagination": {"page": 1, "per_page": 5}}),
-        ('smart-money/dex-trades', 'как в коде (объём читался прочерком 15.09)',
+        ('smart-money/dex-trades', 'подтверждено 19.09: деньги в trade_value_usd',
          {"chains": ["ethereum", "base"], "pagination": {"page": 1, "per_page": 5},
           "order_by": [{"field": "block_timestamp", "direction": "DESC"}]}),
-        ('smart-money/perp-trades', 'как в коде',
+        ('smart-money/perp-trades', 'подтверждено 19.09: деньги в value_usd',
          {"pagination": {"page": 1, "per_page": 5},
           "order_by": [{"field": "block_timestamp", "direction": "DESC"}]}),
-        ('profiler/address/perp-positions', 'как в коде',
-         {"address": WALLET, "pagination": {"page": 1, "per_page": 5}}),
-        ('portfolio/positions', 'как в коде', {"address": WALLET}),
-        # Polymarket: market_id брать НЕОТКУДА, пока не подтверждён скринер - поэтому первым
-        # делом снимаем скринер и печатаем ИМЕНА ПОЛЕЙ, среди которых должен быть id рынка.
-        # Без него кнопки «график»/«стакан» опираться не на что (см. GROUPS['pm']).
-        ('prediction-market/market-screener', 'как в коде - ищем в полях id рынка',
+        ('prediction-market/market-screener', 'подтверждено 19.09: id рынка в market_id',
          {"order_by": [{"direction": "DESC", "field": "volume_24hr"}], "query": "",
           "status": "active", "pagination": {"page": 1, "per_page": 3}}),
     ]
 
 
+def _cases_perp():
+    """КАНДИДАТЫ ПУТЕЙ ДЛЯ ТРЁХ ЭНДПОИНТОВ, ОТВЕТИВШИХ 404.
+
+    Проба 19.09 похоронила `tgm/perp-screener`, `profiler/address/perp-positions` и
+    `portfolio/positions`: 404 Not Found на все три. Клиенты и экран удалены - дверь в стену
+    хуже отсутствия двери.
+
+    НО 404 БЫВАЕТ ДВУХ СОРТОВ: «такого нет» и «переехало». Отличить их можно только перебором
+    соседних путей, и это ровно то, что здесь. Найдётся - вернём из git одной командой, и это
+    будет решение по факту. Не найдётся - 404 подтверждён вторым способом, и вопрос закрыт.
+
+    Запросы дешёвые и их мало: 404 кредитов не стоит вовсе.
+    """
+    _pg = {"pagination": {"page": 1, "per_page": 5}}
+    return [
+        ('tgm/perp-screener', 'как было (404)', dict(_pg)),
+        ('tgm/perp-token-screener', 'кандидат: token-screener для перпов', dict(_pg)),
+        ('perp-screener', 'кандидат: без префикса tgm', dict(_pg)),
+        ('tgm/perp-tokens', 'кандидат: perp-tokens', dict(_pg)),
+        ('profiler/address/perp-positions', 'как было (404)', dict(_pg, address=WALLET)),
+        ('profiler/perp-positions', 'кандидат: без address в пути', dict(_pg, address=WALLET)),
+        ('profiler/address/perp', 'кандидат: короткий хвост', dict(_pg, address=WALLET)),
+        ('perp-positions', 'кандидат: верхний уровень', dict(_pg, address=WALLET)),
+        ('portfolio/positions', 'как было (404)', {"address": WALLET}),
+        ('profiler/address/portfolio', 'кандидат: портфель у профайлера',
+         dict(_pg, address=WALLET)),
+        ('portfolio/address/positions', 'кандидат: address в пути', {"address": WALLET}),
+    ]
+
+
 GROUPS = {'wbs': _cases_wbs, 'profiler': _cases_profiler, 'tinfo': _cases_tinfo,
-          'new': _cases_new}
-#: группы, где схема не снята и починку по словам площадки включаем сразу
+          'new': _cases_new, 'perp': _cases_perp}
+#: группы, где схема не снята и починку по словам площадки включаем сразу.
+#: `perp` ремонт НЕ включает нарочно: там проверяется САМО СУЩЕСТВОВАНИЕ пути, а 404 ремонту
+#: не подлежит - чинить тело эндпоинта, которого нет, значит перебирать догадки вслепую.
 FIX_DEFAULT = ('new',)
 
 
