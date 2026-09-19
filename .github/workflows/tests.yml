@@ -1,0 +1,19 @@
+# Прогон публичного набора на каждый push. БЕЗ КЛЮЧА И БЕЗ СЕТИ: провод подменён, поэтому
+# проверка работает у любого, кто форкнет репозиторий, и не тратит ничьих кредитов.
+name: tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # РОВНО ОДИН ПАКЕТ. matplotlib не ставим нарочно: набор обязан быть зелёным и там, где
+      # картинок нет, - иначе он проверяет наличие колеса, а не поведение слоя.
+      - run: pip install --quiet httpx
+      - run: python3 tests/test_public.py
+      - run: python3 scrub.py
