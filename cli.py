@@ -236,6 +236,41 @@ def c_perps(argv):
     return 0
 
 
+def c_liqmap(argv):
+    """Карта ликвидаций: где висит чужое плечо. Текущую цену в терминале не берём - её знает
+    бот из Hyperliquid, а выжимка про Nansen; без неё карта остаётся честной картой уровней."""
+    if not argv:
+        return _need('liqmap <ТИКЕР>', 'liqmap BTC')
+    tok = argv[0].upper()
+    with T.scene('perp_positions'):
+        rows = N.perp_positions(tok, 50)
+        _why = None if rows else N.fail_reason('empty')
+    if not rows:
+        print(_plain(N.refusal(_why, LANG, what=_w('позиций с плечом по %s' % tok,
+                                                   'leveraged positions on %s' % tok))))
+        _cost()
+        return 0
+    try:
+        import oc_nansen_viz as V
+    except ImportError as e:
+        print('Картинки недоступны: %s (pip install matplotlib)' % e)
+        return 2
+    cl = V.liq_clusters(rows, None)
+    if not cl:
+        # СТРОКИ ЕСТЬ, ЦЕН ЛИКВИДАЦИИ НЕТ - это расхождение схемы, а не пустота, и оно
+        # называется словом с перечислением реальных полей ответа.
+        print(_plain(N.schema_gap_note(rows[0], _w('Цена ликвидации', 'Liquidation price'),
+                                       LANG)))
+        _cost()
+        return 0
+    png, cap = V.liq_map_png(rows, tok, None, LANG)
+    if png:
+        print('картинка: %s' % png)
+    print(_plain(cap or V.liq_caption(cl, tok, LANG)))
+    _cost()
+    return 0
+
+
 def c_pm(argv):
     with T.scene('polymarket'):
         rows = N.pm_market_screener(query=(argv[0] if argv else ''), per_page=10)
@@ -385,6 +420,8 @@ CMDS = [
     ('pm-wallet', c_pm_wallet, 'профиль трейдера Polymarket', 'Polymarket trader profile'),
     ('pm-leaders', c_pm_leaders, 'топ-трейдеры конкретного рынка',
      'top traders of a specific market'),
+    ('liqmap', c_liqmap, 'карта ликвидаций: где висит чужое плечо, КАРТИНКОЙ',
+     "liquidation map: where other people's leverage sits, as a CHART"),
     ('png-flows', c_png_flows, 'потоки по сегментам КАРТИНКОЙ',
      'holder-segment flows as a CHART'),
     ('png-pm', c_png_pm, 'вероятность рынка во времени КАРТИНКОЙ',
