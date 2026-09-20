@@ -5,11 +5,11 @@ recording**. Never test new bot-layer logic first on production.
 
 ## 1. Deploy to sandbox from the production server
 
-Canonical command (explicit stand directory/service; do not rely on an old shell alias):
+Canonical command. The tracked script already knows the live stand directory, `<TEST_SERVICE>` unit,
+SSH host and identity; do not repeat stale values by hand:
 
 ```bash
-cd <BOT_DIR>
-STAND_DIR=<STAND_DIR> TEST_SERVICE=<TEST_SERVICE> bash tools/deploytest.sh
+cd <BOT_DIR> && bash tools/deploytest.sh
 ```
 
 Expected final line:
@@ -18,21 +18,33 @@ Expected final line:
 ГОТОВО: выложен <HEAD> на СТЕНД, служба <TEST_SERVICE> active
 ```
 
-The script itself detects that the current machine is production, connects to the sandbox, performs
-`git pull --ff-only`, prints HEAD before/after, runs AST/spec checks and restarts only a `*test*`
-service. If any step fails it stops before restart.
+The script detects that the current machine is production, connects with
+`<SSH_IDENTITY>`, performs `git pull --ff-only`, prints HEAD before/after, runs AST/spec checks
+and restarts only a `*test*` service. If any step fails it stops before restart.
 
-Independent verification from production:
+There must be one implementation. If the output warns about `<BOT_DIR>/deploytest.sh`,
+inspect the current alias before replacing anything:
 
 ```bash
-ssh root@5.129.237.130 '
-  cd <STAND_DIR> &&
-  echo "HEAD=$(git rev-parse --short HEAD) $(git log -1 --pretty=%s)" &&
-  echo "SERVICE=$(systemctl is-active <TEST_SERVICE>)" &&
-  tail -c 200K bot.log 2>/dev/null |
-    grep -a -iE "traceback|dm route err|bad_bot_key|nansen.*(error|failed)" |
-    tail -20 || true
-'
+type deploytest
+```
+
+After this tracked fix is merged and `deploy` has pulled it to production, preserve the old file and
+point the convenience alias at the version-controlled script:
+
+```bash
+cd <BOT_DIR>
+mv deploytest.sh ~/deploytest.sh.legacy_$(date +%s)
+unalias deploytest 2>/dev/null || true
+printf '%s\n' "alias deploytest='cd <BOT_DIR> && bash tools/deploytest.sh'" >> ~/.bashrc
+source ~/.bashrc
+type deploytest
+```
+
+Independent verification from production (one complete shell line, including the closing quote):
+
+```bash
+ssh -i <SSH_IDENTITY> root@5.129.237.130 'cd <STAND_DIR> && echo "HEAD=$(git rev-parse --short HEAD) $(git log -1 --pretty=%s)" && echo "SERVICE=$(systemctl is-active <TEST_SERVICE>)" && { tail -c 200K bot.log 2>/dev/null | grep -a -iE "traceback|dm route err|bad_bot_key|nansen.*(error|failed)" | tail -20 || true; }'
 ```
 
 Success means:
@@ -41,18 +53,21 @@ Success means:
 - `SERVICE=active`, not `activating`;
 - no fresh traceback/route error.
 
+Untracked files such as screenshots do not automatically break `git pull`; they block it only if an
+incoming commit needs the same path. The pull exit code printed by the script is authoritative.
+
 ## 2. Sandbox live smoke from the sandbox checkout
 
 These are read-only Nansen calls. Primary and backup have already passed, but repeat once after the
 final deploy because this verifies the deployed version, not just the repository:
 
 ```bash
-ssh root@5.129.237.130 '
+ssh -i <SSH_IDENTITY> root@5.129.237.130 '
   cd <STAND_DIR> &&
   ./venv/bin/python3 tools/nansen_live_smoke.py --run --market-id 1130012
 '
 
-ssh root@5.129.237.130 '
+ssh -i <SSH_IDENTITY> root@5.129.237.130 '
   cd <STAND_DIR> &&
   ./venv/bin/python3 tools/nansen_live_smoke.py --run --market-id 4323345
 '
@@ -95,33 +110,51 @@ pretested one.
 
 ## 4. Production deploy — only after sandbox passes
 
+The production machine already has the canonical `deploy` command, which performs pull, AST check,
+restart, active-state check and fresh-log scan. Keep the backup step explicit:
+
 ```bash
 cd <BOT_DIR>
 cp bot.py bot.py.bak_$(date +%s)
-git pull --ff-only
+deploy
+```
 
+The command must finish with both:
+
+```text
+✅ <BOT_SERVICE> active
+✅ чисто (нет dm route err / traceback)
+```
+
+`deploy` is a machine convenience command, not repository code. If its output ever stops showing
+all five stages (pull → AST → restart → active → fresh-log scan), stop using the alias and run the
+reviewable equivalent explicitly:
+
+```bash
+cd <BOT_DIR>
+cp bot.py bot.py.bak_$(date +%s)
+git pull --ff-only && \
 ./venv/bin/python3 -c "import ast
 for p in ('bot.py','nansen_api.py','nansen_log.py','onchain/oc_dm.py','onchain/oc_callbacks.py'):
     ast.parse(open(p, encoding='utf-8').read())
-print('ast OK')"
-
-timeout 45 ./venv/bin/python3 -u bot.py
+print('ast OK')" && \
+rm -rf __pycache__ onchain/__pycache__ && \
+systemctl restart <BOT_SERVICE> && \
+sleep 20 && \
+test "$(systemctl is-active <BOT_SERVICE>)" = active
 ```
 
-The manual run must print `Гробовщик запущен!` and no traceback. `timeout` stops it after 45 seconds.
-Then:
+Then independently verify the live process and main log:
 
 ```bash
-rm -rf __pycache__ onchain/__pycache__
-systemctl restart <BOT_SERVICE>
-sleep 20
+cd <BOT_DIR>
 systemctl is-active <BOT_SERVICE>
-tail -c 300K bot.log |
-  grep -a -iE "traceback|dm route err|bad_bot_key|nansen.*(error|failed)" |
-  tail -30 || true
+tail -c 300K bot.log | grep -a -iE "traceback|dm route err|bad_bot_key|nansen.*(error|failed)" | tail -30 || true
 ```
 
-Success is exactly `active`, not `activating`, and no fresh traceback.
+Success is exactly `active`, not `activating`, and no fresh traceback. A successful `git pull` alone
+is not a deploy: the restart inside `deploy` is what makes all lazily imported modules the same
+version.
 
 ## 5. Prepare the recording
 
