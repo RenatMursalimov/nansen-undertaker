@@ -271,6 +271,18 @@ def c_liqmap(argv):
     return 0
 
 
+def c_wallet_perps(argv):
+    """Счёт кошелька на перпах и запас до ликвидации. Вернулся 20.09: пробой найден живой путь."""
+    if not argv:
+        return _need('wallet-perps <адрес>', 'wallet-perps %s' % BUILDER)
+    with T.scene('wallet_perps'):
+        d = N.profiler_perp_positions(argv[0])
+        _why = None if d else N.fail_reason('empty')
+    _say(N.wallet_perp_block(d, argv[0], LANG) if d else None,
+         _w('позиций этого адреса на перпах', 'perp positions of this address'), _why)
+    return 0
+
+
 def c_pm(argv):
     with T.scene('polymarket'):
         rows = N.pm_market_screener(query=(argv[0] if argv else ''), per_page=10)
@@ -366,7 +378,7 @@ def c_png_pm(argv):
     if not argv:
         return _need('png-pm <market_id>', 'png-pm 654412')
     with T.scene('polymarket'):
-        rows = N.pm_ohlcv(argv[0], 72)
+        rows = N.pm_ohlcv(argv[0])
         _why = None if rows else N.fail_reason('empty')
     if not rows:
         print(_plain(N.refusal(_why, LANG,
@@ -426,6 +438,8 @@ CMDS = [
     ('perp-leaders', c_perp_leaders, 'топ перп-трейдеров', 'top perp traders'),
     ('perps', c_perps, 'позиции с плечом по токену: плечо и ЦЕНА ЛИКВИДАЦИИ',
      'leveraged positions on a token: leverage and LIQUIDATION price'),
+    ('wallet-perps', c_wallet_perps, 'счёт кошелька на перпах и запас до ликвидации',
+     'wallet perp account and how much room is left before liquidation'),
     ('pm', c_pm, 'трендовые рынки Polymarket (с market_id)',
      'trending Polymarket markets (with market_id)'),
     ('pm-book', c_pm_book, 'стакан рынка Polymarket', 'Polymarket market orderbook'),

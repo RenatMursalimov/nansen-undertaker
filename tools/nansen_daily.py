@@ -79,6 +79,23 @@ def _submission(days):
     _honest = sum(s.get('honest_refusals', 0) for s in got)
     _rem = [s.get('rem_last') for s in got if s.get('rem_last') is not None]
     tot = T.contrib_totals(len(days))
+    # ═══ ДВА ИСТОЧНИКА ЧИСЕЛ, И ИХ НАДО РАЗДЕЛИТЬ ЯВНО ═══
+    # Живой прогон 20.09 напечатал в одном блоке «кредитов 3044» и тут же таблицу сцен, где
+    # сумма 3628. Оба числа верные и оба про разное: телеметрия считает ВСЕ вызовы (включая
+    # фоновые джобы и вызовы без человека), а зачёт вклада - только те, у которых есть человек
+    # и которые прошли антинакрутку. Но стоя рядом без подписи, они выглядят как арифметическая
+    # ошибка - и человек перестаёт верить ОБОИМ. Это хуже, чем одно неверное число.
+    #
+    # Поэтому таблица по сценам берётся ИЗ ТЕХ ЖЕ СУТОЧНЫХ СВОДОК, что и итог сверху (закон
+    # №48: итог собирается из напечатанных чисел), а числа зачёта уезжают в свой раздел со
+    # своей подписью.
+    per_scene = {}
+    for sc_map in (s.get('per_scene') or {} for s in got):
+        for sc, v in sc_map.items():
+            acc = per_scene.setdefault(sc, {'calls': 0, 'credits': 0, 'unpriced': 0})
+            acc['calls'] += v.get('calls', 0)
+            acc['credits'] += int(v.get('credits', 0))
+            acc['unpriced'] += v.get('unpriced', 0)
     print('=== БЛОК В ЗАЯВКУ (пересчитывается этой же командой) ===')
     print('Окно: %s..%s (суток с данными %d из %d)' % (days[0], days[-1], len(got), len(days)))
     print('')
@@ -97,14 +114,31 @@ def _submission(days):
     if _rem:
         print('Остаток кредитов на конце окна: %s' % _rem[-1])
     print('')
+    print('По сценариям — ВСЕ вызовы, из тех же сводок, что итог выше')
+    print('(сцена = вопрос человека, а не имя эндпоинта):')
+    _sum_calls = _sum_cr = 0
+    for sc, v in sorted(per_scene.items(), key=lambda kv: -kv[1]['calls']):
+        _nm = sc if sc != '?' else '? (без сцены)'
+        _tail = (' · без цены %d' % v['unpriced']) if v['unpriced'] else ''
+        print('  %-24s вызовов %-6d кредитов %-6d%s' % (_nm, v['calls'], v['credits'], _tail))
+        _sum_calls += v['calls']
+        _sum_cr += v['credits']
+    # СВЕРКА ПЕЧАТАЕТСЯ, А НЕ ПОДРАЗУМЕВАЕТСЯ: если таблица и итог разойдутся, это будет видно
+    # В САМОМ БЛОКЕ, а не обнаружится тем, кто станет складывать столбик руками.
+    if (_sum_calls, _sum_cr) != (_calls, _cr):
+        print('  ⚠️ СВЕРКА НЕ СОШЛАСЬ: по сценам %d вызовов / %d кредитов против %d / %d '
+              'в итоге. Числу верить нельзя, пока это не объяснено.'
+              % (_sum_calls, _sum_cr, _calls, _cr))
+    else:
+        print('  сходится с итогом: %d вызовов, %d кредитов' % (_sum_calls, _sum_cr))
+    print('')
+    print('--- ЗАЧЁТ ВКЛАДА (другой счёт: ТОЛЬКО вызовы людей, прошедшие антинакрутку) ---')
     print('Людей в зачёте:           %d' % tot['people'])
     print('Вызовов в зачёт:          %d' % tot['calls'])
+    print('Кредитов в зачёте:        %d' % int(tot['credits']))
     print('Не в зачёт (антинакрутка, повтор чаще %d мин): %d' % (T.REPEAT_MIN, tot['skipped']))
-    if tot['by_scene']:
-        print('')
-        print('По сценариям (сцена = вопрос человека, а не имя эндпоинта):')
-        for sc, (n, cr) in sorted(tot['by_scene'].items(), key=lambda kv: -kv[1][0]):
-            print('  %-24s вызовов %-6d кредитов %d' % (sc, n, int(cr)))
+    print('Эти числа МЕНЬШЕ итога сверху и должны быть меньше: фоновые джобы и вызовы без')
+    print('человека в зачёт не идут вовсе.')
     print('')
     print('Проверить: ./venv/bin/python3 tools/nansen_daily.py --range %s %s --csv'
           % (days[0], days[-1]))

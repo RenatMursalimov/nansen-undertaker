@@ -1399,6 +1399,20 @@ def _shape(tag, row):
     print("[nansen] %s: поля ответа %s" % (tag, sorted(row.keys())[:14]))
 
 
+def _num_or_none(x):
+    """В число или None, без исключений. -> float | None.
+
+    Нужен там, где из двух полей считается третье (доли × цена = доллары): `float()` на
+    отсутствующем поле бросает, а нам нужно ЧЕСТНОЕ «нет числа», чтобы экран сказал это
+    словом вместо того, чтобы подставить ноль.
+    """
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if v == v else None          # NaN - тоже не число
+
+
 def _first(row, names, default=None):
     """Первое присутствующее поле из списка кандидатов."""
     if not isinstance(row, dict):
@@ -1814,24 +1828,57 @@ def tgm_price_ohlcv(chain, token_address, timeframe="1d", days=30):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ТРИ ЭНДПОИНТА, КОТОРЫХ У ПЛОЩАДКИ НЕТ. Похоронены, а не оставлены «на всякий случай».
+# ПРОБА ПУТЕЙ 20.09: ДВА ЭНДПОИНТА ВЕРНУЛИСЬ, ДВА ОСТАЛИСЬ МЁРТВЫМИ
 #
-# Живая проба 19.09 (tools/nansen_probe.py --run --only new) ответила на них 404 Not Found:
-#   * tgm/perp-screener              - был `perp_screener()`
-#   * profiler/address/perp-positions - был `profiler_perp_positions()` + экран «нансен перпы»
-#   * portfolio/positions            - был `portfolio_positions()`
+# 19.09 три эндпоинта ответили 404, и я их удалил, написав: «404 бывает двух сортов - такого
+# нет и переехало; отличить можно только перебором соседних путей». Перебор сделан
+# (`--run --only perp`, 11 запросов), и он окупился вдвое:
 #
-# ПОЧЕМУ УДАЛЕНЫ, А НЕ ОСТАВЛЕНЫ С ПОМЕТКОЙ. Клиент, который всегда получает 404, - это дверь
-# в стену: в коде она есть, в меню она есть, а человек за ней получает отказ. Ровно тот дефект,
-# который ТЗ B чинило у четырёх мёртвых клиентов («клиент написан, провода нет»), только
-# вывернутый: провод есть, а на другом конце ничего. Держать такое «пока разберёмся» значит
-# обещать экран, которого не будет.
+#   ЖИВЫ, ПРОСТО ПО ДРУГОМУ ПУТИ - ВОЗВРАЩЕНЫ НИЖЕ:
+#     * `perp-screener` (БЕЗ префикса tgm) -> 422 «Required field 'body -> date' is missing».
+#       422 на отсутствующее поле означает, что РУЧКА СУЩЕСТВУЕТ и разбирает тело.
+#     * `profiler/perp-positions` (без `address` в пути) -> 422 «Field 'pagination' is not
+#       recognized». Тоже живая ручка, просто не хочет пагинации.
 #
-# ЧТО ЕСЛИ ПУТЬ ПРОСТО ПЕРЕЕХАЛ. Возможно; поэтому в пробу добавлена группа `perp` с
-# кандидатами путей (tools/nansen_probe.py --run --only perp). Найдётся - вернём из git одной
-# командой, и тогда это будет решение по факту, а не надежда в коде. 404 в ответе - тоже факт,
-# и он написан здесь, чтобы следующий человек не искал этот эндпоинт заново.
+#   МЁРТВЫ ОКОНЧАТЕЛЬНО (404 на все кандидаты, вопрос закрыт вторым способом):
+#     * `tgm/perp-screener`, `tgm/perp-token-screener`, `tgm/perp-tokens`
+#     * `profiler/address/perp-positions`, `profiler/address/perp`, `perp-positions`
+#     * `portfolio/positions`, `profiler/address/portfolio`, `portfolio/address/positions`
+#       -> DeFi-позиций по адресу у Nansen нет ни под одним из проверенных путей.
+#
+# ЧЕМУ ЭТО УЧИТ, И ЭТО ДОРОЖЕ ДВУХ ВОССТАНОВЛЕННЫХ РУЧЕК: «404» НЕ РАВНО «ФИЧИ НЕТ». Я удалил
+# рабочую функциональность на один день, потому что поверил первому коду ответа. Правильный
+# порядок - сперва перебрать соседние пути (это дешево: 404 кредитов не стоит), и только потом
+# хоронить. И наоборот: 422 - это ХОРОШАЯ новость, потому что отвечает только существующая
+# ручка, и она же говорит, чего ей не хватает.
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+def perp_screener(per_page=15, order_field="volume_24h", days=1):
+    """Перп-токены по объёму и активности smart money. -> [dict].
+
+    ПУТЬ БЕЗ ПРЕФИКСА `tgm/`, И ЭТО СНЯТО ПРОБОЙ, А НЕ УГАДАНО: `tgm/perp-screener` отвечает
+    404, а `perp-screener` - 422 с требованием поля `date`. Обязательное окно даты и есть всё,
+    чего ему не хватало."""
+    return _rows(_post_fix("perp-screener",
+                           {"date": _date_range(days),
+                            "pagination": {"page": 1, "per_page": per_page},
+                            "order_by": [{"field": order_field, "direction": "DESC"}]},
+                           ckey=f"perpscr:{per_page}:{order_field}:{days}"))
+
+
+def profiler_perp_positions(address):
+    """Позиции, PnL и здоровье счёта адреса на перпах. -> dict | None.
+
+    ЗДОРОВЬЕ СЧЁТА - ТО, ЧЕГО НЕ БЫЛО: раньше мы видели позиции кита, но не его запас до
+    ликвидации, а это и есть главный вопрос про кита с плечом.
+
+    ПУТЬ `profiler/perp-positions`, БЕЗ `address/` В СЕРЕДИНЕ И БЕЗ `pagination` В ТЕЛЕ - оба
+    факта из пробы 20.09: прежний путь даёт 404, а этот отвечает 422 «Field 'pagination' is not
+    recognized», то есть живёт и разбирает тело. Пагинацию не посылаем вовсе."""
+    rows = _rows(_post_fix("profiler/perp-positions", {"address": address},
+                           ckey=f"pperp:{address}"))
+    return rows[0] if rows else None
 
 
 def perp_positions(token, per_page=20):
@@ -1942,25 +1989,78 @@ def pm_events(query="", per_page=15):
 
 
 def pm_orderbook(market_id):
-    """Bid/ask стакан рынка. -> dict | None.
+    """Стакан рынка. -> dict {'bids': [...], 'asks': [...]} | None.
 
     СТАКАН ОТВЕЧАЕТ НА ВОПРОС, КОТОРЫЙ ЦЕНА НЕ ОТВЕЧАЕТ: «45%» при пустом стакане и «45%»
-    при плотном - разные вещи, и вторая половина видна только здесь."""
+    при плотном - разные вещи, и вторая половина видна только здесь.
+
+    ФОРМА ОТВЕТА СНЯТА ЖИВОЙ ПРОБОЙ 20.09, И ОНА НЕ ТА, ЧТО МЫ ЖДАЛИ. Приходит ПЛОСКИЙ СПИСОК
+    уровней (asset_id, market_id, outcome, outcome_index, price, side, size, cumulative_size,
+    snapshot_timestamp), а не словарь с `bids`/`asks`. Прежний код брал `rows[0]`, то есть ОДИН
+    уровень, форматтер не находил в нём ни bids, ни asks и возвращал None - человек читал
+    «стакана нет» на живом стакане из десяти уровней. Отказ, которого не было.
+
+    Группируем по `side` здесь, а не в форматтере: форма ответа - дело клиента, и знать о ней
+    должен один слой.
+    """
     j = _post_fix("prediction-market/orderbook", {"market_id": str(market_id)},
               ckey=f"pmob:{market_id}")
-    if isinstance(j, dict):
+    if isinstance(j, dict) and (j.get('bids') or j.get('asks')):
         return j
     rows = _rows(j)
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    bids, asks = [], []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        _shape('orderbook-level', r)
+        _sd = str(_first(r, ('side', 'order_side')) or '').upper()
+        (bids if _sd.startswith('B') else asks).append(r)
+    if not bids and not asks:
+        return None
+    # ЛУЧШИЕ УРОВНИ СВЕРХУ: покупка по убыванию цены, продажа по возрастанию. Иначе «глубина»
+    # считается по случайным пяти уровням, а не по тем, по которым правда исполнится сделка.
+    try:
+        bids.sort(key=lambda r: -(_num_or_none(r.get('price')) or 0))
+        asks.sort(key=lambda r: (_num_or_none(r.get('price')) or 0))
+    except TypeError:
+        pass
+    return {'bids': bids, 'asks': asks}
 
 
-def pm_ohlcv(market_id, hours=48):
-    """Часовые свечи рынка: как менялась вероятность. -> [dict].
+def pm_ohlcv(market_id, outcome_index=0):
+    """Свечи рынка: как менялась вероятность. -> [dict], ОДИН исход, по времени.
 
-    ЭТО ГОТОВЫЙ РЯД ДЛЯ ГРАФИКА - то, из чего рисуется картинка «вероятность во времени»."""
-    return _rows(_post_fix("prediction-market/ohlcv",
-                       {"market_id": str(market_id), "hours": int(hours)},
-                       ckey=f"pmohlcv:{market_id}:{hours}"))
+    ЭТО ГОТОВЫЙ РЯД ДЛЯ ГРАФИКА - то, из чего рисуется картинка «вероятность во времени».
+
+    ДВА ИСПРАВЛЕНИЯ ПО ЖИВОЙ ПРОБЕ 20.09, И ВТОРОЕ ВАЖНЕЕ ПЕРВОГО:
+      1. поля `hours` эндпоинт НЕ ЗНАЕТ - ремонт по словам площадки убрал его сам, здесь
+         результат пришпилен, чтобы не платить за это на каждом холодном старте;
+      2. в ответе приходят свечи ОБОИХ исходов сразу (в строках есть `outcome_index`, `side`,
+         `token_id`). Отдать их графику как один ряд значит нарисовать ломаную, которая
+         прыгает между «да» и «нет» - линию, которой на рынке не существовало. Это не
+         неточность, а выдуманный график, поэтому фильтр здесь, а не «потом в картинке».
+
+    Сортировка по времени тоже здесь: порядок строк площадка не обещает, а график по
+    перемешанному ряду - это шум, выданный за динамику.
+    """
+    rows = _rows(_post_fix("prediction-market/ohlcv",
+                       {"market_id": str(market_id)},
+                       ckey=f"pmohlcv:{market_id}"))
+    if not rows:
+        return []
+    _want = int(outcome_index)
+    _one = [r for r in rows if isinstance(r, dict)
+            and _num_or_none(r.get('outcome_index')) in (None, float(_want))]
+    # ЕСЛИ ФИЛЬТР УБРАЛ ВСЁ - отдаём как приехало, а не пустоту: возможно, поля исхода в
+    # ответе нет вовсе, и тогда ряд и так один.
+    _one = _one or [r for r in rows if isinstance(r, dict)]
+    try:
+        _one.sort(key=lambda r: str(r.get('period_start') or r.get('timestamp') or ''))
+    except TypeError:
+        pass
+    return _one
 
 
 def pm_market_trades(market_id, per_page=20):
@@ -1989,12 +2089,10 @@ def pm_top_holders(market_id, per_page=10):
                        ckey=f"pmth:{market_id}:{per_page}"))
 
 
-def pm_holders_positions(market_id, per_page=25):
-    """Позиции ВСЕХ держателей рынка по токенам исхода. -> [dict]."""
-    return _rows(_post("prediction-market/holders-positions",
-                       {"market_id": str(market_id),
-                        "pagination": {"page": 1, "per_page": per_page}},
-                       ckey=f"pmhp:{market_id}:{per_page}"))
+# `pm_holders_positions` УДАЛЁН: `prediction-market/holders-positions` отвечает 404 (живая
+# проба 20.09, вместе со свежим market_id из скринера - то есть дело не в id). Четвёртый
+# похороненный эндпоинт. Клиента без данных не держим: он выглядит как работающая фича при
+# чтении файла. Держатели рынка есть в `pm_top_holders`, и экран репутации стоит на нём.
 
 
 # ── Backtesting: было 2 из 11 ─────────────────────────────────────────────────
@@ -2273,13 +2371,56 @@ def perp_positions_block(rows, token, lang='ru'):
     return with_source('\n'.join(L), lang)
 
 
-# ФОРМАТТЕР `wallet_perp_block` УДАЛЁН ВМЕСТЕ СО СВОИМ ЭНДПОИНТОМ. Он рисовал счёт кошелька
-# на перпах по `profiler/address/perp-positions`, а тот отвечает 404 (живая проба 19.09) - то
-# есть данных для него не существует. Форматтер без источника данных - мёртвый код, и хуже
-# того: он выглядит как работающая фича при чтении файла. Вернётся вместе с эндпоинтом, если
-# проба найдёт его новый путь (группа `perp` в tools/nansen_probe.py); в git он никуда не
-# пропал. Заодно из закрытого реестра сцен убрана сцена `wallet_perps` - имя, которым больше
-# некому звать, обещает в сводке разрез, которого нет.
+# ФОРМАТТЕР ВЕРНУЛСЯ ИЗ GIT ВМЕСТЕ СО СВОИМ ЭНДПОИНТОМ (проба путей 20.09 нашла его живым
+# по адресу `profiler/perp-positions`). Он никуда не пропадал - удалён был на день, и это
+# ровно то, зачем удалять честно: вернуть из истории дешевле, чем переписывать.
+def wallet_perp_block(d, address, lang='ru'):
+    """Счёт кошелька на перпах: позиции, PnL и ЗАПАС ДО ЛИКВИДАЦИИ. -> str | None.
+
+    Запас до ликвидации - тот вопрос про кита с плечом, на который мы раньше не отвечали:
+    позиции видели, а сколько ему осталось - нет."""
+    if not isinstance(d, dict) or not d:
+        return None
+    _shape('wallet-perp', d)
+    short = '%s…%s' % (address[:6], address[-4:])
+    L = [('🩺 <b>Счёт на перпах</b> <code>%s</code>' % short) if lang != 'en'
+         else ('🩺 <b>Perp account</b> <code>%s</code>' % short)]
+    eq = _first(d, ('account_value', 'equity', 'account_value_usd'))
+    mar = _first(d, ('margin_used', 'margin_used_usd', 'total_margin_used'))
+    pnl = _first(d, ('unrealized_pnl', 'unrealized_pnl_usd'))
+    health = _first(d, ('account_health', 'health', 'margin_ratio'))
+    seg = []
+    if eq not in (None, ''):
+        seg.append(('капитал $%s' if lang != 'en' else 'equity $%s') % _usd(eq))
+    if mar not in (None, ''):
+        seg.append(('под залогом $%s' if lang != 'en' else 'margin $%s') % _usd(mar))
+    if pnl not in (None, ''):
+        try:
+            seg.append(('нереализ. +$' if float(pnl) >= 0 else 'нереализ. -$') + _usd(abs(float(pnl)))
+                       if lang != 'en' else
+                       ('unrealized +$' if float(pnl) >= 0 else 'unrealized -$') + _usd(abs(float(pnl))))
+        except (TypeError, ValueError):
+            pass
+    if seg:
+        L.append('📈 ' + ' · '.join(seg))
+    if health not in (None, ''):
+        L.append(('🩺 здоровье счёта: %s' if lang != 'en' else '🩺 account health: %s') % health)
+    pos = d.get('positions') if isinstance(d.get('positions'), list) else []
+    for p in pos[:8]:
+        if not isinstance(p, dict):
+            continue
+        _c = _first(p, ('coin', 'token', 'symbol')) or '?'
+        _sd = (_first(p, ('side', 'direction')) or '').upper()[:5]
+        _lv = _first(p, ('leverage', 'leverage_x'))
+        _lq = _first(p, ('liquidation_price', 'liq_price'))
+        _bits = [x for x in (
+            ('%sx' % int(float(_lv))) if _lv not in (None, '') else None,
+            (('ликв. $%s' if lang != 'en' else 'liq $%s') % _money(_lq))
+            if _lq not in (None, '') else None) if x]
+        L.append('• %s %s %s' % (_c, _sd, ' · '.join(_bits)))
+    if len(L) == 1:
+        return None
+    return with_source('\n'.join(L), lang)
 
 
 def sm_trades_block(rows, bot_un=None, lang='ru', top=12):
@@ -2372,32 +2513,38 @@ def pm_orderbook_block(ob, market_id, lang='ru', depth=5):
     L = [('📖 <b>Стакан рынка</b> <code>%s</code>' % market_id) if lang != 'en'
          else ('📖 <b>Orderbook</b> <code>%s</code>' % market_id)]
 
+    # ═══ РАЗМЕР В СТАКАНЕ - ЭТО ДОЛИ, А НЕ ДОЛЛАРЫ ═══
+    # Третий случай одного и того же класса за два дня (после держателей рынка и после
+    # смарт-сделок): поле `size` печаталось со знаком $, и «глубина покупки $4.2K» на деле
+    # означала 4200 ДОЛЕЙ. Доля тут стоит 43-47 центов, то есть ошибка вдвое - и в строке,
+    # ради которой экран и открывают.
+    # Доллары считаем сами, из того же уровня: цена × доли. Доли печатаем без знака валюты.
     def _side(rows, title):
         out = ['\n<b>%s</b>' % title]
-        _tot = 0.0
+        _usd_tot, _sh_tot = 0.0, 0.0
         for r in (rows or [])[:depth]:
             if not isinstance(r, dict):
                 continue
-            p = _first(r, ('price', 'p'))
-            sz = _first(r, ('size', 'quantity', 's'))
-            try:
-                _tot += float(sz)
-            except (TypeError, ValueError):
-                pass
-            try:
-                out.append('%.0f%% · %s' % (float(p) * (100 if float(p) <= 1 else 1),
-                                            _usd(sz)))
-            except (TypeError, ValueError):
+            p = _num_or_none(_first(r, ('price', 'p')))
+            sz = _num_or_none(_first(r, ('size', 'quantity', 's')))
+            if p is None or sz is None:
                 continue
-        return out, _tot
+            _sh_tot += sz
+            _usd_tot += p * sz
+            out.append(('%.0f%% · %s долей ($%s)' if lang != 'en'
+                        else '%.0f%% · %s shares ($%s)')
+                       % (p * (100 if p <= 1 else 1), _usd(sz), _usd(p * sz)))
+        return out, _usd_tot, _sh_tot
 
-    _b, _bt = _side(bids, 'Заявки на покупку' if lang != 'en' else 'Bids')
-    _a, _at = _side(asks, 'Заявки на продажу' if lang != 'en' else 'Asks')
+    _b, _bt, _bs = _side(bids, 'Заявки на покупку' if lang != 'en' else 'Bids')
+    _a, _at, _as = _side(asks, 'Заявки на продажу' if lang != 'en' else 'Asks')
     L += _b + _a
     if _bt or _at:
-        L.append('\n' + (('Глубина: покупка $%s против продажи $%s'
-                          if lang != 'en' else 'Depth: bids $%s vs asks $%s')
+        L.append('\n' + (('Глубина в деньгах: покупка $%s против продажи $%s'
+                          if lang != 'en' else 'Depth in money: bids $%s vs asks $%s')
                          % (_usd(_bt), _usd(_at))))
+        L.append(('<i>Доллары посчитаны как цена × доли: в ответе их нет.</i>' if lang != 'en'
+                  else '<i>Dollars are computed as price × shares: the response has none.</i>'))
     return with_source('\n'.join(L), lang)
 
 
@@ -2624,6 +2771,9 @@ def pm_reputation(market_id, top=PM_REP_TOP):
         `weak`, ни в `strong`: приписать кошельку винрейт, которого мы не знаем, значит
         подогнать вывод. Число названо отдельно, и вызывающий обязан его показать.
     """
+    # СХЕМА ПОДТВЕРЖДЕНА ЖИВОЙ ПРОБОЙ 20.09: тело верное, строки приходят. `order_by` проба
+    # проверила и с ним, и без него - работает одинаково, оставляем (сортировка по размеру
+    # позиции нам нужна: первые пять адресов и держат основные деньги).
     rows = _rows(_post_fix("prediction-market/top-holders",
                            {"market_id": str(market_id),
                             "pagination": {"page": 1, "per_page": max(int(top) * 2, 10)},
@@ -2638,19 +2788,34 @@ def pm_reputation(market_id, top=PM_REP_TOP):
             continue
         _shape('pm-top-holders', r)
         addr = _first(r, ('address', 'wallet_address', 'holder_address', 'user_address'))
+        # ═══ ДОЛЛАРОВ В ЭТОМ ОТВЕТЕ НЕТ ВОВСЕ, И ЭТО ГЛАВНОЕ ПРО ЭКРАН ═══
+        # Живая проба 20.09 показала поля: address, avg_entry_price, current_price, market_id,
+        # outcome_index, owner_address, position_size, side, unrealized_pnl_usd.
+        # Единственное поле на `_usd` - это НЕРЕАЛИЗОВАННЫЙ PNL, а не размер позиции. Размер
+        # приходит в ДОЛЯХ (`position_size`).
+        #
+        # ПЕРВАЯ РЕДАКЦИЯ ЭТОГО МЕСТА ПЕЧАТАЛА ДОЛИ СО ЗНАКОМ $. То есть «$1.40M из $2.00M» на
+        # деле означало «1.4M долей из 2.0M долей», а доля на предсказательном рынке стоит от
+        # одного до ста центов - ошибка до ста раз, и В ГЛАВНОЙ СТРОКЕ экрана. Это ровно тот
+        # запрет, который мы сами и ввели: правдоподобное неверное число хуже прочерка.
+        #
+        # Считаем САМИ и только из того, что правда приехало: доли × текущая цена = доллары.
+        # Нет цены - нет и денег: `None`, и экран скажет это словом.
+        _sz = _num_or_none(_first(r, ('position_size', 'size', 'shares')))
+        _px = _num_or_none(_first(r, ('current_price', 'price', 'last_trade_price')))
         val, _vf = _usd_any(r, ('position_value_usd', 'value_usd', 'position_size_usd',
                                 'size_usd'))
-        if val in (None, ''):
-            # РАЗМЕР МОЖЕТ ПРИЕХАТЬ В ДОЛЯХ, А НЕ В ДОЛЛАРАХ. Тогда это НЕ деньги, и
-            # складывать их с деньгами нельзя - берём как есть и помечаем.
-            val = _first(r, ('position_size', 'size', 'shares'))
         try:
             val = float(val) if val not in (None, '') else None
         except (TypeError, ValueError):
             val = None
+        if val is None and _sz is not None and _px is not None:
+            val = _sz * _px
+            _vf = 'position_size×current_price'
         side = pm_holder_side(r)
         holders.append({'addr': str(addr or ''), 'who': _who(r), 'side': side, 'usd': val,
-                        'wr': None, 'pnl': None, 'markets': None})
+                        'shares': _sz, 'entry': _num_or_none(_first(r, ('avg_entry_price',))),
+                        'px': _px, 'wr': None, 'pnl': None, 'markets': None})
         if val:
             total += val
             by_side[side] = by_side.get(side, 0.0) + val
@@ -2731,6 +2896,16 @@ def pm_reputation_block(rep, market_id='', lang='ru', top=PM_REP_TOP):
         seg = []
         if h['usd']:
             seg.append('$%s' % _usd(h['usd']))
+        elif h.get('shares'):
+            # ДОЛИ БЕЗ ЦЕНЫ - НЕ ДЕНЬГИ, и знак $ к ним не ставится. Пишем как есть и словом,
+            # иначе получится та самая ошибка «доли под видом долларов» (до ста раз).
+            seg.append(('%s долей' if not en else '%s shares') % _usd(h['shares']))
+        if h.get('entry') is not None and h.get('px') is not None:
+            # ВОШЁЛ ПО 12¢, СЕЙЧАС 45¢ - это и есть «он уже прав» или «он уже неправ», и это
+            # приехало в том же ответе, бесплатно.
+            seg.append(('вход %.0f¢ → %.0f¢' if not en else 'entry %.0f¢ → %.0f¢')
+                       % (h['entry'] * 100 if h['entry'] <= 1 else h['entry'],
+                          h['px'] * 100 if h['px'] <= 1 else h['px']))
         if h['wr'] is not None:
             seg.append(('винрейт %.0f%%' if not en else 'win rate %.0f%%') % h['wr'])
         else:
@@ -2758,6 +2933,14 @@ def pm_reputation_block(rep, market_id='', lang='ru', top=PM_REP_TOP):
                    'side. Assigning a win rate we do not know would be fitting the answer.</i>'))
                  % rep['unknown'])
     L.append('')
+    # ОТКУДА ВЗЯЛИСЬ ДОЛЛАРЫ - СКАЗАНО ПРЯМО. Площадка отдаёт размер позиции в ДОЛЯХ и
+    # текущую цену отдельно; доллары здесь ПОСЧИТАНЫ нами (доли × цена), а не приехали готовыми.
+    # Человек имеет право знать, какое число измерено, а какое выведено.
+    if any(h.get('shares') and h.get('px') for h in rep['holders'][:int(top)]):
+        L.append(('<i>Доллары посчитаны как доли × текущая цена: готовой суммы в ответе нет.</i>'
+                  if not en else
+                  '<i>Dollars are computed as shares × current price: the response has no '
+                  'ready total.</i>'))
     L.append(('<i>Винрейт в прошлом не обещает будущего: это состав денег, а не прогноз и не '
               'совет. Запросов на экран: %d.</i>' if not en else
               '<i>Past win rate does not promise the future: this is the composition of the '
