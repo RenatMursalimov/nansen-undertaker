@@ -4,10 +4,16 @@ Goal: a judge understands the product with sound off.
 
 ## Preflight (not recorded)
 
+Selected live markets from Sep 20:
+
+- **Primary:** `1130012` — strongest hero result: $500.4K / 58% of examined money below 40% historical win rate.
+- **Backup:** `4323345` — PASS with the opposite conclusion: $0 / 0% below 40%, three known histories.
+- Do not use `4319462`: it has resolved to 0¢/100¢.
+
 ```bash
 cd <BOT_DIR>
-./venv/bin/python3 tools/nansen_live_smoke.py --run --market-id <PRIMARY_ID>
-./venv/bin/python3 tools/nansen_live_smoke.py --run --market-id <BACKUP_ID>
+./venv/bin/python3 tools/nansen_live_smoke.py --run --market-id 1130012
+./venv/bin/python3 tools/nansen_live_smoke.py --run --market-id 4323345
 ```
 
 Accept a market only when the tool ends with:

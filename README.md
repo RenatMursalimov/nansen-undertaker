@@ -32,6 +32,7 @@ Built for the **Nansen Meridian Buildathon**.
 
 - [`docs/proofs/LIVE_HERO_2026-09-20.md`](docs/proofs/LIVE_HERO_2026-09-20.md) — sanitized live hero proof: 4 calls, 3 known histories, 0 failures.
 - [`docs/proofs/MERIDIAN_CORPUS_2026-09-20.md`](docs/proofs/MERIDIAN_CORPUS_2026-09-20.md) — sanitized corpus proof: 1,050 network calls at the hard cap.
+- [`docs/proofs/LIVE_MARKET_SELECTION_2026-09-20.md`](docs/proofs/LIVE_MARKET_SELECTION_2026-09-20.md) — primary/backup decision from two additional PASS runs.
 - Full generated workflow catalog: [`docs/CATALOG.md`](docs/CATALOG.md)
 - Silent 52-second demo plan: [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md)
 - Ready X thread: [`docs/X_THREAD.md`](docs/X_THREAD.md)

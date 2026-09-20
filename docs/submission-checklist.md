@@ -13,13 +13,14 @@
 
 ## 1. Hero live proof
 
-- [x] Primary live proof passed: 4 requests, 3 known histories, 0 provider failures.
-- [ ] A backup active market also passes:
+- [x] Primary live proof passed (`1130012`): 4 requests, 3 known histories, 0 provider failures; hero metric $500.4K / 58% below 40% win rate.
+- [x] Backup live proof passed (`4323345`): 4 requests, 3 known histories, 0 provider failures; opposite metric $0 / 0% below 40%.
   ```bash
-  ./venv/bin/python3 tools/nansen_live_smoke.py --run --market-id <ID>
+  ./venv/bin/python3 tools/nansen_live_smoke.py --run --market-id 1130012
+  ./venv/bin/python3 tools/nansen_live_smoke.py --run --market-id 4323345
   ```
 - [x] Основной live smoke: `LIVE PROOF: PASS`, known histories 3, provider failures 0.
-- [ ] Запасной live smoke: `LIVE PROOF: PASS`, known histories 1+, provider failures 0.
+- [x] Запасной live smoke: `LIVE PROOF: PASS`, known histories 3, provider failures 0.
 - [ ] Кнопка `🎭 N` открывает тот же market_id, который был в строке списка.
 - [ ] Экран укладывается примерно в 20 секунд на холодном кэше (10с holders + 10с summaries;
       обычно быстрее).

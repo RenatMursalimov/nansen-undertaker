@@ -112,11 +112,12 @@ Requests: 4 · known histories: 1+ · provider failures: 0
 
 ## Live evidence collected on Sep 20
 
-- Hero live smoke: **PASS**, 4 requests, 3 known wallet histories, 0 provider failures.
+- Hero live smoke: **three PASS runs**. Final primary `1130012`: 4 requests, 3 known wallet histories, 0 provider failures, $500.4K / 58% of examined money below 40% historical win rate. Backup `4323345`: 4 requests, 3 known histories, 0 failures, $0 / 0% below 40%.
 - Meaningful Smart Money corpus: **1,050 client invocations / 1,050 network calls / 0 cache hits**,
   exactly at the hard cap; 155 tokens discovered, 1,048 latest unique cells across 75 tokens,
   414 top-100 partial cells, 2 transient failures.
-- Sanitized evidence: `docs/proofs/LIVE_HERO_2026-09-20.md` and
+- Sanitized evidence: `docs/proofs/LIVE_HERO_2026-09-20.md`,
+  `docs/proofs/LIVE_MARKET_SELECTION_2026-09-20.md` and
   `docs/proofs/MERIDIAN_CORPUS_2026-09-20.md` in the public repo.
 
 The first hero run also found two presentation defects now fixed: unexamined holders are no longer
