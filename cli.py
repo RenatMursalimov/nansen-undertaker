@@ -21,7 +21,7 @@
 
 БЕЗ КЛЮЧА КОМАНДЫ НЕ МОЛЧАТ И НЕ ПРИТВОРЯЮТСЯ. Они говорят «ключа нет, запрос не ушёл» -
 и это не заглушка, а тот самый разбор отказа, ради которого слой написан: «данных нет» и «мы не
-смогли спросить» обязаны читаться по-разному (см. README, раздел про семь классов отказа).
+смогли спросить» обязаны читаться по-разному (см. README, раздел про восемь классов отказа).
 """
 
 import os
@@ -46,6 +46,10 @@ BUILDER = '0x1f9090aaE28b8a3dCeaDf281B0F12828e676c326'
 #: начала бы врать о продукте ровно в том месте, где её будут читать внимательнее всего.
 #: Что двуязычно и что нет - перечислено в README.
 LANG = 'en' if (os.getenv('NANSEN_LANG') or '').lower().startswith('en') else 'ru'
+# CLI = один процесс на одну команду. Запоминаем, сколько строк уже было сегодня ДО команды,
+# чтобы footer считал именно этот запуск, а не весь день. Раньше третья команда показывала
+# сумму первых трёх и подписывала её «this run» — правдоподобная неверная цена.
+_RUN_START = len(T.read_day(T._day()) or [])
 
 
 def _plain(html):
@@ -100,19 +104,21 @@ def _cost():
     ЭТО ГЛАВНАЯ СТРОКА ВЫВОДА, а не подпись мелким шрифтом. Кредиты кончаются, и экран,
     который не говорит свою цену, нельзя ни планировать, ни сравнивать с соседним.
     """
-    rows = T.read_day(T._day()) or []
+    rows = (T.read_day(T._day()) or [])[_RUN_START:]
     calls = len(rows)
-    est = 0
-    for r in rows:
-        ep = (r.get('ep') if isinstance(r, dict) else None) or ''
-        est += T.est_credits(ep)
+    credits = sum(int((r or {}).get('cr') or 0) for r in rows if isinstance(r, dict))
+    unpriced = sum(1 for r in rows if isinstance(r, dict) and int(r.get('est') or 0) == 2)
     left = N.credits_left()
     if LANG == 'en':
         tail = (' · %s left' % left) if left not in (None, '') else ''
-        print('\n— this run: %d call(s), ≈%d credits%s' % (calls, est, tail))
+        extra = (' · %d call(s) unpriced' % unpriced) if unpriced else ''
+        print('\n— this run: %d call(s), %d measured credits%s%s'
+              % (calls, credits, extra, tail))
     else:
         tail = (' · остаток %s' % left) if left not in (None, '') else ''
-        print('\n— за этот прогон: вызовов %d, кредитов ≈%d%s' % (calls, est, tail))
+        extra = (' · без цены %d' % unpriced) if unpriced else ''
+        print('\n— этот запуск: вызовов %d, измерено кредитов %d%s%s'
+              % (calls, credits, extra, tail))
 
 
 def c_doctor(argv):
@@ -242,7 +248,7 @@ def c_liqmap(argv):
     if not argv:
         return _need('liqmap <ТИКЕР>', 'liqmap BTC')
     tok = argv[0].upper()
-    with T.scene('perp_positions'):
+    with T.scene('liq_map'):
         rows = N.perp_positions(tok, 50)
         _why = None if rows else N.fail_reason('empty')
     if not rows:
@@ -263,7 +269,13 @@ def c_liqmap(argv):
                                        LANG)))
         _cost()
         return 0
-    png, cap = V.liq_map_png(rows, tok, None, LANG)
+    try:
+        png, cap = V.liq_map_png(rows, tok, None, LANG)
+    except ImportError as e:
+        print('Картинки недоступны: %s (pip install matplotlib)' % e)
+        print(_plain(V.liq_caption(cl, tok, LANG)))
+        _cost()
+        return 2
     if png:
         print('картинка: %s' % png)
     print(_plain(cap or V.liq_caption(cl, tok, LANG)))
@@ -284,9 +296,11 @@ def c_wallet_perps(argv):
 
 
 def c_pm(argv):
-    with T.scene('polymarket'):
+    with T.scene('pm_markets'):
         rows = N.pm_market_screener(query=(argv[0] if argv else ''), per_page=10)
-        _say(N.pm_markets_block(rows=rows, top=10) if rows else None, _w('рынков Polymarket', 'Polymarket markets'))
+        _why = None if rows else N.fail_reason('empty')
+    _say(N.pm_markets_block(rows=rows, top=10) if rows else None,
+         _w('рынков Polymarket', 'Polymarket markets'), _why)
     return 0
 
 
@@ -294,7 +308,7 @@ def c_pm_rep(argv):
     """Кто держит рынок и как угадывал раньше. ДОРОЖЕ соседних команд: 6 запросов."""
     if not argv:
         return _need('pm-rep <market_id>', 'pm-rep 654412  (id берётся из команды pm)')
-    with T.scene('polymarket'):
+    with T.scene('pm_reputation'):
         rep = N.pm_reputation(argv[0])
         _why = None if rep else N.fail_reason('empty')
     _say(N.pm_reputation_block(rep, argv[0], LANG) if rep else None,
@@ -305,7 +319,7 @@ def c_pm_rep(argv):
 def c_pm_book(argv):
     if not argv:
         return _need('pm-book <market_id>', 'pm-book 654412  (id берётся из команды pm)')
-    with T.scene('polymarket'):
+    with T.scene('pm_orderbook'):
         ob = N.pm_orderbook(argv[0])
         _say(N.pm_orderbook_block(ob, argv[0], LANG) if ob else None, _w('стакана этого рынка', 'the orderbook of this market'))
     return 0
@@ -314,7 +328,7 @@ def c_pm_book(argv):
 def c_pm_wallet(argv):
     if not argv:
         return _need('pm-wallet <адрес>', 'pm-wallet %s' % BUILDER)
-    with T.scene('polymarket'):
+    with T.scene('pm_wallet'):
         _say(N.pm_wallet_block(argv[0]), _w('истории этого кошелька на Polymarket', 'this wallet history on Polymarket'))
     return 0
 
@@ -322,7 +336,7 @@ def c_pm_wallet(argv):
 def c_pm_leaders(argv):
     if not argv:
         return _need('pm-leaders <market_id>', 'pm-leaders 654412')
-    with T.scene('polymarket'):
+    with T.scene('pm_leaders'):
         _say(N.pm_market_leaders_block(argv[0], 10), _w('трейдеров этого рынка', 'traders of this market'))
     return 0
 
@@ -341,7 +355,15 @@ def _png(maker, what):
     except ImportError as e:
         print('Картинки недоступны: %s. Текстовые команды работают (pip install matplotlib).' % e)
         return 2
-    png, cap = maker(V)
+    try:
+        png, cap = maker(V)
+    except ImportError as e:
+        # oc_nansen_viz импортируется без matplotlib специально; тяжёлый импорт происходит
+        # внутри _style(). Поэтому ловить только `import oc_nansen_viz` было недостаточно:
+        # команда падала позже вместо честного «установи matplotlib».
+        print('Картинки недоступны: %s. Текстовые команды работают (pip install matplotlib).'
+              % e)
+        return 2
     if not png:
         # ПУСТОЙ ГРАФИК НЕ РИСУЕМ ВООБЩЕ: шесть нулевых столбиков выглядят как измерение и
         # врут сильнее, чем отсутствие картинки.
@@ -377,7 +399,7 @@ def c_png_flows(argv):
 def c_png_pm(argv):
     if not argv:
         return _need('png-pm <market_id>', 'png-pm 654412')
-    with T.scene('polymarket'):
+    with T.scene('pm_chart'):
         rows = N.pm_ohlcv(argv[0])
         _why = None if rows else N.fail_reason('empty')
     if not rows:

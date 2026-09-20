@@ -14,6 +14,7 @@ import os
 import json
 import re
 import time
+import threading
 import httpx
 
 try:
@@ -79,6 +80,9 @@ except Exception as _tele_err:                                   # pragma: no co
 _BASE = "https://api.nansen.ai/api/v1"
 _CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'nansen_cache.json')
 _CACHE_TTL = 1800  # 30 мин кэш на одинаковые запросы
+# Reputation-screen делает пять независимых address-summary параллельно. Без lock два потока
+# читали один старый JSON и последний save стирал записи остальных — кэш-хит зависел от гонки.
+_CACHE_LOCK = threading.RLock()
 
 
 def _key():
@@ -107,26 +111,35 @@ def _save_cache(d):
 
 
 def _cache_get(ckey, ttl=None):
-    """ttl: своё время жизни в секундах. Нужно историческим данным: свеча за прошедший
-    день уже не изменится, и держать её 30 минут значит платить кредиты за то же самое.
+    """Получить запись, соблюдая TTL конкретной записи, а не один глобальный.
 
-    ВОЗРАСТ ПОПАДАНИЯ ОТМЕЧАЕТСЯ ЗДЕСЬ, а не считается наверху: только здесь известно `ts`
-    записи. Из него собирается подпись «Nansen, данные на N минут назад» — без неё человек
-    не отличит живое от кэша, и метка источника была бы половиной правды."""
-    d = _load_cache()
-    row = d.get(ckey)
-    if row and time.time() - row.get('ts', 0) < (ttl or _CACHE_TTL):
+    `ttl` вызывающего имеет приоритет; иначе используем TTL, сохранённый при записи; старые
+    записи без поля мигрируют на обычные 30 минут. Это важно для истории: свеча прошлого дня
+    не меняется, и обещанные 30 дней не должны превращаться в два часа после любой новой
+    записи кэша.
+    """
+    with _CACHE_LOCK:
+        d = _load_cache()
+        row = d.get(ckey)
+    effective = ttl or ((row or {}).get('ttl')) or _CACHE_TTL
+    if row and time.time() - row.get('ts', 0) < effective:
         _tele.note_age(time.time() - row.get('ts', 0))
         return row.get('value')
     return None
 
 
-def _cache_put(ckey, value):
-    d = _load_cache()
-    d[ckey] = {'ts': time.time(), 'value': value}
-    # чистка протухших
-    d = {k: v for k, v in d.items() if time.time() - v.get('ts', 0) < _CACHE_TTL * 4}
-    _save_cache(d)
+def _cache_put(ckey, value, ttl=None):
+    """Записать значение с его собственным TTL и чистить каждую запись по её TTL."""
+    with _CACHE_LOCK:
+        d = _load_cache()
+        d[ckey] = {'ts': time.time(), 'ttl': int(ttl or _CACHE_TTL), 'value': value}
+        now = time.time()
+        # Раньше всё старше `_CACHE_TTL*4` (2 часа) удалялось безотносительно к своему TTL.
+        # История обещала 6–720 часов, но следующая запись стирала её через два.
+        d = {k: v for k, v in d.items()
+             if now - float((v or {}).get('ts') or 0) <
+             float((v or {}).get('ttl') or _CACHE_TTL)}
+        _save_cache(d)
 
 
 # ── Agent (SSE) ──────────────────────────────────────────────────────────────
@@ -168,8 +181,9 @@ def ask_agent(question, expert=False, use_cache=True, timeout=120, continue_conv
     # показывал владельцу, был систематически завышен, а в зачёт участнику самый дорогой его
     # вопрос давал ноль.
     _t0 = time.time()
-    _fb = _tele.flight_begin() or (None, 1)
+    _fb = _tele.flight_begin() or (None, 1, 0)
     _rem_before, _parallel = _fb[0], _fb[1]
+    _overlap_start = _fb[2] if len(_fb) > 2 else 0
     _http = 0
     try:
         _payload = {"text": question}
@@ -182,7 +196,8 @@ def ask_agent(question, expert=False, use_cache=True, timeout=120, continue_conv
             if r.status_code != 200:
                 body = r.read().decode('utf-8', 'ignore')[:200]
                 _tele.note(_classify(r.status_code), r.status_code)
-                _agent_tele(_ep, _t0, _http, False, False, _rem_before, _parallel, question)
+                _agent_tele(_ep, _t0, _http, False, False, _rem_before, _parallel,
+                            _overlap_start, question)
                 print("[nansen] %s HTTP %s: %s" % (_ep, r.status_code, body))
                 return None, f"HTTP {r.status_code}: {body}"
             _tele.note_age(0)
@@ -212,15 +227,16 @@ def ask_agent(question, expert=False, use_cache=True, timeout=120, continue_conv
                     # Особенно глупо это выглядело в Хабе, где бот САМ просит уточнить тикер.
                     _cid = ev.get("conversation_id")
                     if _cid:
-                        _LAST_CONV['id'] = str(_cid)
-                        _LAST_CONV['ts'] = time.time()
+                        _remember_conversation(_cid)
                 elif t == "error":
                     _tele.note('http', _http)
-                    _agent_tele(_ep, _t0, _http, False, False, _rem_before, _parallel, question)
+                    _agent_tele(_ep, _t0, _http, False, False, _rem_before, _parallel,
+                            _overlap_start, question)
                     return None, f"agent error: {ev.get('error')}"
         text = "".join(text_parts).strip()
         _tele.note('ok' if text else 'empty')
-        _agent_tele(_ep, _t0, _http, bool(text), not text, _rem_before, _parallel, question)
+        _agent_tele(_ep, _t0, _http, bool(text), not text, _rem_before, _parallel,
+                    _overlap_start, question)
         if not text and 'askUserQuestion' in str(tools):
             return None, "нужен уточняющий вопрос (агент не понял тикер/сеть)"
         if text and use_cache:
@@ -228,39 +244,71 @@ def ask_agent(question, expert=False, use_cache=True, timeout=120, continue_conv
         return (text or None), tools
     except Exception as e:
         _tele.note('timeout' if isinstance(e, httpx.TimeoutException) else 'http', _http)
-        _agent_tele(_ep, _t0, _http, False, False, _rem_before, _parallel, question)
+        _agent_tele(_ep, _t0, _http, False, False, _rem_before, _parallel,
+                            _overlap_start, question)
         print("[nansen] %s: %s" % (_ep, e))
         return None, f"exception: {e}"
 
 
-def _agent_tele(ep, t0, http, ok, empty, rem_before, parallel, question):
+def _agent_tele(ep, t0, http, ok, empty, rem_before, parallel, overlap_start, question):
     """Строка телеметрии для Agent. Отдельной функцией, потому что у `ask_agent` три выхода
     (ошибка HTTP, событие error, обычный конец), и врезка «по местам» уже один раз стоила
     нам всего учёта: пропущенный выход = потерянные 200 кредитов в отчёте."""
     _rem = _CREDITS.get('remaining')
     _rem = _rem if isinstance(_rem, int) else None
-    _tele.flight_end(_rem)
+    overlap_end = _tele.flight_end(_rem)
     _tele.record(ep, ms=int((time.time() - t0) * 1000), http=http, ok=ok, empty=empty,
                  cache=False, rem=_rem, used=_CREDITS.get('used'),
                  rem_before=rem_before, parallel=parallel,
+                 overlap=(overlap_end != overlap_start),
                  sig=_tele.sig_of(ep, {'text': question}))
 
 
-#: ПОСЛЕДНИЙ РАЗГОВОР С АГЕНТОМ. Один на процесс и с коротким сроком жизни нарочно: это НЕ
-#: память человека и не профиль, а сцепка «вопрос - уточнение», живущая минуты. Хранить их
-#: по людям значило бы завести ещё одно место с юзерскими данными (закон №12) ради удобства,
-#: которое нужно ровно на один ход.
-_LAST_CONV = {'id': None, 'ts': 0}
-_CONV_TTL = 600          # 10 минут: уточняют сразу, а не через час
+#: ПОСЛЕДНИЙ РАЗГОВОР С АГЕНТОМ — ПО КЛЮЧУ ЧЕЛОВЕКА И ТОЛЬКО В ПАМЯТИ ПРОЦЕССА.
+#:
+#: Раньше слот был ОДИН на процесс. Последовательность «A спросил → B спросил → A уточнил»
+#: продолжала разговор B и могла отдать A ответ про чужой токен/контекст. Это не просто UX:
+#: cross-user context mix-up — утечка смысла чужого вопроса. Хранить на диске не нужно и
+#: нельзя; uid уже есть в коробке телеметрии, а через 10 минут запись протухает.
+_LAST_CONV = {}                 # key(uid) -> {'id': str, 'ts': float}
+_CONV_TTL = 600                # 10 минут: уточняют сразу, а не через час
+
+
+def _conversation_key():
+    """Ключ текущего человека из коробки сцены. -> str | None.
+
+    Без uid продолжение ОТКЛЮЧЕНО: глобальный fallback снова склеил бы двух людей. Фоновые
+    вызовы и CLI начинают новый разговор — это безопаснее, чем продолжить чужой.
+    """
+    try:
+        uid = (_tele.box() or {}).get('uid')
+    except Exception:
+        uid = None
+    return ('u:%s' % uid) if uid not in (None, '') else None
+
+
+def _remember_conversation(conversation_id):
+    """Запомнить id для текущего uid в памяти процесса. Ничего не пишет на диск."""
+    key = _conversation_key()
+    if key and conversation_id:
+        _LAST_CONV[key] = {'id': str(conversation_id), 'ts': time.time()}
+        # Чистим протухшее при записи: словарь не растёт за каждым пользователем навсегда.
+        now = time.time()
+        for k, row in list(_LAST_CONV.items()):
+            if now - float((row or {}).get('ts') or 0) > _CONV_TTL:
+                _LAST_CONV.pop(k, None)
 
 
 def last_conversation(max_age=None):
-    """id последнего разговора с агентом, если он ещё свеж. -> str | None."""
-    if not _LAST_CONV['id']:
+    """id последнего разговора ТЕКУЩЕГО человека, если ещё свеж. -> str | None."""
+    key = _conversation_key()
+    row = _LAST_CONV.get(key) if key else None
+    if not row or not row.get('id'):
         return None
-    if time.time() - _LAST_CONV['ts'] > (max_age or _CONV_TTL):
+    if time.time() - float(row.get('ts') or 0) > (max_age or _CONV_TTL):
+        _LAST_CONV.pop(key, None)
         return None
-    return _LAST_CONV['id']
+    return row['id']
 
 
 # ── Smart Money (структурированные) ──────────────────────────────────────────
@@ -297,6 +345,7 @@ def smart_money_netflow(chains=None, timeframe="24h", only_smart_money=True, per
 # не нужен. Раньше credits_left() дёргал agent/fast со словом «hi» — то есть проверка
 # баланса стоила ~200 кредитов и сама же его уменьшала.
 _CREDITS = {'remaining': None, 'used': None, 'ts': 0}
+_CREDITS_LOCK = threading.RLock()
 
 
 def _note_credits(hdr):
@@ -312,18 +361,21 @@ def _note_credits(hdr):
     rem = low.get('x-nansen-credits-remaining')
     if rem is None:
         return
-    try:
-        _CREDITS['remaining'] = int(float(rem))
-    except (TypeError, ValueError):
-        _CREDITS['remaining'] = rem
-    used = low.get('x-nansen-credits-used')
-    if used is not None:
+    with _CREDITS_LOCK:
         try:
-            _CREDITS['used'] = int(float(used))
+            _CREDITS['remaining'] = int(float(rem))
         except (TypeError, ValueError):
-            _CREDITS['used'] = used
-    _CREDITS['ts'] = time.time()
-    _tele.credits_write(_CREDITS['remaining'], _CREDITS['used'])
+            _CREDITS['remaining'] = rem
+        used = low.get('x-nansen-credits-used')
+        if used is not None:
+            try:
+                _CREDITS['used'] = int(float(used))
+            except (TypeError, ValueError):
+                _CREDITS['used'] = used
+        _CREDITS['ts'] = time.time()
+        # Один snapshot под lock: параллельные responses не смешивают remaining одного с
+        # used другого и не пишут полусобранный JSON.
+        _tele.credits_write(_CREDITS['remaining'], _CREDITS['used'])
 
 
 def credits_left(force=False):
@@ -928,12 +980,38 @@ def _cache_hit(path, j):
     _tele.record(path, ms=0, http=200, ok=True, empty=empty, cache=True)
 
 
+def _log_body(body):
+    """Тело запроса для bot.log без адресов кошельков. Схема остаётся видна.
+
+    Лог тела нужен для ремонта 400/422, но profiler-запросы несут адрес человека. Публичная
+    телеметрия его не хранит, а bot.log раньше хранил полностью — privacy claim была только
+    наполовину правдой. Контракты токенов (`token_address`) и market_id оставляем: это
+    публичные сущности и без них диагностика сети/рынка теряет смысл.
+    """
+    private_keys = {'address', 'wallet_address', 'user_address', 'owner_address',
+                    'to_wallet_address', 'from_address'}
+
+    def walk(v, key=''):
+        if key in private_keys and isinstance(v, str):
+            return (v[:6] + '…' + v[-4:]) if len(v) > 12 else '<redacted>'
+        if isinstance(v, dict):
+            return {k: walk(x, str(k)) for k, x in v.items()}
+        if isinstance(v, list):
+            return [walk(x, key) for x in v]
+        return v
+    try:
+        return json.dumps(walk(body), ensure_ascii=False)[:400]
+    except Exception:
+        return '<unprintable body>'
+
+
 def _http_post(base, path, body, timeout, tag):
     """ГОРЛОВИНА: один сетевой POST, одна строка телеметрии, один класс отказа.
     -> (JSON | None, http-код). `http=0` означает исключение (таймаут, сеть)."""
     t0 = time.time()
-    _fb = _tele.flight_begin() or (None, 1)
+    _fb = _tele.flight_begin() or (None, 1, 0)
     rem_before, parallel = _fb[0], _fb[1]
+    overlap_start = _fb[2] if len(_fb) > 2 else 0
     http, j, _cls = 0, None, None
     try:
         r = httpx.post("%s/%s" % (base, path), headers=_headers(), json=body, timeout=timeout)
@@ -952,7 +1030,7 @@ def _http_post(base, path, body, timeout, tag):
             # нет (он в заголовке), адресов кошельков людей тоже - только контракт/аргументы.
             if _cls == 'badreq':
                 print("[nansen%s] %s HTTP %s ОТВЕРГ НАШ ЗАПРОС: %s | тело: %s"
-                      % (tag, path, http, r.text[:220], json.dumps(body, ensure_ascii=False)[:400]))
+                      % (tag, path, http, r.text[:220], _log_body(body)))
             else:
                 print("[nansen%s] %s HTTP %s: %s" % (tag, path, http, r.text[:180]))
             _tele.note(_cls, http, path)
@@ -972,11 +1050,11 @@ def _http_post(base, path, body, timeout, tag):
         # не отсутствие сделок, а неверная схема запроса, и без тела в логе это не отличить.
         if empty:
             print("[nansen%s] %s 200 ПУСТО | тело запроса: %s"
-                  % (tag, path, json.dumps(body, ensure_ascii=False)[:400]))
+                  % (tag, path, _log_body(body)))
         _tele.note('empty' if empty else 'ok', http, path)
     _rem = _CREDITS.get('remaining')
     _rem = _rem if isinstance(_rem, int) else None
-    _tele.flight_end(_rem)
+    overlap_end = _tele.flight_end(_rem)
     # КЛАСС ОТКАЗА ЕДЕТ В СТРОКУ ТЕЛЕМЕТРИИ ГОТОВЫМ. Пересчитать его там нельзя: 'unsupported'
     # отличается от 'bad_request' только ТЕКСТОМ ответа, а в `record` доезжает лишь код. Без
     # этого граница покрытия легла бы в сводку как «наш кривой запрос», и месячная строка
@@ -984,6 +1062,7 @@ def _http_post(base, path, body, timeout, tag):
     _tele.record(path, ms=int((time.time() - t0) * 1000), http=http, ok=(http == 200),
                  empty=empty, cache=False, rem=_rem,
                  used=_CREDITS.get('used'), rem_before=rem_before, parallel=parallel,
+                 overlap=(overlap_end != overlap_start),
                  sig=_tele.sig_of(path, body), cls=_cls)
     return j, http
 
@@ -1917,9 +1996,13 @@ def sm_dex_trades(chains=None, per_page=25):
     """Сделки smart money на DEX за последние 24ч. -> [dict]. ~1-5 кр.
 
     САМОЕ БЛИЗКОЕ К «ЧТО ОНИ ДЕЛАЮТ ПРЯМО СЕЙЧАС»: netflow это агрегат за окно, а здесь
-    отдельные сделки - видно, кто и во что зашёл, а не только итог."""
+    отдельные сделки - видно, кто и во что зашёл, а не только итог.
+
+    Схема подтверждена живой пробой 19.09, поэтому обычный `_post`, а не `_post_fix`:
+    capped corpus считает один client invocation как один физический запрос; автоматические
+    repair-retries здесь могли пробить обещанный hard cap."""
     chains = chains or ["ethereum", "solana", "base"]
-    return _rows(_post_fix("smart-money/dex-trades",
+    return _rows(_post("smart-money/dex-trades",
                        {"chains": chains,
                         "pagination": {"page": 1, "per_page": per_page},
                         "order_by": [{"field": "block_timestamp", "direction": "DESC"}]},
@@ -2604,13 +2687,40 @@ def pm_market_screener(query="", status="active", tags=None, per_page=12,
                        ckey=f"pmscr:{query}:{status}:{order_field}:{per_page}"))
 
 
-def pm_address_summary(address):
-    """Лайфтайм-сводка кошелька на Polymarket: realized/unrealized/total PnL, win_rate,
-    markets_won/traded, возраст. -> dict | None."""
-    rows = _rows(_post("prediction-market/address-summary",
-                       {"address": address, "pagination": {"page": 1, "per_page": 10}},
-                       ckey=f"pmsum:{address}"))
-    return rows[0] if rows else None
+def pm_address_summary(address, timeout=10):
+    """Лайфтайм-сводка кошелька на Polymarket. -> dict | None.
+
+    10 секунд, а не общий 60-секундный timeout: reputation-screen спрашивает пять адресов
+    параллельно и обязан уложиться в 30–60-секундное demo. Один зависший адрес не должен
+    держать весь экран минуту.
+    """
+    j = _post("prediction-market/address-summary",
+              {"address": address, "pagination": {"page": 1, "per_page": 10}},
+              ckey=f"pmsum:{address}", timeout=timeout)
+    if j is None:
+        return None
+    expected = {'win_rate', 'winrate', 'win_rate_pct', 'total_pnl_usd', 'markets_traded',
+                'wallet_age_days', 'address'}
+    # Терпим три подтверждённые формы: список, {data:[...]}/{result:[...]}, прямой объект.
+    if isinstance(j, dict) and expected.intersection(j):
+        return j
+    rows = _rows(j)
+    if isinstance(rows, dict) and expected.intersection(rows):
+        return rows
+    if isinstance(rows, list):
+        if not rows and (isinstance(j, list) or
+                         (isinstance(j, dict) and ('data' in j or 'result' in j))):
+            return None                         # распознанная честная пустота
+        if rows and isinstance(rows[0], dict) and expected.intersection(rows[0]):
+            return rows[0]
+    # НЕПУСТОЙ 200 В НЕЗНАКОМОЙ ФОРМЕ — не «у кошелька нет истории». Это schema drift у
+    # интеграции; помечаем badreq в текущей worker-сцене, чтобы hero-screen назвал частичный
+    # сбой. Имена полей печатаются — следующий фикс займёт один круг, а не три догадки.
+    if j not in ({}, [], None):
+        keys = sorted(j.keys())[:20] if isinstance(j, dict) else [type(j).__name__]
+        print('[nansen] address-summary 200 НЕЗНАКОЙ ФОРМЫ: %s' % keys)
+        _tele.note('badreq', 200, 'prediction-market/address-summary')
+    return None
 
 
 def pm_pnl_by_address(address, per_page=10):
@@ -2758,9 +2868,9 @@ def pm_holder_side(row):
 def pm_reputation(market_id, top=PM_REP_TOP):
     """Кто держит рынок и КАК ОНИ УГАДЫВАЛИ РАНЬШЕ. -> dict | None.
 
-    Запросов: 1 (держатели) + top (лайфтайм-сводка каждого). Схемы обоих эндпоинтов живым
-    ключом НЕ сняты, поэтому оба идут через ремонт по словам площадки, а имена полей читаются
-    с запасом кандидатов и по соглашению (`*_usd`).
+    Запросов: 1 (держатели) + top (лайфтайм-сводка каждого). Обе схемы подтверждены живой
+    пробой 20.09. Истории кошельков идут параллельно с timeout 15с; каждый отказ возвращается
+    отдельным классом и НЕ превращается в «истории у кошелька нет».
 
     -> {'holders': [...], 'by_side': {...}, 'weak_usd', 'strong_usd', 'known', 'unknown',
         'total_usd', 'calls'} либо None, если держателей не отдали вовсе.
@@ -2778,7 +2888,7 @@ def pm_reputation(market_id, top=PM_REP_TOP):
                            {"market_id": str(market_id),
                             "pagination": {"page": 1, "per_page": max(int(top) * 2, 10)},
                             "order_by": [{"field": "position_size", "direction": "DESC"}]},
-                           ckey=f"pmth:{market_id}:{max(int(top) * 2, 10)}"))
+                           ckey=f"pmth:{market_id}:{max(int(top) * 2, 10)}", timeout=10))
     if not rows:
         return None
     holders, calls = [], 1
@@ -2815,22 +2925,64 @@ def pm_reputation(market_id, top=PM_REP_TOP):
         side = pm_holder_side(r)
         holders.append({'addr': str(addr or ''), 'who': _who(r), 'side': side, 'usd': val,
                         'shares': _sz, 'entry': _num_or_none(_first(r, ('avg_entry_price',))),
-                        'px': _px, 'wr': None, 'pnl': None, 'markets': None})
+                        'px': _px, 'wr': None, 'pnl': None, 'markets': None, 'status': None})
         if val:
             total += val
             by_side[side] = by_side.get(side, 0.0) + val
     if not holders:
         return None
     weak = strong = 0.0
-    known = unknown = 0
-    for h in holders[:int(top)]:
+    known = no_history = no_winrate = failed = 0
+    failure_reasons = {}
+    target = holders[:int(top)]
+    uid = None
+    try:
+        uid = (_tele.box() or {}).get('uid')
+    except Exception:
+        pass
+
+    def _summary_one(h):
+        """Один адрес в своей сцене: результат + точная причина пустоты/сбоя."""
         if not h['addr']:
-            unknown += 1
+            return h, None, 'empty'
+        with _tele.scene('pm_reputation', uid):
+            row = pm_address_summary(h['addr'], timeout=10)
+            why = None if row else fail_reason('empty')
+        return h, row, why
+
+    # ПЯТЬ ИСТОРИЙ ПАРАЛЛЕЛЬНО, а не 5×60 секунд последовательно. Верхняя граница холодного
+    # экрана теперь около 15 секунд плюс top-holders, что укладывается в 30–60с demo.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    jobs = {}
+    with ThreadPoolExecutor(max_workers=max(1, min(len(target), 5))) as pool:
+        for h in target:
+            if h['addr']:
+                jobs[pool.submit(_summary_one, h)] = h
+            else:
+                no_history += 1
+        calls += len(jobs)
+        results = []
+        for fut in as_completed(jobs):
+            try:
+                results.append(fut.result())
+            except Exception as e:
+                print('[nansen] pm reputation summary worker: %s' % str(e)[:100])
+                results.append((jobs[fut], None, 'http'))
+
+    # РЕНДЕР ОСТАЁТСЯ В ИСХОДНОМ ПОРЯДКЕ ДЕРЖАТЕЛЕЙ, хотя сеть закончила в другом.
+    by_addr = {h['addr']: (s, why) for h, s, why in results}
+    for h in target:
+        if not h['addr']:
             continue
-        s = pm_address_summary(h['addr'])
-        calls += 1
+        s, why = by_addr.get(h['addr'], (None, 'http'))
         if not isinstance(s, dict) or not s:
-            unknown += 1
+            if why in (None, 'empty'):
+                no_history += 1
+                h['status'] = 'no_history'
+            else:
+                failed += 1
+                h['status'] = 'failed:' + str(why)
+                failure_reasons[why] = failure_reasons.get(why, 0) + 1
             continue
         _shape('pm-address-summary', s)
         wr = _winrate_pct(_first(s, ('win_rate', 'winrate', 'win_rate_pct')))
@@ -2838,20 +2990,23 @@ def pm_reputation(market_id, top=PM_REP_TOP):
         h['pnl'] = _first(s, ('total_pnl_usd', 'total_pnl', 'realized_pnl_usd'))
         h['markets'] = _first(s, ('markets_traded', 'markets_count', 'total_markets'))
         if wr is None:
-            unknown += 1
+            no_winrate += 1
+            h['status'] = 'no_winrate'
             continue
+        h['status'] = 'ok'
         known += 1
         if h['usd']:
             if wr < PM_WEAK_WR:
                 weak += h['usd']
             else:
                 strong += h['usd']
-    # ХВОСТ ДЕРЖАТЕЛЕЙ, КОТОРЫХ МЫ НЕ РАЗБИРАЛИ, тоже считается неизвестным: иначе «известно
-    # про 5 из 10» выглядело бы как «известно про всех».
-    unknown += max(0, len(holders) - int(top))
+    unexamined = max(0, len(holders) - int(top))
+    unknown = no_history + no_winrate + failed + unexamined
     return {'holders': holders, 'by_side': by_side, 'weak_usd': weak, 'strong_usd': strong,
-            'known': known, 'unknown': unknown, 'total_usd': total, 'calls': calls,
-            'market_id': str(market_id)}
+            'known': known, 'unknown': unknown, 'no_history': no_history,
+            'no_winrate': no_winrate, 'failed': failed, 'unexamined': unexamined,
+            'failure_reasons': failure_reasons,
+            'total_usd': total, 'calls': calls, 'market_id': str(market_id)}
 
 
 def pm_reputation_block(rep, market_id='', lang='ru', top=PM_REP_TOP):
@@ -2908,9 +3063,13 @@ def pm_reputation_block(rep, market_id='', lang='ru', top=PM_REP_TOP):
                           h['px'] * 100 if h['px'] <= 1 else h['px']))
         if h['wr'] is not None:
             seg.append(('винрейт %.0f%%' if not en else 'win rate %.0f%%') % h['wr'])
+        elif str(h.get('status') or '').startswith('failed:'):
+            # НЕ «ИСТОРИИ НЕТ»: мы пытались спросить, но не смогли. Смешать эти два мира —
+            # повторить исходный дефект интеграции внутри hero-screen.
+            seg.append(('история НЕ приехала' if not en else 'history NOT delivered'))
+        elif h.get('status') == 'no_winrate':
+            seg.append(('поле винрейта не приехало' if not en else 'win-rate field missing'))
         else:
-            # ПРОЧЕРК ИМЕНЕМ, А НЕ ПУСТОТОЙ: «истории нет» и «винрейт нулевой» - разные вещи,
-            # и вторая читалась бы как приговор кошельку.
             seg.append('истории нет' if not en else 'no history')
         if h['pnl'] not in (None, ''):
             try:
@@ -2924,14 +3083,26 @@ def pm_reputation_block(rep, market_id='', lang='ru', top=PM_REP_TOP):
             except (TypeError, ValueError):
                 pass
         L.append('%d. %s [%s] · %s' % (i, h['who'], h['side'], ' · '.join(seg)))
-    if rep['unknown']:
+    if rep.get('failed'):
         L.append('')
-        L.append((('⚠️ <i>По %d держател(ям) истории нет - их деньги НЕ посчитаны ни в одну '
-                   'сторону. Приписать кошельку винрейт, которого мы не знаем, значит подогнать '
-                   'вывод.</i>') if not en else
-                  ('⚠️ <i>%d holder(s) have no history - their money is counted on NEITHER '
-                   'side. Assigning a win rate we do not know would be fitting the answer.</i>'))
-                 % rep['unknown'])
+        rs = ', '.join('%s×%d' % (k, v) for k, v in
+                       sorted((rep.get('failure_reasons') or {}).items()))
+        L.append((('⚠️ <i>История %d держател(ей) НЕ приехала из-за сбоя (%s). Их деньги '
+                   'не посчитаны ни в одну сторону; это наш неполный ответ, а не свойство '
+                   'кошельков.</i>') if not en else
+                  ('⚠️ <i>History for %d holder(s) was NOT delivered due to a failure (%s). '
+                   'Their money is counted on neither side; this is our partial response, '
+                   'not a property of those wallets.</i>')) % (rep['failed'], rs or '?'))
+    natural_unknown = (rep.get('no_history', 0) + rep.get('no_winrate', 0)
+                       + rep.get('unexamined', 0))
+    if natural_unknown:
+        L.append('')
+        L.append((('⚠️ <i>По %d держател(ям) нет измеримого винрейта - их деньги НЕ '
+                   'посчитаны ни в одну сторону. Приписать винрейт, которого мы не знаем, '
+                   'значит подогнать вывод.</i>') if not en else
+                  ('⚠️ <i>%d holder(s) have no measurable win rate - their money is counted '
+                   'on NEITHER side. Assigning a win rate we do not know would be fitting '
+                   'the answer.</i>')) % natural_unknown)
     L.append('')
     # ОТКУДА ВЗЯЛИСЬ ДОЛЛАРЫ - СКАЗАНО ПРЯМО. Площадка отдаёт размер позиции в ДОЛЯХ и
     # текущую цену отдельно; доллары здесь ПОСЧИТАНЫ нами (доли × цена), а не приехали готовыми.
@@ -3060,7 +3231,7 @@ def _post_beta(path, body, ckey=None, ttl=_TTL_HIST, timeout=90):
             return c
     j, http = _http_post(_BETA, path, body, timeout, " beta")
     if j is not None and ckey:
-        _cache_put(ckey, j)
+        _cache_put(ckey, j, ttl=ttl)
     return j
 
 

@@ -147,26 +147,39 @@ def _submission(days):
 
 
 def main(argv):
-    args = [a for a in argv[1:]]
-    as_csv = '--csv' in args
-    contrib = '--contrib' in args
-    submission = '--submission' in args
-    args = [a for a in args if not a.startswith('--') or a == '--range']
+    raw = list(argv[1:])
+    as_csv = '--csv' in raw
+    contrib = '--contrib' in raw
+    submission = '--submission' in raw
+    positionals = [a for a in raw if not a.startswith('--')]
 
-    if '--range' in args:
-        i = args.index('--range')
+    if '--range' in raw:
+        i = raw.index('--range')
         try:
-            days = _days(args[i + 1], args[i + 2])
+            days = _days(raw[i + 1], raw[i + 2])
         except (IndexError, ValueError) as e:
             print('нужны две даты: --range 2026-09-15 2026-09-27 (%s)' % e)
             return 1
-    elif args:
+    elif submission and len(positionals) == 2:
+        # ДОКУМЕНТИРОВАННАЯ короткая форма: `--submission START END`. Раньше вторая дата
+        # молча игнорировалась и правдоподобный блок строился за ОДИН день — риск отправить
+        # однодневные числа как всё конкурсное окно. Две даты теперь всегда означают диапазон.
         try:
-            dt.date.fromisoformat(args[0])
-        except ValueError:
-            print('дата в формате YYYY-MM-DD, а не %r' % args[0])
+            days = _days(positionals[0], positionals[1])
+        except ValueError as e:
+            print('даты в формате YYYY-MM-DD (%s)' % e)
             return 1
-        days = [args[0]]
+    elif positionals:
+        if len(positionals) > 1:
+            print('лишние аргументы %r; для диапазона используй --range START END' %
+                  positionals[1:])
+            return 1
+        try:
+            dt.date.fromisoformat(positionals[0])
+        except ValueError:
+            print('дата в формате YYYY-MM-DD, а не %r' % positionals[0])
+            return 1
+        days = [positionals[0]]
     else:
         days = [T._day(__import__('time').time() - 86400)]      # по умолчанию за вчера
 

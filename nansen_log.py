@@ -67,7 +67,14 @@ SCENES = (
     'smart_holdings',          # «смарт холдинги»
     'perp_leaders',            # «топ перпы»
     'token_check',             # кнопка 🧠 / «паспорт … глубже»
-    'polymarket',              # «полимаркет рынки/профиль», «топ рынка»
+    # POLYMARKET РАЗДЕЛЁН ПО ЭКРАНАМ. Раньше всё ложилось одной сценой `polymarket`, и
+    # submission не мог доказать, что hero-screen репутации вообще кто-то открывал.
+    'pm_markets',              # список рынков
+    'pm_chart',                # вероятность во времени
+    'pm_orderbook',            # стакан
+    'pm_reputation',           # кто держит и как угадывал раньше
+    'pm_wallet',               # профиль трейдера
+    'pm_leaders',              # топ конкретного рынка
     'agent_free',              # свободный вопрос (личка, паблик, Хаб)
     'who_bought_sold',         # «кто входил/выходил 0x…»   (подключено ТЗ B, B3)
     'token_info',              # «инфо токен 0x…»            (B3)
@@ -79,6 +86,7 @@ SCENES = (
     # Класс бага ровно тот, от которого закрытый реестр и защищает, - поэтому ниже
     # инвариант: тест сверяет ВСЕ scene(...) в репозитории с этим списком (test_nansen_contest).
     'perp_positions',          # «перп позиции BTC» / кнопка 💥 Ликвид. на карточке токена
+    'liq_map',                 # карта скоплений по цене ликвидации
     'smart_trades',            # «смарт сделки» (отдельные сделки, не агрегат netflow)
     # ИМЯ 'wallet_perps' СНАЧАЛА УБРАЛИ 19.09 (эндпоинт отвечал 404), а 20.09 ВЕРНУЛИ: проба
     # путей нашла ту же ручку живой по адресу `profiler/perp-positions`. Цена ошибки - один
@@ -185,7 +193,7 @@ _BOX = contextvars.ContextVar('nansen_box', default=None)
 _TL = threading.local()          # запасной канал для чисто синхронных путей (без scene())
 _LOCK = threading.Lock()
 _REP = {}                        # 'YYYY-MM-DD' -> {u: сколько запросов за сутки}
-_FLIGHT = {'n': 0, 'rem': None}  # сколько вызовов в полёте + последний известный остаток
+_FLIGHT = {'n': 0, 'rem': None, 'overlap_seq': 0}  # + поколение любого пересечения
 
 #: тяжесть классов исхода: чем больше, тем «главнее» причина в смешанном блоке.
 #: `badreq` (400/422 - площадка отвергла НАШ запрос) стоит выше общего `http`, потому что он
@@ -402,32 +410,42 @@ def daily_u(uid, day=None):
 
 
 def _bump_rep(u, day):
-    d = _REP.setdefault(day, {})
-    d[u] = d.get(u, 0) + 1
-    for k in [k for k in _REP if k != day]:
-        _REP.pop(k, None)
-    return d[u]
+    # Reputation-screen пишет пять summaries параллельно. Без lock два потока могли оба
+    # прочитать rep=3 и записать rep=4 — потерянный инкремент в конкурсной телеметрии.
+    with _LOCK:
+        d = _REP.setdefault(day, {})
+        d[u] = d.get(u, 0) + 1
+        for k in [k for k in _REP if k != day]:
+            _REP.pop(k, None)
+        return d[u]
 
 
 def flight_begin():
-    """Отметить уход вызова в сеть. Возвращает известный до вызова остаток."""
+    """Вызов ушёл в сеть. -> (остаток до, число в полёте, поколение пересечений).
+
+    Если новый вызов встречает уже активный, overlap_seq растёт. Так ПЕРВЫЙ вызов тоже
+    узнает при завершении, что позже с ним пересеклись; одного `parallel` на старте было
+    недостаточно и позволяло первому присвоить себе расход второго.
+    """
     with _LOCK:
+        if _FLIGHT['n'] > 0:
+            _FLIGHT['overlap_seq'] += 1
         _FLIGHT['n'] += 1
-        return (_FLIGHT['rem'], _FLIGHT['n'])
+        return (_FLIGHT['rem'], _FLIGHT['n'], _FLIGHT['overlap_seq'])
 
 
 def flight_end(rem=None):
-    """Вызов вернулся. Запоминаем остаток как «предыдущий известный» для следующей дельты."""
+    """Вызов вернулся. -> текущее поколение пересечений."""
     with _LOCK:
         n = _FLIGHT['n']
         _FLIGHT['n'] = max(0, n - 1)
         if rem is not None:
             _FLIGHT['rem'] = rem
-        return n
+        return _FLIGHT['overlap_seq']
 
 
 def record(ep, ms=0, http=0, ok=False, empty=False, cache=False, rem=None, used=None,
-           rem_before=None, parallel=1, sig=None, cls=None):
+           rem_before=None, parallel=1, sig=None, cls=None, overlap=False):
     """Одна строка на один вызов. -> dict записанных полей (для тестов и сводки).
 
     `ok` и `empty` — РАЗНЫЕ вопросы, и склеивать их нельзя: `ok=0,empty=0` (сбой) и
@@ -442,7 +460,8 @@ def record(ep, ms=0, http=0, ok=False, empty=False, cache=False, rem=None, used=
     rep = _bump_rep(u, day)
     # ЦЕНА: замер дельты остатка, если он известен и вызов был ОДИН в полёте. Иначе оценка.
     d = None
-    if (not cache) and rem is not None and rem_before is not None and parallel <= 1:
+    if (not cache) and (not overlap) and rem is not None and rem_before is not None \
+            and parallel <= 1:
         try:
             d = int(rem_before) - int(rem)
         except (TypeError, ValueError):
@@ -538,8 +557,11 @@ def _fmt(row):
 def _write(day, row):
     try:
         os.makedirs(TELE_DIR, exist_ok=True)
-        with open(os.path.join(TELE_DIR, '%s.log' % day), 'a', encoding='utf-8') as f:
-            f.write(_fmt(row) + '\n')
+        # Reputation-screen пишет до пяти address-summary параллельно. Без lock строки из
+        # разных TextIO могли перемешаться, и один испорченный k=v ломал суточную сводку.
+        with _LOCK:
+            with open(os.path.join(TELE_DIR, '%s.log' % day), 'a', encoding='utf-8') as f:
+                f.write(_fmt(row) + '\n')
     except Exception as e:
         print('[nansen_log] строка не записалась: %s' % str(e)[:120])
     _sweep()

@@ -1,99 +1,182 @@
-# Nansen Meridian Buildathon — submission package (skeleton)
+# Nansen Undertaker — Meridian submission draft
 
-**Status: NOT READY TO SEND.** Every number in this package is collected by the telemetry that
-shipped with this PR. Per the task spec, the package is assembled only **after telemetry has
-been running for at least a week** — numbers taken earlier are false, because the credit
-accounting was broken in three places until this PR (single instrumentation point out of ~20,
-charged before the call and on cache hits, and the two most expensive paths never counted at
-all).
+**Status: FUNCTIONAL, NOT YET ELIGIBLE TO SUBMIT.** Three external artifacts are still required:
 
-Placeholders below are marked `<TBD:…>`. **Do not guess them.** A number without a mechanism
-behind it is worse than no number (project law #22).
+1. Nansen Usage Analytics must show **1,000+ API calls made Sep 14–27**;
+2. a 30–60 second live screen recording;
+3. the X post URL and official entry-form confirmation.
 
-## What this is
+Do not remove this status until all three exist. A green local test is not eligibility.
 
-A Telegram bot (~3000-person community, Russian-speaking crypto audience) that lets people ask
-on-chain questions in plain language and get an answer with the source and its freshness stated
-explicitly. Nansen is the on-chain data layer behind every such answer.
+## One-sentence pitch
 
-## Why it is not "another dashboard"
+> A Polymarket market says 78% YES. Nansen Undertaker tells you **whose 78% it is** — how much
+> money behind each side belongs to wallets that were right before, while counting missing wallet
+> histories on neither side.
 
-The interesting part is not the queries — it is what the bot does when Nansen does **not**
-answer. Before this work, an empty result, a 402, a 429 and a timeout produced one and the same
-sentence, and the wallet-profile screen said "no labels or the address is inactive" — which a
-human reads as *"the address is clean"*. Absence of a label is absence of a label, not safety.
-The integration now distinguishes four states in words and never lets an infrastructure failure
-look like a verdict.
+## Why Nansen data drives the logic
 
-## Architecture (no keys, no addresses)
+The hero workflow is not a dashboard field. It composes two Nansen datasets:
 
-```
-Telegram (DM · public chat · Hub)
+1. `prediction-market/top-holders`: side, shares, entry price and current price;
+2. `prediction-market/address-summary`: lifetime win rate, PnL and markets traded.
+
+The build computes position value as `shares × current price`, separates Yes/No money, and measures
+how much known money belongs to wallets below a visible 40% historical win-rate threshold. If a
+wallet history is unavailable, its money is counted on **neither** side. If the API failed, the
+screen says the history was not delivered — it does not call that “no history.”
+
+Nansen data therefore changes the conclusion: identical 78% market prices become different
+analytical objects depending on the quality and coverage of the money behind them.
+
+## Two supporting workflows
+
+- **Liquidation map:** `tgm/perp-positions` becomes capital clustered by liquidation price — for
+  example, `$22.5M between $61.5K and $62.4K`. Missing liquidation prices are stated; an empty chart
+  is never drawn; the caption says this is where other people stop out, not a forecast.
+- **Smart-money trade as % of market cap:** the same `$48K` buy is 2.3% of a $2.1M token but noise
+  in a $50B asset. Market cap and token age arrive in the same Nansen response, so this context
+  costs no additional request.
+
+## Trust layer
+
+Eight states have eight user-facing meanings: no key, no credits, rate limit, timeout, malformed
+request, unsupported asset, provider error and genuinely empty data. “No label” never reads as
+“safe wallet.” Every output names Nansen and freshness; every network call writes one telemetry
+record; cache hits count as activity but zero spend.
+
+## Architecture
+
+```text
+Telegram command / inline button
         │
-        ├── text commands / inline buttons        onchain/oc_dm.py, oc_menu.py, onchain/oc_callbacks.py
-        ├── free-form question (LLM agent tool)   dm_module.py, pub_tools.py, bot.py
+        ▼
+  one shared screen function
         │
         ▼
-  nansen_api.py  ── the only Nansen client in the repo
-        │  four network chokepoints: _post, _post_beta, ask_agent, smart_money_netflow
-        │  each one: classifies the failure (402 / 429 / timeout / other), measures latency,
-        │  reads the credits headers, writes exactly one telemetry line
+  nansen_api.py — 53 network routes, cache, schema repair, eight outcomes
+        │
+        ├── structured Nansen endpoints
+        ├── agent/fast + agent/expert
+        └── trade routes (client capability, not the contest hero)
+        │
         ▼
-  nansen_log.py  ── telemetry, credit accounting, contribution ledger
-        │  per-day file  nansen_tele/YYYY-MM-DD.log   (one line per call, stays on the server)
-        │  persisted balance  nansen_credits.json     (survives a restart)
-        │  ledger  table nansen_contrib               (per-person, local only)
+  nansen_log.py — one row per call, per-workflow scenes, contribution ledger
+        │
         ▼
-  tools/nansen_daily.py  ── daily summary + CSV export (numbers only, no identifiers)
+  tools/nansen_daily.py — one authoritative reader for k=v daily telemetry
 ```
 
-### Nansen endpoints in use
+The numbered Polymarket buttons carry the **market identity**, not its rank. A button sent before
+the ranking changes cannot silently open a different market. The five wallet summaries in the hero
+screen run in parallel with a 10-second timeout and preserve each failure class.
 
-| Area | Endpoints |
-|---|---|
-| Agent | `agent/fast`, `agent/expert` |
-| Token God Mode | `tgm/flow-intelligence`, `tgm/indicators`, `tgm/holders`, `tgm/pnl-leaderboard`, `tgm/who-bought-sold`, `tgm/token-information` |
-| Smart Money | `token-screener`, `smart-money/netflow`, `smart-money/holdings` |
-| Profiler | `profiler/address/labels`, `.../premium-labels`, `.../pnl-summary`, `.../related-wallets`, `.../counterparties`, `.../current-balance` |
-| Perps | `perp-leaderboard` |
-| Prediction markets | `prediction-market/market-screener`, `.../address-summary`, `.../pnl-by-address`, `.../pnl-by-market` |
-| Historical (v1beta1) | `tgm/historical-token-ohlcv`, `tgm/historical-token-flow-summary` |
+## Factual inventory
 
-Four of these (`tgm/who-bought-sold`, `tgm/token-information`,
-`profiler/address/counterparties`, `profiler/address/current-balance`) had a written client and
-**no reachable door** until this work: no command, no button, no background job. They now have
-commands, help entries and honest refusals.
+- **53 unique Nansen API routes** in the client.
+- **25 documented workflows** in generated `docs/CATALOG.md`:
+  - 23 user-facing workflows that call Nansen;
+  - 1 background digest workflow;
+  - 1 local contribution-tally workflow that reads the integration's own ledger.
+- **29 unique API routes** drive those documented workflows; remaining routes are explicitly
+  listed as client-only/owner-only rather than presented as shipped user scenarios.
+- **26 telemetry scenes**, including separate evidence for market list, chart, orderbook, holder
+  reputation, wallet profile, market leaders and liquidation map.
 
-## Privacy
+Counts are generated from code. Do not copy old counts from commit messages.
 
-- No user identifier leaves the server. The per-day telemetry file carries a **daily HMAC** of
-  the Telegram id (key derived from the bot token, salted with the date), used for exactly one
-  thing: telling "twenty people once" from "one person twenty times". The hash changes every
-  day, so a cross-day identifier does not exist by construction.
-- The CSV export and every number in this package contain counters and ordinal places only. A
-  test asserts the export has no `u` column and no raw id.
-- The contribution ledger (`nansen_contrib`) is registered in the bot's GDPR/152-ФЗ erasure
-  registry: `/delete_me` removes the person's rows.
+## Reproducibility
 
-## Numbers for the contest window
+Offline proof (no key/network; the wire is substituted, parsing/calculation/telemetry are real):
 
-Fill from `tools/nansen_daily.py --range <start> <end> --csv` — **after** at least seven days of
-telemetry.
+```bash
+pip install httpx
+python3 tests/test_public.py
+python3 scrub.py
+```
 
-| Metric | Value |
-|---|---|
-| Contest window | `<TBD: YYYY-MM-DD .. YYYY-MM-DD>` |
-| Requests total / over the network | `<TBD>` / `<TBD>` |
-| Share served from cache | `<TBD>` |
-| Credits burned (measured vs estimated calls) | `<TBD>` |
-| Unique people per day (median) | `<TBD>` |
-| Honest refusals shown, by class (402 / 429 / timeout / empty) | `<TBD>` |
-| Median latency per scenario | `<TBD>` |
-| Calls with no scene tag (should be 0) | `<TBD>` |
+Live hero proof (read-only, up to five calls; explicit human flag):
 
-## Links
+```bash
+NANSEN_API_KEY=... python3 tools/nansen_live_smoke.py --run
+```
 
-- Published write-up of the integration ("The Eyes", part IV): `<TBD: URL>`
-- 60–90 s demo video from the live chat: `<TBD: file>`
-- Sanitised copy of the integration module, if the rules require a repository: `<TBD>` —
-  ship `nansen_api.py` + `nansen_log.py` + `tools/nansen_daily.py`, **not** the whole bot.
+Expected final lines:
+
+```text
+LIVE PROOF: PASS
+Requests: 4 · known histories: 1+ · provider failures: 0
+```
+
+## Eligibility: 1,000+ calls
+
+Official rules require 1,000+ calls during the contest window. Local telemetry began mid-window and
+is evidence, not the authority; Nansen Usage Analytics is authoritative.
+
+Preliminary local snapshot supplied on Sep 20 (not final submission data):
+
+| metric | preliminary value |
+|---|---:|
+| days with local telemetry | 6 of 13 |
+| calls recorded locally | 31 |
+| network calls recorded locally | 30 |
+| measured credits | 3,044 |
+| unpriced calls | 2 |
+| people in contribution ledger | 5 |
+| calls with no workflow scene | 4 |
+
+This does **not** prove eligibility. If Usage Analytics is below 1,000, build the meaningful 7-day
+Smart Money corpus rather than repeating the same request:
+
+```bash
+# plan, zero calls
+python3 tools/nansen_meridian_corpus.py --max-calls 1050
+
+# human-approved run: read-only, hard cap 1050, historical upper bound about 5,250 credits
+python3 tools/nansen_meridian_corpus.py --run --max-calls 1050
+```
+
+It collects current Smart Money tokens × seven completed UTC days × BUY/SELL and stores only
+aggregate counts/volumes, not buyer wallet addresses. Verify the final call count in Nansen Usage
+Analytics afterward.
+
+## Final telemetry block
+
+Generate only after the recording and eligibility run:
+
+```bash
+./venv/bin/python3 tools/nansen_daily.py --submission 2026-09-14 2026-09-27
+./venv/bin/python3 tools/nansen_daily.py --range 2026-09-14 2026-09-27 --csv
+```
+
+The short `--submission START END` form and explicit `--range` form are tested to cover the same
+full range. Unpriced calls are shown separately; they are not silently added to measured credits.
+
+## Demo and X
+
+- Silent 52-second storyboard: `DEMO_SCRIPT.md`.
+- Ready six-post thread: `X_THREAD.md`.
+- Full build/eligibility roadmap: `../WINNER_PLAN.md`.
+- Generated workflow catalog and tweet hooks: `../CATALOG.md`.
+
+## Final links
+
+Fill only with existing public artifacts:
+
+- Public repo: https://github.com/RenatMursalimov/nansen-undertaker
+- Live demo post: `<ADD AFTER POSTING>`
+- Official submission confirmation: `<ADD AFTER SUBMITTING>`
+
+## Final gate
+
+- [ ] Nansen Usage Analytics: at least 1,000 calls in Sep 14–27; screenshot saved.
+- [ ] Public repo opens in incognito; CI green.
+- [ ] Live smoke passes on primary and backup market.
+- [ ] Video is 30–60 seconds, understandable silently, no private data.
+- [ ] First X post tags `@nansen_ai` and links the public repo.
+- [ ] Entry form contains email, X post URL and GitHub URL.
+- [ ] No `<ADD ...>` markers remain.
+
+Rules and judging criteria were rephrased from the [official campaign page](https://nansen.ai/campaigns/meridian-buildathon)
+and [official FAQ](https://nansen.featurebase.app/help/articles/3540155-nansen-meridian-buildathon-sep-14-27).
+Content was rephrased for compliance with licensing restrictions.

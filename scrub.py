@@ -56,6 +56,29 @@ CLASSES = [
 ]
 SKIP_DIRS = {'.git', '__pycache__', 'nansen_tele', 'venv', '.venv', 'node_modules'}
 SKIP_EXT = {'.png', '.jpg', '.jpeg', '.gif', '.pdf', '.db', '.pyc', '.ttf', '.zip'}
+# Эти имена не должны СУЩЕСТВОВАТЬ в дереве, которое собираются коммитить. Просто пропустить
+# их содержимое недостаточно: прежний scrubber именно так и делал, а сломанный .gitignore
+# одновременно не игнорировал файлы из-за inline-комментариев. Две защиты были зелёными, а
+# runtime state мог попасть в git.
+RUNTIME_NAMES = {
+    'nansen_tele', 'nansen_credits.json', 'nansen_schema.json', 'nansen_asks.json',
+    'nansen_cache.json', 'nansen_pm_refs.json', 'nansen_meridian_corpus.jsonl',
+    'nansen_local.db',
+}
+
+
+def _runtime_state():
+    found = []
+    for base, dirs, names in os.walk(HERE):
+        if '.git' in dirs:
+            dirs.remove('.git')
+        for d in dirs:
+            if d in RUNTIME_NAMES:
+                found.append(os.path.relpath(os.path.join(base, d), HERE))
+        for n in names:
+            if n in RUNTIME_NAMES or n.endswith(('.db-shm', '.db-wal', '.db-journal')):
+                found.append(os.path.relpath(os.path.join(base, n), HERE))
+    return sorted(set(found))
 
 
 def files():
@@ -76,6 +99,12 @@ def _line(txt, pos):
 
 
 def main():
+    runtime = _runtime_state()
+    if runtime:
+        print('РАНТАЙМ-СОСТОЯНИЕ В ДЕРЕВЕ (%d): перед коммитом удалить' % len(runtime))
+        for p in runtime:
+            print('  ' + p)
+        return 1
     bad, seen_files = [], 0
     for path in files():
         rel = os.path.relpath(path, HERE)

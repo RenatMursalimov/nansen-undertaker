@@ -12,7 +12,7 @@
 настолько, насколько зелёной его написали.
 
 ЧТО ЗДЕСЬ ОХРАНЯЕТСЯ (то же, что в приватном наборе на 507 проверок, но без бот-слоя):
-  1. семь классов отказа дают семь РАЗНЫХ текстов, и ни один не читается как «всё чисто»;
+  1. восемь классов отказа дают восемь РАЗНЫХ текстов, и ни один не читается как «всё чисто»;
   2. пустой ответ 200 и отказ площадки - разные состояния;
   3. один вызов = одна строка телеметрии с верной сценой; попадание в кэш бесплатно;
   4. 422 чинится инструкцией самой площадки, а не нашей догадкой, и ремонт ограничен;
@@ -104,8 +104,8 @@ def rows(T):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-def t_seven_refusals_are_seven_texts():
-    """СЕМЬ СОСТОЯНИЙ - СЕМЬ ТЕКСТОВ, и ни один не читается как «данных нет, всё чисто».
+def t_eight_refusals_are_eight_texts():
+    """ВОСЕМЬ СОСТОЯНИЙ - ВОСЕМЬ ТЕКСТОВ, ни один сбой не читается как «всё чисто».
 
     Исходная поломка, из которой вырос весь слой: клиент возвращал `None` на любой не-200,
     список пустел, и «кончились кредиты», «придержали по частоте», «таймаут», «наш кривой
@@ -116,12 +116,13 @@ def t_seven_refusals_are_seven_texts():
     N, T, tmp = env()
     try:
         seen = {}
-        for cls in ('nokey', 'nocredits', 'ratelimit', 'timeout', 'badreq', 'http', 'empty'):
+        for cls in ('nokey', 'nocredits', 'ratelimit', 'timeout', 'badreq', 'unsupported',
+                    'http', 'empty'):
             txt = N.refusal(cls, 'ru', what='меток по этому адресу')
             check('REFUSAL: %s непустой' % cls, bool(txt and len(txt) > 20), txt)
             seen[cls] = txt
-        check('REFUSAL: семь РАЗНЫХ текстов', len(set(seen.values())) == 7,
-              'совпали: %d уникальных из 7' % len(set(seen.values())))
+        check('REFUSAL: восемь РАЗНЫХ текстов', len(set(seen.values())) == 8,
+              'совпали: %d уникальных из 8' % len(set(seen.values())))
         # НИ ОДИН ОТКАЗ НЕ ИМЕЕТ ПРАВА ЧИТАТЬСЯ КАК ЧИСТОТА
         for cls, txt in seen.items():
             if cls == 'empty':
@@ -451,9 +452,168 @@ def t_docs_are_here_and_name_prices():
         check('DOCS: манифест говорит про байт-в-байт', 'байт-в-байт' in txt, txt[:200])
 
 
+def t_public_hygiene_and_live_tools_are_safe_by_default():
+    """Публичный repo не только чист сейчас — защиты ловят runtime state и tools не тратят
+    calls без явного человеческого флага."""
+    import importlib.util
+    import io
+
+    # .gitignore: комментарий только отдельной строкой. Inline `pattern # comment` git не
+    # понимает, и прежние runtime files не игнорировались вообще.
+    gi = open(os.path.join(_ROOT, '.gitignore'), encoding='utf-8').read().splitlines()
+    required = {'nansen_tele/', 'nansen_credits.json', 'nansen_schema.json',
+                'nansen_asks.json', 'nansen_cache.json', 'nansen_pm_refs.json',
+                'nansen_meridian_corpus.jsonl', 'nansen_local.db'}
+    check('PUBLIC: все runtime patterns в gitignore', required <= set(gi),
+          sorted(required - set(gi)))
+    check('PUBLIC: в patterns нет inline-комментариев',
+          not [x for x in gi if x and not x.startswith('#') and ' #' in x], gi)
+
+    # Scrubber обязан ловить сам ФАКТ runtime file, а не пропускать его содержимое.
+    sp = os.path.join(_ROOT, 'scrub.py')
+    spec = importlib.util.spec_from_file_location('_scrub_test', sp)
+    S = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(S)
+    old_here = S.HERE
+    temp = tempfile.mkdtemp(prefix='scrub_runtime_')
+    try:
+        S.HERE = temp
+        open(os.path.join(temp, 'nansen_cache.json'), 'w').write('{}')
+        check('PUBLIC: scrubber ловит runtime state',
+              S._runtime_state() == ['nansen_cache.json'], S._runtime_state())
+    finally:
+        S.HERE = old_here
+        shutil.rmtree(temp, ignore_errors=True)
+
+    # Live tools: без --run только plan. Провод подменён на взрыв — если вызов уйдёт, тест
+    # упадёт, а не поверит напечатанному «nothing sent».
+    import httpx
+    keep = httpx.post
+    httpx.post = lambda *a, **k: (_ for _ in ()).throw(AssertionError('network call without --run'))
+    try:
+        for rel, args in (('tools/nansen_live_smoke.py', []),
+                          ('tools/nansen_meridian_corpus.py', ['--max-calls', '10'])):
+            spec = importlib.util.spec_from_file_location('_tool_' + os.path.basename(rel),
+                                                          os.path.join(_ROOT, rel))
+            M = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(M)
+            buf, old = io.StringIO(), sys.stdout
+            sys.stdout = buf
+            try:
+                rc = M.main(args)
+            finally:
+                sys.stdout = old
+            check('PUBLIC: %s без --run не ходит в сеть' % rel, rc == 0, buf.getvalue())
+            check('PUBLIC: %s печатает план' % rel,
+                  'PLAN' in buf.getvalue() or 'Nothing sent' in buf.getvalue(), buf.getvalue())
+        # CORPUS RESUME: временный failure не считается done, иначе нулевой cell навсегда
+        # отравляет ranking; ok/empty завершены. И page=100 помечается partial, не «все».
+        corpus = M                         # последний module в цикле — corpus tool
+        old_out = corpus.OUT
+        ctmp = tempfile.mkdtemp(prefix='corpus_state_')
+        try:
+            corpus.OUT = os.path.join(ctmp, 'c.jsonl')
+            base = {'day': '2026-09-19', 'chain': 'base', 'token': '0xabc', 'side': 'BUY'}
+            corpus._append(dict(base, reason='timeout'))
+            check('PUBLIC: временный corpus failure будет retry', not corpus._done(),
+                  corpus._done())
+            corpus._append(dict(base, reason='ok'))
+            check('PUBLIC: успешный cell завершён', bool(corpus._done()), corpus._done())
+            agg = corpus._aggregate([{'value_usd': 1}] * 100)
+            check('PUBLIC: top-100 cell помечен partial', agg['partial_top100'] == 1, agg)
+            check('PUBLIC: hard cap меньше discovery отвергается',
+                  corpus.main(['--run', '--max-calls', '1']) == 1)
+            # Минимальный разрешённый cap=2 включает РОВНО оба discovery-вызова. `sm_dex_trades`
+            # использует обычный _post (схема live-verified), не repair-loop до четырёх сетевых
+            # попыток: иначе hard cap существовал только в печати.
+            keep_key = corpus.N._key
+            keep_net = corpus.N.smart_money_netflow
+            keep_dex = corpus.N.sm_dex_trades
+            calls = []
+            try:
+                corpus.N._key = lambda: 'test'
+                corpus.N.smart_money_netflow = lambda per_page=100: (calls.append('net'), [])[-1]
+                corpus.N.sm_dex_trades = lambda chains=None, per_page=100: (calls.append('dex'), [])[-1]
+                corpus.main(['--run', '--max-calls', '2'])
+            finally:
+                corpus.N._key = keep_key
+                corpus.N.smart_money_netflow = keep_net
+                corpus.N.sm_dex_trades = keep_dex
+            check('PUBLIC: cap=2 делает не больше двух client/network attempts',
+                  calls == ['net', 'dex'], calls)
+            src = open(os.path.join(_ROOT, 'nansen_api.py'), encoding='utf-8').read()
+            _frag = src[src.index('def sm_dex_trades'):src.index('def sm_perp_trades')]
+            check('PUBLIC: capped discovery не использует repair retries',
+                  '_post_fix(' not in _frag and '_post(' in _frag, _frag[:200])
+        finally:
+            corpus.OUT = old_out
+            shutil.rmtree(ctmp, ignore_errors=True)
+
+        # LIVE SMOKE: строка screener без market_id должна остановиться ДО holder request.
+        spec = importlib.util.spec_from_file_location('_smoke_id_test',
+                    os.path.join(_ROOT, 'tools/nansen_live_smoke.py'))
+        smoke = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(smoke)
+        keep_key, keep_scr, keep_rep = smoke.N._key, smoke.N.pm_market_screener, smoke.N.pm_reputation
+        called = []
+        try:
+            smoke.N._key = lambda: 'test'
+            smoke.N.pm_market_screener = lambda per_page=5: [{'question': 'schema drift'}]
+            smoke.N.pm_reputation = lambda *a, **k: called.append(1)
+            buf, old = io.StringIO(), sys.stdout
+            sys.stdout = buf
+            try:
+                rc = smoke.main(['--run'])
+            finally:
+                sys.stdout = old
+            check('PUBLIC: smoke без market_id даёт точный FAIL', rc == 3, buf.getvalue())
+            check('PUBLIC: и не тратит holder request на None', not called, called)
+        finally:
+            smoke.N._key, smoke.N.pm_market_screener, smoke.N.pm_reputation = \
+                keep_key, keep_scr, keep_rep
+    finally:
+        httpx.post = keep
+
+    # Footer «this run» считает только строки после старта процесса, не весь сегодняшний лог.
+    sys.modules.pop('cli', None)
+    import cli
+    keep_rows, keep_left, keep_lang = cli.T.read_day, cli.N.credits_left, cli.LANG
+    try:
+        cli.LANG = 'en'
+        cli._RUN_START = 2
+        cli.T.read_day = lambda _d: [
+            {'cr': 750, 'est': 0}, {'cr': 5, 'est': 0},       # старые команды сегодня
+            {'cr': 3, 'est': 0},                              # текущая команда
+        ]
+        cli.N.credits_left = lambda: 100
+        buf, old = io.StringIO(), sys.stdout
+        sys.stdout = buf
+        try:
+            cli._cost()
+        finally:
+            sys.stdout = old
+        out = buf.getvalue()
+        check('PUBLIC: footer считает один вызов этого запуска', '1 call(s)' in out, out)
+        check('PUBLIC: и только его 3 кредита, не 758 за день',
+              '3 measured credits' in out and '758' not in out, out)
+        # matplotlib импортируется лениво внутри maker: ImportError должен стать объяснением,
+        # а не traceback после успешного import oc_nansen_viz.
+        buf, old = io.StringIO(), sys.stdout
+        sys.stdout = buf
+        try:
+            rc = cli._png(lambda _v: (_ for _ in ()).throw(ImportError('no matplotlib')), 'chart')
+        finally:
+            sys.stdout = old
+        check('PUBLIC: ленивый ImportError картинки пойман', rc == 2, buf.getvalue())
+        check('PUBLIC: и названа установка matplotlib', 'pip install matplotlib' in buf.getvalue(),
+              buf.getvalue())
+    finally:
+        cli.T.read_day, cli.N.credits_left, cli.LANG = keep_rows, keep_left, keep_lang
+
+
 def main():
     tests = (
-        t_seven_refusals_are_seven_texts,
+        t_eight_refusals_are_eight_texts,
         t_empty_is_not_error_and_error_is_not_empty,
         t_one_call_one_row_and_cache_is_free,
         t_scene_registry_is_closed,
@@ -463,6 +623,7 @@ def main():
         t_ledger_counts_people_not_spam,
         t_cli_without_key_says_why,
         t_docs_are_here_and_name_prices,
+        t_public_hygiene_and_live_tools_are_safe_by_default,
     )
     for fn in tests:
         print('· ' + fn.__name__)

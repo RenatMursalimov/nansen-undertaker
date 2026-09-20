@@ -1,11 +1,18 @@
 .env
 __pycache__/
 *.pyc
-
-# рантайм-состояние, а не код
-nansen_tele/          # посуточная телеметрия: одна строка на вызов
-nansen_credits.json   # остаток кредитов, чтобы он переживал рестарт
-nansen_schema.json    # выученная разница формы тела запроса
-nansen_asks.json      # суточные счётчики лимитов
-nansen_local.db       # зачёт вклада (sqlite)
 *.png
+
+# Рантайм-состояние, а не код. Комментарии стоят ОТДЕЛЬНОЙ строкой: gitignore не понимает
+# inline-комментарии после pattern — прежние `nansen_tele/  # ...` не игнорировали НИЧЕГО.
+nansen_tele/
+nansen_credits.json
+nansen_schema.json
+nansen_asks.json
+nansen_cache.json
+nansen_pm_refs.json
+nansen_meridian_corpus.jsonl
+nansen_local.db
+*.db-shm
+*.db-wal
+*.db-journal
