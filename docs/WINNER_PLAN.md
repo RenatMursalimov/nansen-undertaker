@@ -57,8 +57,10 @@ Submission. По [официальному FAQ](https://nansen.featurebase.app/h
 1,050 network calls, 0 cache hits**. Это произошло внутри конкурсного окна. Санированный proof:
 `nansen/proofs/MERIDIAN_CORPUS_2026-09-20.md`.
 
-Авторитетный внешний артефакт всё ещё нужен: screenshot Usage Analytics в кабинете Nansen.
-Локальная телеметрия доказывает поведение нашего процесса, кабинет — зачёт организатора.
+Авторитетный внешний артефакт получен: screenshot Usage Analytics показывает **5,484 calls
+20 сентября** и 13,850 total в 30D. Один Sep 20 уже превышает обязательные 1,000 внутри окна.
+Перед публикацией screenshot надо обрезать до панели Nansen: в исходнике видны browser chrome,
+bookmarks и wallet-balance area.
 
 Корпус больше НЕ запускать ради eligibility, если dashboard уже показывает ≥1,000. Он построил
 настоящий 7-дневный research corpus для low-cap discovery:
@@ -155,16 +157,16 @@ CI и live proof script.
 
 ### 20–21 сентября — reliability и eligibility
 
-- [ ] слить winner-hardening: кнопка закреплена за market_id, partial failures не выдаются за
-      отсутствие истории, summaries параллельны, отдельные telemetry scenes;
-- [ ] прогнать live smoke по двум рынкам;
+- [x] слить winner-hardening: exact market identity, partial-failure semantics, parallel summaries,
+      separate telemetry scenes;
+- [x] прогнать live smoke по primary `1130012` и backup `4323345`;
 - [x] meaningful corpus завершён: 1,050 network calls, 0 cache hits, hard cap соблюдён;
-- [ ] подтвердить ≥1,000 в Usage Analytics и сохранить screenshot;
-- [ ] сохранить скрин Usage Analytics после порога (без ключей/PII).
+- [x] Usage Analytics: 5,484 calls 20 сентября, 13,850 total 30D; threshold подтверждён;
+- [ ] сохранить обрезанный screenshot Usage Analytics без browser chrome/wallet area.
 
 ### 22–23 сентября — контент, не новые фичи
 
-- [ ] выбрать основной и запасной рынок;
+- [x] выбрать основной `1130012` и запасной `4323345` рынки;
 - [ ] записать 2–3 silent takes, выбрать один без сбоя;
 - [ ] кадр-за-кадром проверить: нет адресов участников, ключей, служебной лички;
 - [ ] сделать hero screenshot и liquidation-map screenshot.
