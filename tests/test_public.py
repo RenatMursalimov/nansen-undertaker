@@ -436,20 +436,43 @@ def t_cli_without_key_says_why():
 
 
 def t_docs_are_here_and_name_prices():
-    """ДОКУМЕНТЫ НА МЕСТЕ И НАЗЫВАЮТ ЦЕНУ. Экран без цены нельзя ни планировать, ни
-    сравнивать: кредиты кончаются, и «примерно недорого» - не число."""
-    for rel in ('README.md', 'MANIFEST.md', 'docs/scenarios.md', 'docs/telemetry_spec.md'):
+    """DOCS/ASSETS ARE COMPLETE. The public package must contain every path promised by README,
+    including the reproducible social card and version-controlled Wiki source."""
+    required = (
+        'README.md', 'MANIFEST.md', 'docs/scenarios.md', 'docs/telemetry_spec.md',
+        'docs/PROJECT_STATUS.md', 'docs/RECORDING_RUNBOOK.md',
+        'docs/wiki/Home.md', 'docs/wiki/Status.md', 'docs/wiki/Roadmap.md',
+        'docs/wiki/Demo.md', 'docs/wiki/Architecture.md', 'docs/wiki/_Sidebar.md',
+        'tools/render_social_preview.py', 'assets/social-preview.png',
+    )
+    for rel in required:
         p = os.path.join(_ROOT, rel)
-        check('DOCS: %s есть' % rel, os.path.exists(p), 'файла нет')
+        check('DOCS: %s exists' % rel, os.path.exists(p), 'missing file')
     sc = os.path.join(_ROOT, 'docs', 'scenarios.md')
     if os.path.exists(sc):
         txt = open(sc, encoding='utf-8').read()
-        check('DOCS: цены названы', txt.count('**Цена:**') >= 6, txt.count('**Цена:**'))
-        check('DOCS: «зачем» названо', txt.count('**Зачем:**') >= 5, txt.count('**Зачем:**'))
+        check('DOCS: prices are named', txt.count('**Цена:**') >= 6, txt.count('**Цена:**'))
+        check('DOCS: reasons are named', txt.count('**Зачем:**') >= 5, txt.count('**Зачем:**'))
+    readme = os.path.join(_ROOT, 'README.md')
+    if os.path.exists(readme):
+        txt = open(readme, encoding='utf-8').read()
+        for rel in ('docs/PROJECT_STATUS.md', 'docs/RECORDING_RUNBOOK.md',
+                    'assets/social-preview.png', 'docs/wiki/'):
+            check('DOCS: README maps %s' % rel, rel in txt, rel)
+    preview = os.path.join(_ROOT, 'assets', 'social-preview.png')
+    if os.path.exists(preview):
+        import struct
+        data = open(preview, 'rb').read(24)
+        check('DOCS: social preview is PNG', data.startswith(b'\x89PNG\r\n\x1a\n'), data[:8])
+        check('DOCS: social preview is exactly 1280x640',
+              len(data) >= 24 and struct.unpack('>II', data[16:24]) == (1280, 640),
+              data[16:24])
     man = os.path.join(_ROOT, 'MANIFEST.md')
     if os.path.exists(man):
         txt = open(man, encoding='utf-8').read()
-        check('DOCS: манифест говорит про байт-в-байт', 'байт-в-байт' in txt, txt[:200])
+        check('DOCS: manifest says byte-for-byte', 'байт-в-байт' in txt, txt[:200])
+        for rel in required[4:]:
+            check('DOCS: manifest tracks %s' % rel, ('`%s`' % rel) in txt, rel)
 
 
 def t_public_hygiene_and_live_tools_are_safe_by_default():
@@ -464,9 +487,11 @@ def t_public_hygiene_and_live_tools_are_safe_by_default():
     required = {'nansen_tele/', 'nansen_credits.json', 'nansen_schema.json',
                 'nansen_asks.json', 'nansen_cache.json', 'nansen_pm_refs.json',
                 'nansen_meridian_corpus.jsonl', 'nansen_local.db'}
-    check('PUBLIC: все runtime patterns в gitignore', required <= set(gi),
+    check('PUBLIC: all runtime patterns are ignored', required <= set(gi),
           sorted(required - set(gi)))
-    check('PUBLIC: в patterns нет inline-комментариев',
+    check('PUBLIC: generated social preview is explicitly tracked',
+          '!assets/social-preview.png' in gi, gi)
+    check('PUBLIC: patterns have no inline comments',
           not [x for x in gi if x and not x.startswith('#') and ' #' in x], gi)
 
     # Scrubber обязан ловить сам ФАКТ runtime file, а не пропускать его содержимое.

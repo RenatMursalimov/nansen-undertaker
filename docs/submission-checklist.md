@@ -5,8 +5,9 @@
 ## 0. Eligibility — раньше всего остального
 
 - [x] Meaningful corpus completed locally: **1,050 network calls**, 0 cache hits, hard cap respected.
-- [ ] Nansen Usage Analytics показывает **1,000+ API calls между 14 и 27 сентября**.
-- [ ] Сохранён скрин Usage Analytics без ключа/PII.
+- [x] Nansen Usage Analytics: **5,484 calls on 20 Sep**, 13,850 total in 30D — threshold met.
+- [ ] Сохранён ОБРЕЗАННЫЙ скрин Usage Analytics: только панель Nansen, без browser chrome/
+      bookmarks/wallet balance.
 - [x] Corpus run completed; **не запускать повторно для eligibility**, если Usage Analytics
       подтверждает ≥1,000. Два transient failures не влияют на порог.
 - [ ] После корпуса Usage Analytics проверен снова. Локальная телеметрия не заменяет кабинет.

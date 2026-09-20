@@ -1,10 +1,11 @@
 # Nansen Undertaker — Meridian submission draft
 
-**Status: LIVE HERO PASSED; LOCAL CORPUS MADE 1,050 NETWORK CALLS; WAITING FOR NANSEN USAGE
-ANALYTICS SCREENSHOT, VIDEO/X URL AND ENTRY-FORM CONFIRMATION.**
+**Status: ELIGIBILITY CONFIRMED (5,484 CALLS ON SEP 20); PRIMARY + BACKUP LIVE HERO PASSED;
+WAITING FOR CROPPED USAGE SCREENSHOT FILE, VIDEO/X URL AND ENTRY-FORM CONFIRMATION.**
 Three external artifacts remain before submission:
 
-1. Nansen Usage Analytics screenshot confirming **1,000+ API calls made Sep 14–27**;
+1. save a cropped copy of the supplied Usage Analytics screenshot (the dashboard shows 5,484
+   calls on Sep 20; remove browser chrome/bookmarks/wallet area before publishing);
 2. a 30–60 second live screen recording;
 3. the X post URL and official entry-form confirmation.
 
@@ -126,8 +127,9 @@ called “no measurable history”, and factual live freshness now reaches the s
 ## Eligibility: 1,000+ calls
 
 Official rules require 1,000+ calls during the contest window. The Sep 20 corpus produced 1,050
-network calls locally; Nansen Usage Analytics remains the authoritative eligibility evidence and
-must be captured before submission.
+network calls locally, and Nansen Usage Analytics independently showed **5,484 calls on Sep 20**
+plus 13,850 total in 30D. Eligibility is confirmed; save a cropped copy of the supplied screenshot
+before submission.
 
 Pre-corpus local snapshot (kept to show the instrument's partial-window boundary):
 
@@ -174,7 +176,8 @@ Fill only with existing public artifacts:
 
 ## Final gate
 
-- [ ] Nansen Usage Analytics: at least 1,000 calls in Sep 14–27; screenshot saved.
+- [x] Nansen Usage Analytics threshold: 5,484 calls on Sep 20 (inside Sep 14–27).
+- [ ] Cropped Usage Analytics screenshot file saved.
 - [ ] Public repo opens in incognito; CI green.
 - [ ] Live smoke passes on primary and backup market.
 - [ ] Video is 30–60 seconds, understandable silently, no private data.

@@ -33,6 +33,9 @@ Built for the **Nansen Meridian Buildathon**.
 - [`docs/proofs/LIVE_HERO_2026-09-20.md`](docs/proofs/LIVE_HERO_2026-09-20.md) — sanitized live hero proof: 4 calls, 3 known histories, 0 failures.
 - [`docs/proofs/MERIDIAN_CORPUS_2026-09-20.md`](docs/proofs/MERIDIAN_CORPUS_2026-09-20.md) — sanitized corpus proof: 1,050 network calls at the hard cap.
 - [`docs/proofs/LIVE_MARKET_SELECTION_2026-09-20.md`](docs/proofs/LIVE_MARKET_SELECTION_2026-09-20.md) — primary/backup decision from two additional PASS runs.
+- Current completion/eligibility status: [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md)
+- Exact sandbox deploy + recording runbook: [`docs/RECORDING_RUNBOOK.md`](docs/RECORDING_RUNBOOK.md)
+- Social preview / demo title card: [`assets/social-preview.png`](assets/social-preview.png)
 - Full generated workflow catalog: [`docs/CATALOG.md`](docs/CATALOG.md)
 - Silent 52-second demo plan: [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md)
 - Ready X thread: [`docs/X_THREAD.md`](docs/X_THREAD.md)
@@ -200,6 +203,11 @@ output and one-line X hook.
 | `tools/nansen_meridian_corpus.py` | resumable 7-day Smart Money corpus with a hard call cap |
 | `tools/nansen_probe.py` | live schema probe; zero calls without `--run` |
 | `tools/nansen_daily.py` | one authoritative telemetry reader and submission export |
+| `tools/render_social_preview.py` | reproducibly renders the 1280×640 GitHub/demo card |
+| `assets/social-preview.png` | generated GitHub social preview and 0–3s demo title card |
+| `docs/PROJECT_STATUS.md` | current eligibility, evidence and remaining external steps |
+| `docs/RECORDING_RUNBOOK.md` | exact sandbox deploy, live UX check and 52-second recording flow |
+| `docs/wiki/` | version-controlled source for the short GitHub Wiki navigation layer |
 | `tests/test_public.py` | offline proof with the network boundary substituted |
 | `scrub.py` | blocks server paths, unknown wallet addresses, keys and runtime state |
 | `MANIFEST.md` | source and SHA-256 for every exported file |
@@ -223,10 +231,10 @@ copy-paste risk.
 The official rules require **1,000+ API calls made Sep 14–27**, a public repo, a 30–60 second live
 screen recording, an X post tagging `@nansen_ai`, and the official entry form.
 
-On Sep 20 the capped corpus recorded **1,050 network calls and 0 cache hits** locally. This is
-sanitized in [`docs/proofs/MERIDIAN_CORPUS_2026-09-20.md`](docs/proofs/MERIDIAN_CORPUS_2026-09-20.md).
-Nansen Usage Analytics remains authoritative and must be captured before submission. Do not rerun
-the corpus for eligibility if the dashboard already confirms the threshold.
+Eligibility is confirmed twice: the local corpus recorded **1,050 network calls**, and the supplied
+Nansen Usage Analytics screenshot shows **5,484 calls on Sep 20** (inside the contest window) plus
+13,850 total in 30D. Save a cropped copy of the dashboard panel before submission; do not publish
+the raw screenshot with browser chrome/bookmarks/wallet area.
 
 See [`docs/WINNER_PLAN.md`](docs/WINNER_PLAN.md) and [`docs/submission.md`](docs/submission.md).
 

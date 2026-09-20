@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 *.png
+# The generated contest social card is source, not runtime output.
+!assets/social-preview.png
 
 # Рантайм-состояние, а не код. Комментарии стоят ОТДЕЛЬНОЙ строкой: gitignore не понимает
 # inline-комментарии после pattern — прежние `nansen_tele/  # ...` не игнорировали НИЧЕГО.
