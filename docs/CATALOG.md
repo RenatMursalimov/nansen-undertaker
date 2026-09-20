@@ -588,6 +588,39 @@
 
 ---
 
+## Подключено в клиенте, но двери для человека НЕТ
+
+Сценариев выше — 24, эндпоинтов у них — 28. А всего в клиенте **50**: остальные 22 работают, но позвать их нечем.
+
+Это НЕ «забыли», а решение: эндпоинт без сценария — то же самое, что было у четырёх мёртвых клиентов до ТЗ B (код есть, для человека его нет). Пишем их здесь, чтобы каталог не выглядел как «вот всё, что умеет ключ», и чтобы следующая фича бралась из этого списка, а не выдумывалась.
+
+Список СЧИТАЕТСЯ при сборке (клиент минус каталог) — подключат эндпоинт без двери, он появится здесь сам.
+
+* `bridge-status`
+* `perp-screener`
+* `prediction-market/categories`
+* `prediction-market/events`
+* `prediction-market/trades`
+* `prediction-market/wallet-trades`
+* `profiler/address/historical-token-balances`
+* `profiler/address/perp-trades`
+* `profiler/address/transactions`
+* `profiler/dex-trades`
+* `smart-money/perp-trades`
+* `tgm/dex-trades`
+* `tgm/flows`
+* `tgm/historical-token-flow-summary`
+* `tgm/historical-token-quant-scores`
+* `tgm/historical-top-holders`
+* `tgm/historical-who-bought-sold`
+* `tgm/perp-pnl-leaderboard`
+* `tgm/price-ohlcv`
+* `tgm/token-transfers`
+* `token-screener`
+* `token-screener/historical`
+
+---
+
 ## Как пересобрать
 
 ```bash
