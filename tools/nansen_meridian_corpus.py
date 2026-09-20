@@ -44,7 +44,7 @@ SIDES = ('BUY', 'SELL')
 
 
 def _day_list():
-    today = dt.datetime.utcnow().date()
+    today = dt.datetime.now(dt.timezone.utc).date()
     return [(today - dt.timedelta(days=i)).isoformat() for i in range(1, DAYS + 1)]
 
 

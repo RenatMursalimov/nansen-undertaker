@@ -1,8 +1,10 @@
 # Nansen Undertaker — Meridian submission draft
 
-**Status: FUNCTIONAL, NOT YET ELIGIBLE TO SUBMIT.** Three external artifacts are still required:
+**Status: LIVE HERO PASSED; LOCAL CORPUS MADE 1,050 NETWORK CALLS; WAITING FOR NANSEN USAGE
+ANALYTICS SCREENSHOT, VIDEO/X URL AND ENTRY-FORM CONFIRMATION.**
+Three external artifacts remain before submission:
 
-1. Nansen Usage Analytics must show **1,000+ API calls made Sep 14–27**;
+1. Nansen Usage Analytics screenshot confirming **1,000+ API calls made Sep 14–27**;
 2. a 30–60 second live screen recording;
 3. the X post URL and official entry-form confirmation.
 
@@ -108,12 +110,25 @@ LIVE PROOF: PASS
 Requests: 4 · known histories: 1+ · provider failures: 0
 ```
 
+## Live evidence collected on Sep 20
+
+- Hero live smoke: **PASS**, 4 requests, 3 known wallet histories, 0 provider failures.
+- Meaningful Smart Money corpus: **1,050 client invocations / 1,050 network calls / 0 cache hits**,
+  exactly at the hard cap; 155 tokens discovered, 1,048 latest unique cells across 75 tokens,
+  414 top-100 partial cells, 2 transient failures.
+- Sanitized evidence: `docs/proofs/LIVE_HERO_2026-09-20.md` and
+  `docs/proofs/MERIDIAN_CORPUS_2026-09-20.md` in the public repo.
+
+The first hero run also found two presentation defects now fixed: unexamined holders are no longer
+called “no measurable history”, and factual live freshness now reaches the source footer.
+
 ## Eligibility: 1,000+ calls
 
-Official rules require 1,000+ calls during the contest window. Local telemetry began mid-window and
-is evidence, not the authority; Nansen Usage Analytics is authoritative.
+Official rules require 1,000+ calls during the contest window. The Sep 20 corpus produced 1,050
+network calls locally; Nansen Usage Analytics remains the authoritative eligibility evidence and
+must be captured before submission.
 
-Preliminary local snapshot supplied on Sep 20 (not final submission data):
+Pre-corpus local snapshot (kept to show the instrument's partial-window boundary):
 
 | metric | preliminary value |
 |---|---:|
@@ -125,20 +140,9 @@ Preliminary local snapshot supplied on Sep 20 (not final submission data):
 | people in contribution ledger | 5 |
 | calls with no workflow scene | 4 |
 
-This does **not** prove eligibility. If Usage Analytics is below 1,000, build the meaningful 7-day
-Smart Money corpus rather than repeating the same request:
-
-```bash
-# plan, zero calls
-python3 tools/nansen_meridian_corpus.py --max-calls 1050
-
-# human-approved run: read-only, hard cap 1050, historical upper bound about 5,250 credits
-python3 tools/nansen_meridian_corpus.py --run --max-calls 1050
-```
-
-It collects current Smart Money tokens × seven completed UTC days × BUY/SELL and stores only
-aggregate counts/volumes, not buyer wallet addresses. Verify the final call count in Nansen Usage
-Analytics afterward.
+The corpus has now run at the 1,050-call hard cap. Do not run it again for eligibility unless Usage
+Analytics contradicts the local evidence; two transient cells remain retryable but are irrelevant to
+the threshold.
 
 ## Final telemetry block
 

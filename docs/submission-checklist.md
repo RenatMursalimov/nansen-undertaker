@@ -4,25 +4,22 @@
 
 ## 0. Eligibility — раньше всего остального
 
+- [x] Meaningful corpus completed locally: **1,050 network calls**, 0 cache hits, hard cap respected.
 - [ ] Nansen Usage Analytics показывает **1,000+ API calls между 14 и 27 сентября**.
 - [ ] Сохранён скрин Usage Analytics без ключа/PII.
-- [ ] Если меньше 1,000: сначала план, затем только человек снимает `--run`:
-  ```bash
-  ./venv/bin/python3 tools/nansen_meridian_corpus.py --max-calls 1050
-  ./venv/bin/python3 tools/nansen_meridian_corpus.py --run --max-calls 1050
-  ```
-  До 1,050 read-only calls, hard cap; историческая верхняя оценка около 5,250 кредитов.
-  Это meaningful 7-day Smart Money corpus, не повтор одного запроса ради счётчика.
+- [x] Corpus run completed; **не запускать повторно для eligibility**, если Usage Analytics
+      подтверждает ≥1,000. Два transient failures не влияют на порог.
 - [ ] После корпуса Usage Analytics проверен снова. Локальная телеметрия не заменяет кабинет.
 
 ## 1. Hero live proof
 
-- [ ] Выбраны основной и запасной активные рынки.
-- [ ] Оба проходят:
+- [x] Primary live proof passed: 4 requests, 3 known histories, 0 provider failures.
+- [ ] A backup active market also passes:
   ```bash
   ./venv/bin/python3 tools/nansen_live_smoke.py --run --market-id <ID>
   ```
-- [ ] Конец вывода: `LIVE PROOF: PASS`, `known histories: 1+`, `provider failures: 0`.
+- [x] Основной live smoke: `LIVE PROOF: PASS`, known histories 3, provider failures 0.
+- [ ] Запасной live smoke: `LIVE PROOF: PASS`, known histories 1+, provider failures 0.
 - [ ] Кнопка `🎭 N` открывает тот же market_id, который был в строке списка.
 - [ ] Экран укладывается примерно в 20 секунд на холодном кэше (10с holders + 10с summaries;
       обычно быстрее).

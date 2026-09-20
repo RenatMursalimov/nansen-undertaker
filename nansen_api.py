@@ -2891,6 +2891,7 @@ def pm_reputation(market_id, top=PM_REP_TOP):
                            ckey=f"pmth:{market_id}:{max(int(top) * 2, 10)}", timeout=10))
     if not rows:
         return None
+    holder_age = _tele.age()
     holders, calls = [], 1
     by_side, total = {}, 0.0
     for r in rows:
@@ -2948,7 +2949,8 @@ def pm_reputation(market_id, top=PM_REP_TOP):
         with _tele.scene('pm_reputation', uid):
             row = pm_address_summary(h['addr'], timeout=10)
             why = None if row else fail_reason('empty')
-        return h, row, why
+            age = _tele.age()
+        return h, row, why, age
 
     # ПЯТЬ ИСТОРИЙ ПАРАЛЛЕЛЬНО, а не 5×60 секунд последовательно. Верхняя граница холодного
     # экрана теперь около 15 секунд плюс top-holders, что укладывается в 30–60с demo.
@@ -2967,10 +2969,13 @@ def pm_reputation(market_id, top=PM_REP_TOP):
                 results.append(fut.result())
             except Exception as e:
                 print('[nansen] pm reputation summary worker: %s' % str(e)[:100])
-                results.append((jobs[fut], None, 'http'))
+                results.append((jobs[fut], None, 'http', None))
 
     # РЕНДЕР ОСТАЁТСЯ В ИСХОДНОМ ПОРЯДКЕ ДЕРЖАТЕЛЕЙ, хотя сеть закончила в другом.
-    by_addr = {h['addr']: (s, why) for h, s, why in results}
+    ages = [float(a) for _h, _s, _why, a in results if a is not None]
+    if holder_age is not None:
+        ages.append(float(holder_age))
+    by_addr = {h['addr']: (s, why) for h, s, why, _age in results}
     for h in target:
         if not h['addr']:
             continue
@@ -3005,7 +3010,7 @@ def pm_reputation(market_id, top=PM_REP_TOP):
     return {'holders': holders, 'by_side': by_side, 'weak_usd': weak, 'strong_usd': strong,
             'known': known, 'unknown': unknown, 'no_history': no_history,
             'no_winrate': no_winrate, 'failed': failed, 'unexamined': unexamined,
-            'failure_reasons': failure_reasons,
+            'failure_reasons': failure_reasons, 'age_sec': max(ages) if ages else None,
             'total_usd': total, 'calls': calls, 'market_id': str(market_id)}
 
 
@@ -3041,7 +3046,7 @@ def pm_reputation_block(rep, market_id='', lang='ru', top=PM_REP_TOP):
                   'to weigh by.') % _usd(_tot))
     if rep['by_side']:
         _sides = sorted(rep['by_side'].items(), key=lambda x: -x[1])
-        L.append(('📊 По сторонам: ' if not en else '📊 By side: ')
+        L.append(('📊 По всем топ-держателям: ' if not en else '📊 Across all top holders: ')
                  + ' · '.join('%s $%s' % (k, _usd(v)) for k, v in _sides[:4]))
     L.append('')
     L.append(('<b>Держатели</b> (разобрано %d из %d):' if not en
@@ -3093,8 +3098,7 @@ def pm_reputation_block(rep, market_id='', lang='ru', top=PM_REP_TOP):
                   ('⚠️ <i>History for %d holder(s) was NOT delivered due to a failure (%s). '
                    'Their money is counted on neither side; this is our partial response, '
                    'not a property of those wallets.</i>')) % (rep['failed'], rs or '?'))
-    natural_unknown = (rep.get('no_history', 0) + rep.get('no_winrate', 0)
-                       + rep.get('unexamined', 0))
+    natural_unknown = rep.get('no_history', 0) + rep.get('no_winrate', 0)
     if natural_unknown:
         L.append('')
         L.append((('⚠️ <i>По %d держател(ям) нет измеримого винрейта - их деньги НЕ '
@@ -3103,6 +3107,13 @@ def pm_reputation_block(rep, market_id='', lang='ru', top=PM_REP_TOP):
                   ('⚠️ <i>%d holder(s) have no measurable win rate - their money is counted '
                    'on NEITHER side. Assigning a win rate we do not know would be fitting '
                    'the answer.</i>')) % natural_unknown)
+    if rep.get('unexamined'):
+        L.append('')
+        L.append((('ℹ️ <i>Ещё %d держател(ей) не разобраны из-за лимита %d историй на один '
+                   'экран; это не утверждение, что истории у них нет.</i>') if not en else
+                  ('ℹ️ <i>%d more holder(s) were not examined because this screen caps wallet '
+                   'history lookups at %d; this does not claim they have no history.</i>'))
+                 % (rep['unexamined'], int(top)))
     L.append('')
     # ОТКУДА ВЗЯЛИСЬ ДОЛЛАРЫ - СКАЗАНО ПРЯМО. Площадка отдаёт размер позиции в ДОЛЯХ и
     # текущую цену отдельно; доллары здесь ПОСЧИТАНЫ нами (доли × цена), а не приехали готовыми.
@@ -3117,7 +3128,7 @@ def pm_reputation_block(rep, market_id='', lang='ru', top=PM_REP_TOP):
               '<i>Past win rate does not promise the future: this is the composition of the '
               'money, not a forecast or advice. Requests spent on this screen: %d.</i>')
              % rep.get('calls', 0))
-    return with_source('\n'.join(L), lang)
+    return with_source('\n'.join(L), lang, age_sec=rep.get('age_sec'))
 
 
 def pm_wallet_block(address):

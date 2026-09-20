@@ -30,6 +30,8 @@ Built for the **Nansen Meridian Buildathon**.
 **53 Nansen API routes** · **25 documented workflows** · **26 named telemetry scenes** ·
 **8 distinct failure states**
 
+- [`docs/proofs/LIVE_HERO_2026-09-20.md`](docs/proofs/LIVE_HERO_2026-09-20.md) — sanitized live hero proof: 4 calls, 3 known histories, 0 failures.
+- [`docs/proofs/MERIDIAN_CORPUS_2026-09-20.md`](docs/proofs/MERIDIAN_CORPUS_2026-09-20.md) — sanitized corpus proof: 1,050 network calls at the hard cap.
 - Full generated workflow catalog: [`docs/CATALOG.md`](docs/CATALOG.md)
 - Silent 52-second demo plan: [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md)
 - Ready X thread: [`docs/X_THREAD.md`](docs/X_THREAD.md)
@@ -220,9 +222,10 @@ copy-paste risk.
 The official rules require **1,000+ API calls made Sep 14–27**, a public repo, a 30–60 second live
 screen recording, an X post tagging `@nansen_ai`, and the official entry form.
 
-Local telemetry started mid-window and is not authoritative for eligibility. Verify the call count
-in Nansen Usage Analytics. If it is below 1,000, `tools/nansen_meridian_corpus.py` builds a real
-seven-day Smart Money research corpus rather than repeating one request for a counter.
+On Sep 20 the capped corpus recorded **1,050 network calls and 0 cache hits** locally. This is
+sanitized in [`docs/proofs/MERIDIAN_CORPUS_2026-09-20.md`](docs/proofs/MERIDIAN_CORPUS_2026-09-20.md).
+Nansen Usage Analytics remains authoritative and must be captured before submission. Do not rerun
+the corpus for eligibility if the dashboard already confirms the threshold.
 
 See [`docs/WINNER_PLAN.md`](docs/WINNER_PLAN.md) and [`docs/submission.md`](docs/submission.md).
 

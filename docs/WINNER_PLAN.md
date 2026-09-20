@@ -51,27 +51,27 @@ Submission. По [официальному FAQ](https://nansen.featurebase.app/h
 
 ---
 
-## P0: eligibility — сегодня мы НЕ доказали 1,000 calls
+## P0: 1,050 network calls сделаны; eligibility ждёт скрин Usage Analytics
 
-Локальная телеметрия на 20 сентября показала 31 вызов (30 по сети) за шесть суток с данными.
-Она стартовала посреди окна, поэтому **не является окончательным счётчиком Nansen**, но и
-утверждать 1,000 по ней нельзя. Авторитетный источник — Usage Analytics в кабинете Nansen.
+20 сентября meaningful corpus завершился ровно на hard cap: **1,050 client invocations,
+1,050 network calls, 0 cache hits**. Это произошло внутри конкурсного окна. Санированный proof:
+`nansen/proofs/MERIDIAN_CORPUS_2026-09-20.md`.
 
-Чтобы требование не превращалось в бессмысленный spam, добавлен инструмент, который строит
+Авторитетный внешний артефакт всё ещё нужен: screenshot Usage Analytics в кабинете Nansen.
+Локальная телеметрия доказывает поведение нашего процесса, кабинет — зачёт организатора.
+
+Корпус больше НЕ запускать ради eligibility, если dashboard уже показывает ≥1,000. Он построил
 настоящий 7-дневный research corpus для low-cap discovery:
 
 ```bash
-# План, ноль вызовов
+# Уже выполнено 20 сентября. Команды оставлены для воспроизводимости, НЕ повторять ради порога.
 ./venv/bin/python3 tools/nansen_meridian_corpus.py --max-calls 1050
-
-# Живой запуск делает ТОЛЬКО человек: до 1050 read-only вызовов, верхняя оценка ~5250 кредитов
 ./venv/bin/python3 tools/nansen_meridian_corpus.py --run --max-calls 1050
 ```
 
-Метод: текущие токены с притоком smart money × семь завершённых UTC-дней × BUY/SELL. В
-checkpoint сохраняются только агрегированные counts/volumes, **без адресов покупателей**.
-Повторный запуск завершённые клетки не повторяет. Результат — ranking по числу дней, когда
-покупка превышала продажу, а не «мы вызвали API тысячу раз ради галочки».
+Результат: 155 найденных токенов, 1,048 latest unique cells по 75 токенам, 414 top-100 partial
+cells и 2 transient failures. В checkpoint сохраняются только агрегированные counts/volumes,
+**без адресов покупателей**. Ranking явно exploratory из-за partial cells.
 
 После запуска всё равно проверить Nansen Usage Analytics: cache hits не являются network calls,
 а локальная телеметрия не знает о вызовах до её установки.
@@ -158,7 +158,8 @@ CI и live proof script.
 - [ ] слить winner-hardening: кнопка закреплена за market_id, partial failures не выдаются за
       отсутствие истории, summaries параллельны, отдельные telemetry scenes;
 - [ ] прогнать live smoke по двум рынкам;
-- [ ] проверить Usage Analytics; если меньше 1,000 — запустить meaningful corpus с hard cap;
+- [x] meaningful corpus завершён: 1,050 network calls, 0 cache hits, hard cap соблюдён;
+- [ ] подтвердить ≥1,000 в Usage Analytics и сохранить screenshot;
 - [ ] сохранить скрин Usage Analytics после порога (без ключей/PII).
 
 ### 22–23 сентября — контент, не новые фичи
