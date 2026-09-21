@@ -9,11 +9,12 @@
 | Area | Status | Evidence / next action |
 |---|---|---|
 | Core Nansen integration | ✅ Complete | 53 API routes in one client; 25 documented workflows |
+| Server endpoint sweep | ✅ Ready | all 53 routes declared; 47 structural reads + safe trade reads, Agent tier, hard budgets |
 | Hero: Polymarket holder reputation | ✅ Live PASS | primary `1130012`, backup `4323345`; 3 known histories, 0 failures each |
 | Liquidation map | ✅ Complete | button + command + visualization + honest missing-data handling |
 | Smart Money trade as % of market cap | ✅ Complete | no extra request; value, market cap and token age from one response |
 | Honest outcomes | ✅ Complete | 8 distinct states; partial failures never become wallet properties |
-| Telemetry | ✅ Complete | 26 workflow scenes; one production reader; submission export |
+| Telemetry | ✅ Complete | 28 workflow/operations scenes; one production reader; submission export |
 | Public repository | ✅ Public, CI green | https://github.com/RenatMursalimov/nansen-undertaker |
 | 1,000-call eligibility | ✅ Threshold exceeded | Nansen screenshot: **5,484 used on Sep 20**, 13,850 total in 30D |
 | Meaningful corpus | ✅ Complete | 1,050 network calls, hard cap, 0 cache hits, 1,048 latest cells |
@@ -68,8 +69,8 @@ hard-coded to create an alarming conclusion.
 - **26** telemetry scenes, including separate `pm_reputation`, `pm_orderbook`, `pm_chart` and
   `liq_map` evidence.
 - **8** user-visible failure states.
-- Private Nansen suite: **710 PASS / 0 FAIL** after final English-route and recording checks.
-- Public suite: **113 PASS / 0 FAIL**; scrub clean; latest published CI green.
+- Private Nansen suite: **741 PASS / 0 FAIL** after all-route sweep and credit-safety checks.
+- Public suite: **126 PASS / 0 FAIL**; scrub clean; latest published CI green.
 
 ## What is finished
 

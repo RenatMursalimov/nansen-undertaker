@@ -8,6 +8,7 @@
 | Liquidation map | ✅ complete |
 | Smart Money trade as % market cap | ✅ complete |
 | Public repo / CI / scrub | ✅ green |
+| All-route server sweep | ✅ 53-route registry, fresh calls, daily caps |
 | 1,000+ API call eligibility | ✅ dashboard: 5,484 calls on Sep 20 |
 | Meaningful 7-day corpus | ✅ 1,050 network calls at hard cap |
 | Primary / backup markets | ✅ `1130012` / `4323345` |

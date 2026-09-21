@@ -440,10 +440,12 @@ def t_docs_are_here_and_name_prices():
     including the reproducible social card and version-controlled Wiki source."""
     required = (
         'README.md', 'MANIFEST.md', 'docs/scenarios.md', 'docs/telemetry_spec.md',
-        'docs/PROJECT_STATUS.md', 'docs/RECORDING_RUNBOOK.md',
+        'docs/PROJECT_STATUS.md', 'docs/RECORDING_RUNBOOK.md', 'docs/ENDPOINT_SWEEP.md',
         'docs/wiki/Home.md', 'docs/wiki/Status.md', 'docs/wiki/Roadmap.md',
         'docs/wiki/Demo.md', 'docs/wiki/Architecture.md', 'docs/wiki/_Sidebar.md',
-        'tools/render_social_preview.py', 'assets/social-preview.png',
+        'tools/render_social_preview.py', 'tools/nansen_endpoint_sweep.py',
+        'tools/nansen_trade_probe.py', 'tools/nansen_catalog.py',
+        'assets/social-preview.png',
     )
     for rel in required:
         p = os.path.join(_ROOT, rel)
@@ -457,7 +459,7 @@ def t_docs_are_here_and_name_prices():
     if os.path.exists(readme):
         txt = open(readme, encoding='utf-8').read()
         for rel in ('docs/PROJECT_STATUS.md', 'docs/RECORDING_RUNBOOK.md',
-                    'assets/social-preview.png', 'docs/wiki/'):
+                    'docs/ENDPOINT_SWEEP.md', 'assets/social-preview.png', 'docs/wiki/'):
             check('DOCS: README maps %s' % rel, rel in txt, rel)
     preview = os.path.join(_ROOT, 'assets', 'social-preview.png')
     if os.path.exists(preview):
@@ -484,9 +486,11 @@ def t_public_hygiene_and_live_tools_are_safe_by_default():
     # .gitignore: комментарий только отдельной строкой. Inline `pattern # comment` git не
     # понимает, и прежние runtime files не игнорировались вообще.
     gi = open(os.path.join(_ROOT, '.gitignore'), encoding='utf-8').read().splitlines()
-    required = {'nansen_tele/', 'nansen_credits.json', 'nansen_schema.json',
+    required = {'nansen_tele/', 'nansen_credits.json', 'nansen_credits.json.pending',
+                'nansen_schema.json',
                 'nansen_asks.json', 'nansen_cache.json', 'nansen_pm_refs.json',
-                'nansen_meridian_corpus.jsonl', 'nansen_local.db'}
+                'nansen_meridian_corpus.jsonl', 'nansen_endpoint_sweep_state.json',
+                'nansen_local.db'}
     check('PUBLIC: all runtime patterns are ignored', required <= set(gi),
           sorted(required - set(gi)))
     check('PUBLIC: generated social preview is explicitly tracked',
@@ -504,8 +508,11 @@ def t_public_hygiene_and_live_tools_are_safe_by_default():
     try:
         S.HERE = temp
         open(os.path.join(temp, 'nansen_cache.json'), 'w').write('{}')
+        open(os.path.join(temp, 'nansen_credits.json.pending'), 'w').write('{')
+        open(os.path.join(temp, 'nansen_endpoint_sweep_state.json'), 'w').write('{}')
         check('PUBLIC: scrubber ловит runtime state',
-              S._runtime_state() == ['nansen_cache.json'], S._runtime_state())
+              S._runtime_state() == ['nansen_cache.json', 'nansen_credits.json.pending',
+                                     'nansen_endpoint_sweep_state.json'], S._runtime_state())
     finally:
         S.HERE = old_here
         shutil.rmtree(temp, ignore_errors=True)
@@ -513,15 +520,21 @@ def t_public_hygiene_and_live_tools_are_safe_by_default():
     # Live tools: без --run только plan. Провод подменён на взрыв — если вызов уйдёт, тест
     # упадёт, а не поверит напечатанному «nothing sent».
     import httpx
-    keep = httpx.post
+    keep, keep_get = httpx.post, httpx.get
     httpx.post = lambda *a, **k: (_ for _ in ()).throw(AssertionError('network call without --run'))
+    httpx.get = lambda *a, **k: (_ for _ in ()).throw(AssertionError('network GET without --run'))
+    loaded = {}
     try:
         for rel, args in (('tools/nansen_live_smoke.py', []),
-                          ('tools/nansen_meridian_corpus.py', ['--max-calls', '10'])):
+                          ('tools/nansen_meridian_corpus.py', ['--max-calls', '10']),
+                          ('tools/nansen_endpoint_sweep.py', ['--profile', 'complete']),
+                          ('tools/nansen_trade_probe.py', ['quote', '--wallet',
+                                                           '0x1f9090aaE28b8a3dCeaDf281B0F12828e676c326'])):
             spec = importlib.util.spec_from_file_location('_tool_' + os.path.basename(rel),
                                                           os.path.join(_ROOT, rel))
             M = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(M)
+            loaded[rel] = M
             buf, old = io.StringIO(), sys.stdout
             sys.stdout = buf
             try:
@@ -533,7 +546,7 @@ def t_public_hygiene_and_live_tools_are_safe_by_default():
                   'PLAN' in buf.getvalue() or 'Nothing sent' in buf.getvalue(), buf.getvalue())
         # CORPUS RESUME: временный failure не считается done, иначе нулевой cell навсегда
         # отравляет ranking; ok/empty завершены. И page=100 помечается partial, не «все».
-        corpus = M                         # последний module в цикле — corpus tool
+        corpus = loaded['tools/nansen_meridian_corpus.py']
         old_out = corpus.OUT
         ctmp = tempfile.mkdtemp(prefix='corpus_state_')
         try:
@@ -597,7 +610,7 @@ def t_public_hygiene_and_live_tools_are_safe_by_default():
             smoke.N._key, smoke.N.pm_market_screener, smoke.N.pm_reputation = \
                 keep_key, keep_scr, keep_rep
     finally:
-        httpx.post = keep
+        httpx.post, httpx.get = keep, keep_get
 
     # Footer «this run» считает только строки после старта процесса, не весь сегодняшний лог.
     sys.modules.pop('cli', None)
