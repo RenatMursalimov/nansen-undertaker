@@ -292,135 +292,167 @@ SCENARIOS = [
 #: в обоих языках и здесь не повторяется. `_verify` требует, чтобы у КАЖДОГО сценария был полный
 #: перевод: пустое поле тут — та же ложь в судейском документе, что и выдуманная цена.
 _EN = {
-    'flows': {'title': '💹 Smart money inflow by window',
+    'flows': {'cmds': ['smart flows'],
+              'btns': ['🧠 Nansen → 💹 Smart flows (1h/24h/7d/30d)'],
+              'title': '💹 Smart money inflow by window',
               'price': 'price not named in the official list · counted on a separate line',
               'gives': 'tickers with net inflow over the window; tapping a ticker opens the '
                        'token card',
               'why': 'the window total answers "how much", the first question about any token'},
-    'trends': {'title': '🔥 Smart Money inside the shared Trends screen',
+    'trends': {'cmds': [], 'btns': ['🔗 Onchain → Trends → Smart Money'],
+               'title': '🔥 Smart Money inside the shared Trends screen',
                'price': '1 credit',
                'gives': 'tokens with positive netflow embedded into the shared Trends screen; '
                         'a tap opens the token card',
                'why': 'Nansen is not a separate mode but part of the daily route: trend → card '
                       '→ holders/flows/trades'},
-    'holdings': {'title': '💼 What smart money accumulates',
+    'holdings': {'cmds': ['smart holdings'], 'btns': ['🧠 Nansen → 💼 What they hold'],
+                 'title': '💼 What smart money accumulates',
                  'price': '3 credits',
                  'gives': 'top positions by $ with the 24h change',
                  'why': 'flow says "what they are buying now", holdings say "what they already '
                         'hold"'},
-    'trades': {'title': '🧠 Smart money trades over 24h + share of market cap',
+    'trades': {'cmds': ['smart trades'], 'btns': ['🧠 Nansen → 🧠 Smart money trades now'],
+               'title': '🧠 Smart money trades over 24h + share of market cap',
                'price': '1–5 credits',
                'gives': 'who entered what and for how much, plus the token market cap and the '
                         "trade's SHARE of it",
                'why': '"$48K went into a token" says nothing until it says into what: $48K into '
                       'a $2.1M token is 2.3% of the entire market cap and a signal, while into '
                       'a $50B token it is noise'},
-    'perpleaders': {'title': '🏆 Top perp traders',
+    'perpleaders': {'cmds': ['top perps'], 'btns': ['🧠 Nansen → 🏆 Top perp traders'],
+                    'title': '🏆 Top perp traders',
                     'price': '5 credits',
                     'gives': 'profitable perp accounts; tapping a trader opens their account',
                     'why': 'who is making money on leverage right now'},
-    'perppos': {'title': '💥 Leveraged positions and the LIQUIDATION PRICE by token',
+    'perppos': {'cmds': ['perp positions BTC', 'liquidations BTC'],
+                'btns': ['token card (e.g. BTC) → 💥 Liq.'],
+                'title': '💥 Leveraged positions and the LIQUIDATION PRICE by token',
                 'price': '5 credits',
                 'gives': 'position size, leverage, unrealized PnL and the liquidation price for '
                          'each account',
                 'why': 'before this endpoint we had no liquidation price at all — it was guessed '
                        'from the entry price'},
-    'liqmap': {'title': "🗺 Liquidation map: where other people's leverage hangs",
+    'liqmap': {'cmds': ['liq map BTC'],
+               'btns': ['token card → 💥 Liq. → 🗺 Liquidation map'],
+               'title': "🗺 Liquidation map: where other people's leverage hangs",
                'price': '5 credits (the same request as the position list)',
                'gives': 'an image: position sizes by liquidation-price level, red is longs, '
                         'green is shorts, the dashed line is the current price. Plus a caption '
                         'with the magnitude',
                'why': 'the position list answers "who is in", the map answers "at which level '
                       'the market moves fast"; it is not a line but a distribution'},
-    'walletperps': {'title': "🩺 A wallet's perp account and room to liquidation",
+    'walletperps': {'cmds': ['nansen perp 0x…'], 'btns': ['🧠 Nansen → 🩺 Wallet perp account'],
+                    'title': "🩺 A wallet's perp account and room to liquidation",
                     'price': 'price not named in the official list',
                     'gives': 'capital, how much is collateralized, unrealized PnL, account '
                              'health and positions',
                     'why': 'the main question about a leveraged whale is not "what do they hold" '
                            'but "how much room is left"'},
-    'tokencheck': {'title': '🧠 Token breakdown: flows, Nansen Score, holder labels',
+    'tokencheck': {'cmds': ['passport 0x… deep'], 'btns': ['token/meme card → 🧠'],
+                   'title': '🧠 Token breakdown: flows, Nansen Score, holder labels',
                    'price': '4 requests, about 12 credits',
                    'gives': 'net flows by holder segment, Nansen Score, top-holder labels, top '
                             'by PnL',
                    'why': 'one screen answers "who is in this token" in four different ways'},
-    'wbs': {'title': '🔄 Who net-bought and who sold a token',
+    'wbs': {'cmds': ['who bought 0x… 7', 'who bought sold 0x…'],
+            'btns': ['token card → 🧠 → 🔄 Who bought and sold'],
+            'title': '🔄 Who net-bought and who sold a token',
             'price': '1 credit per side',
             'gives': 'a label or address and the $ volume for each side over the period',
             'why': 'net flow is the total; here you see WHO made it'},
-    'tinfo': {'title': '🪪 Token info sheet from Nansen',
+    'tinfo': {'cmds': ['token info 0x…'], 'btns': ['🧠 Nansen → 🪪 Token information'],
+              'title': '🪪 Token info sheet from Nansen',
               'price': '1 credit',
               'gives': 'market cap, volume, liquidity, holder count',
               'why': 'basic metrics from the same source as everything else — no second vendor'},
-    'flowpng': {'title': '📊 Holder-segment flows AS A CHART',
+    'flowpng': {'cmds': ['flows chart 0x…'], 'btns': ['token card → 🧠 → 📊 Flows chart'],
+                'title': '📊 Holder-segment flows AS A CHART',
                 'price': '1 credit',
                 'gives': 'bars by segment (smart money, whales, top-PnL, public figures, '
                          'exchanges, fresh wallets); color means the SIGN of the flow, the '
                          'source is baked into the canvas',
                 'why': 'text answers "how much", the chart answers "who against whom": smart '
                        'money accumulating while whales dump is a half-second read on the bars'},
-    'backtest': {'title': '🧪 Backtest on onchain candles',
+    'backtest': {'cmds': [], 'btns': ['meme card → 🧪 Backtest'],
+                 'title': '🧪 Backtest on onchain candles',
                  'price': '5 credits for 89 daily candles',
                  'gives': "a run of a simple strategy over the token's historical candles",
                  'why': 'a meme has no exchange chart, yet you want to test an idea on its own '
                         'history'},
-    'profile': {'title': '👤 Wallet profile: labels, PnL, related',
+    'profile': {'cmds': ['profile 0x…', 'profile 0x… deep'],
+                'btns': ['bare address in DM → 🕵 Dossier'],
+                'title': '👤 Wallet profile: labels, PnL, related',
                 'price': '3 requests; "deeper" adds premium labels for 150 credits',
                 'gives': 'labels, PnL and win rate, related wallets',
                 'why': 'the first question about an unknown address is "who is this"; "no '
                        'labels" does NOT mean "clean address", and the screen says so directly'},
-    'cparty': {'title': '🤝 Who a wallet trades with most',
+    'cparty': {'cmds': ['counterparties 0x…'], 'btns': ['🧠 Nansen → 🤝 Wallet counterparties'],
+               'title': '🤝 Who a wallet trades with most',
                'price': 'price not named in the official list',
                'gives': 'counterparties over 30 days and volumes',
                'why': "an address's connections say more about it than its balance"},
-    'balance': {'title': '💼 Wallet portfolio per Nansen data',
+    'balance': {'cmds': ['nansen balance 0x…'], 'btns': ['🧠 Nansen → 💼 Wallet portfolio'],
+                'title': '💼 Wallet portfolio per Nansen data',
                 'price': 'price not named in the official list',
                 'gives': 'portfolio composition by $ without spam tokens',
                 'why': 'the same key instead of a separate paid balance vendor'},
-    'pmmarkets': {'title': '🎲 Trending Polymarket markets with market_id',
+    'pmmarkets': {'cmds': ['polymarket markets'],
+                  'btns': ['🧠 Nansen → 🎲 Polymarket → 🎲 Trending markets'],
+                  'title': '🎲 Trending Polymarket markets with market_id',
                   'price': 'price not named in the official list',
                   'gives': 'markets by volume, probability, 24h volume and a COPYABLE '
                            'market_id; three rows of buttons under the list',
                   'why': 'without printing the market_id three neighbouring screens existed '
                          'only formally: there was nothing to call them with'},
-    'pmchart': {'title': '📈 Market probability chart over time',
+    'pmchart': {'cmds': ['polymarket chart 654412'], 'btns': ['markets list → 📈 N'],
+                'title': '📈 Market probability chart over time',
                 'price': 'price not named in the official list',
                 'gives': 'an image: how the probability changed, the 50% line separating "more '
                          'likely yes" from "more likely no"',
                 'why': '45% after 20% and 45% after 70% are opposite stories, and one number '
                        'cannot tell them apart'},
-    'pmbook': {'title': '📖 Polymarket order book',
+    'pmbook': {'cmds': ['polymarket orderbook 654412'], 'btns': ['markets list → 📖 N'],
+               'title': '📖 Polymarket order book',
                'price': 'price not named in the official list',
                'gives': 'order levels by side and a depth line',
                'why': '"45%" with an empty book and "45%" with a dense one are different '
                       'things: the price says what people believe, the book says how much it '
                       'costs to test that with money'},
-    'pmrep': {'title': '🎭 Who holds the market and how they guessed before',
+    'pmrep': {'cmds': ['market reputation 654412', 'who holds market 654412'],
+              'btns': ['markets list → 🎭 N'],
+              'title': '🎭 Who holds the market and how they guessed before',
               'price': '6 requests (holders + lifetime history of each of the five)',
               'gives': 'how much money sits with wallets below the win-rate threshold, a '
                        'breakdown by side, and holders with win rate, PnL and market count',
               'why': '"78% Yes" — a consensus of WHOM? One number looks the same when the money '
                      'was staked by wallets with a 70% win rate and by wallets with a 35% one; '
                      'the first is a signal, the second an invitation to stand against'},
-    'pmwallet': {'title': '🎰 Polymarket trader profile',
+    'pmwallet': {'cmds': ['polymarket profile 0x…'], 'btns': ['🎲 Polymarket → 🎰 Trader profile'],
+                 'title': '🎰 Polymarket trader profile',
                  'price': '2 requests',
                  'gives': 'lifetime PnL, win rate, wallet age and top markets by PnL',
                  'why': "before copying someone's bet, it helps to know how the previous ones "
                         'ended'},
-    'pmleaders': {'title': '🏆 Top traders of a specific market',
+    'pmleaders': {'cmds': ['market leaders 654412'], 'btns': ['🎲 Polymarket → 🏆 Market leaders'],
+                  'title': '🏆 Top traders of a specific market',
                   'price': 'price not named in the official list',
                   'gives': 'who made and lost the most on this market, with the side indicated',
                   'why': 'the winners and losers of a single market are the fastest way to see '
                          'who trades it'},
-    'agent': {'title': '🔍 Free-form question to the Nansen agent',
+    'agent': {'cmds': [], 'btns': ['exchange card → 🔍 Nansen', 'a question in DM or chat'],
+              'title': '🔍 Free-form question to the Nansen agent',
               'price': '200 credits (fast) or 750 (expert) — the MOST expensive path',
               'gives': "the agent's answer in words, with a source attribution",
               'why': 'the only door for questions that have no structural endpoint'},
-    'tally': {'title': '🧮 My contest tally',
+    'tally': {'cmds': ['nansen stats'], 'btns': ['🧠 Nansen → 🧮 My contest tally'],
+              'title': '🧮 My contest tally',
               'price': 'free, reads its own log',
               'gives': 'how many calls and credits per person and their rank; a leaderboard '
                        'WITHOUT names and IDs',
               'why': 'a multi-user bot: contribution is counted while privacy is not spent'},
-    'digest': {'title': '📰 Morning digest and tweet jobs',
+    'digest': {'cmds': [], 'btns': ['on a schedule, no human'],
+               'title': '📰 Morning digest and tweet jobs',
                'price': 'counted separately from people: a job has no person and does not go '
                         'into the tally',
                'gives': 'the smart money section in the morning digest',
@@ -541,9 +573,13 @@ def _verify():
         if _id in seen:
             bad.append('%s: id повторяется' % _id)
         seen.add(_id)
-        for c in sc['cmds']:
-            # КОМАНДУ ПРОВЕРЯЕМ РОУТЕРОМ, А НЕ ГЛАЗАМИ. Плейсхолдер `0x…` роутер не поймёт,
-            # поэтому подставляем настоящий публичный адрес - проверяется ФОРМА команды.
+        # КОМАНДЫ ОБОИХ ЯЗЫКОВ ПРОВЕРЯЕМ РОУТЕРОМ, А НЕ ГЛАЗАМИ. В английском каталоге стоят
+        # английские команды, и judge, набравший `smart flows`/`liq map BTC`, обязан получить
+        # экран - иначе английский документ обещает то, чего роутер не понимает. Плейсхолдер
+        # `0x…` роутер не поймёт, поэтому подставляем настоящий публичный адрес.
+        _ru_cmds = list(sc['cmds'])
+        _en_cmds = list((_EN.get(_id) or {}).get('cmds') or [])
+        for c in _ru_cmds + _en_cmds:
             probe = c.replace('0x…', '0x1f9090aaE28b8a3dCeaDf281B0F12828e676c326')
             if oc_dm is not None and not oc_dm.is_onchain_command(probe):
                 bad.append('%s: команду %r роутер НЕ узнаёт' % (_id, c))
@@ -584,6 +620,24 @@ def _verify():
             for f in ('title', 'gives', 'why', 'price'):
                 if not (_en.get(f) or '').strip():
                     bad.append('%s: пустое английское поле %r в _EN' % (_id, f))
+            # cmds/btns ОБЯЗАНЫ БЫТЬ (даже пустым списком) и совпадать по числу с русскими -
+            # иначе английский и русский каталоги разойдутся по строкам, а _f('cmds','en')
+            # упал бы KeyError на сценарии без английских команд.
+            if 'cmds' not in _en or 'btns' not in _en:
+                bad.append('%s: в _EN нет cmds/btns' % _id)
+            else:
+                # Число АЛИАСОВ команды может отличаться (у русского «карта ликвидаций» два
+                # варианта, у английского один), но НАЛИЧИЕ команды обязано совпасть: если у
+                # сценария есть русская команда, должна быть и английская, иначе английский
+                # каталог оставит экран без текстового входа.
+                if bool(_en['cmds']) != bool(sc['cmds']):
+                    bad.append('%s: команда есть на одном языке и отсутствует на другом'
+                               % _id)
+                # Кнопочные пути — описательные, их число обязано совпадать (та же форма
+                # документа на обоих языках).
+                if len(_en['btns']) != len(sc['btns']):
+                    bad.append('%s: число английских кнопок (%d) != русских (%d)'
+                               % (_id, len(_en['btns']), len(sc['btns'])))
     # В _EN не должно быть лишних ключей: удалили сценарий — перевод не может остаться сиротой.
     _orphans = sorted(set(_EN) - {s['id'] for s in SCENARIOS})
     if _orphans:
@@ -621,7 +675,7 @@ def _md(lang='en'):
              'in credits. Where it does not — the price is given **by the number of requests**. '
              'This is not evasion: a made-up credit number in a document that tweets are '
              'written from would be a lie in the most verifiable place.', '',
-             '**Русский аналог рядом:** [`CATALOG_ru.md`](CATALOG_ru.md).', '',
+             '**Russian version:** [`CATALOG_ru.md`](CATALOG_ru.md).', '',
              '| Scenarios | Endpoints used | Telemetry scenes |', '|---|---|---|']
     else:
         L = ['# Каталог сценариев на данных Nansen', '',
@@ -639,7 +693,7 @@ def _md(lang='en'):
              'кредитах. Где не называет — цена указана **числом запросов**. Это не уклонение: '
              'придуманное число кредитов в документе, по которому пишут твиты, было бы ложью в '
              'самом проверяемом месте.', '',
-             '**English original is the primary file:** [`CATALOG.md`](CATALOG.md).', '',
+             '**Английский оригинал — основной файл:** [`CATALOG.md`](CATALOG.md).', '',
              '| Сценариев | Эндпоинтов задействовано | Сцен телеметрии |', '|---|---|---|']
     _eps = sorted({e for sc in SCENARIOS for e in sc['eps']})
     _scenes = sorted({sc['scene'] for sc in SCENARIOS if sc['scene']})
@@ -659,19 +713,21 @@ def _md(lang='en'):
         L += ['## Короткая таблица', '',
               '| Сценарий | Сказать боту | Кнопкой | Цена |', '|---|---|---|---|']
     for sc in SCENARIOS:
-        _c = '<br>'.join('`%s`' % c for c in sc['cmds']) or '—'
-        _b = '<br>'.join(sc['btns']) or '—'
+        _c = '<br>'.join('`%s`' % c for c in _f(sc, 'cmds', lang)) or '—'
+        _b = '<br>'.join(_f(sc, 'btns', lang)) or '—'
         L.append('| [%s](#%s) | %s | %s | %s |'
                  % (_f(sc, 'title', lang), sc['id'], _c, _b, _f(sc, 'price', lang)))
     L += ['', '---', '']
     for sc in SCENARIOS:
         L += ['<a name="%s"></a>' % sc['id'], '', '## %s' % _f(sc, 'title', lang), '']
-        if sc['cmds']:
+        _cmds = _f(sc, 'cmds', lang)
+        _btns = _f(sc, 'btns', lang)
+        if _cmds:
             _say = '**Say to the bot:** ' if _en else '**Сказать боту:** '
-            L.append(_say + ' · '.join('`%s`' % c for c in sc['cmds']))
-        if sc['btns']:
+            L.append(_say + ' · '.join('`%s`' % c for c in _cmds))
+        if _btns:
             _by = '**By button:** ' if _en else '**Кнопкой:** '
-            L.append(_by + ' · '.join(sc['btns']))
+            L.append(_by + ' · '.join(_btns))
         if _en:
             L += ['', '**What you get:** %s' % _f(sc, 'gives', lang), '',
                   '**Price:** %s' % _f(sc, 'price', lang), '',

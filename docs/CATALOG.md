@@ -6,7 +6,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 **About price.** Where the official Nansen list names an endpoint price — it is in credits. Where it does not — the price is given **by the number of requests**. This is not evasion: a made-up credit number in a document that tweets are written from would be a lie in the most verifiable place.
 
-**Русский аналог рядом:** [`CATALOG_ru.md`](CATALOG_ru.md).
+**Russian version:** [`CATALOG_ru.md`](CATALOG_ru.md).
 
 | Scenarios | Endpoints used | Telemetry scenes |
 |---|---|---|
@@ -16,31 +16,31 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 | Scenario | Say to the bot | By button | Price |
 |---|---|---|---|
-| [💹 Smart money inflow by window](#flows) | `смарт потоки` | 🧠 Nansen → 💹 Смарт-потоки → 1ч/24ч/7д/30д | price not named in the official list · counted on a separate line |
-| [🔥 Smart Money inside the shared Trends screen](#trends) | — | 🔗 Ончейн → Тренды → Smart Money | 1 credit |
-| [💼 What smart money accumulates](#holdings) | `смарт холдинги` | 🧠 Nansen → 💼 Что копят | 3 credits |
-| [🧠 Smart money trades over 24h + share of market cap](#trades) | `смарт сделки` | 🧠 Nansen → 🧠 Сделки smart money сейчас | 1–5 credits |
-| [🏆 Top perp traders](#perpleaders) | `топ перпы` | 🧠 Nansen → 🏆 Топ перп-трейдеры | 5 credits |
-| [💥 Leveraged positions and the LIQUIDATION PRICE by token](#perppos) | `перп позиции BTC`<br>`ликвидации BTC` | карточка токена (например BTC) → 💥 Ликвид. | 5 credits |
-| [🗺 Liquidation map: where other people's leverage hangs](#liqmap) | `карта ликвидаций BTC`<br>`ликвид карта BTC` | карточка токена → 💥 Ликвид. → 🗺 Карта ликвидаций | 5 credits (the same request as the position list) |
-| [🩺 A wallet's perp account and room to liquidation](#walletperps) | `нансен перпы 0x…` | 🧠 Nansen → 🩺 Счёт кошелька на перпах | price not named in the official list |
-| [🧠 Token breakdown: flows, Nansen Score, holder labels](#tokencheck) | `паспорт 0x… глубже` | карточка токена/мема → 🧠 | 4 requests, about 12 credits |
-| [🔄 Who net-bought and who sold a token](#wbs) | `кто входил 0x… 7`<br>`кто выходил 0x…` | карточка токена → 🧠 → 🔄 Кто входил | 1 credit per side |
-| [🪪 Token info sheet from Nansen](#tinfo) | `инфо токен 0x…` | 🧠 Nansen → 🪪 Справка по токену | 1 credit |
-| [📊 Holder-segment flows AS A CHART](#flowpng) | `потоки картинкой 0x…` | карточка токена → 🧠 → 📊 Потоки картинкой | 1 credit |
-| [🧪 Backtest on onchain candles](#backtest) | — | карточка мема → 🧪 Бэктест | 5 credits for 89 daily candles |
-| [👤 Wallet profile: labels, PnL, related](#profile) | `профиль 0x…`<br>`профиль 0x… глубже` | голый адрес в личку → 🕵 Досье | 3 requests; "deeper" adds premium labels for 150 credits |
-| [🤝 Who a wallet trades with most](#cparty) | `контрагенты 0x…` | 🧠 Nansen → 🤝 С кем торгует кошелёк | price not named in the official list |
-| [💼 Wallet portfolio per Nansen data](#balance) | `нансен баланс 0x…` | 🧠 Nansen → 💼 Портфель кошелька | price not named in the official list |
-| [🎲 Trending Polymarket markets with market_id](#pmmarkets) | `полимаркет рынки`<br>`polymarket markets` | 🧠 Nansen → 🎲 Polymarket → 🎲 Трендовые рынки | price not named in the official list |
-| [📈 Market probability chart over time](#pmchart) | `полимаркет график 654412` | список рынков → 📈 N | price not named in the official list |
-| [📖 Polymarket order book](#pmbook) | `полимаркет стакан 654412` | список рынков → 📖 N | price not named in the official list |
-| [🎭 Who holds the market and how they guessed before](#pmrep) | `репутация рынка 654412`<br>`кто держит рынок 654412`<br>`market reputation 654412`<br>`who holds market 654412` | список рынков → 🎭 N | 6 requests (holders + lifetime history of each of the five) |
-| [🎰 Polymarket trader profile](#pmwallet) | `полимаркет профиль 0x…` | 🎲 Polymarket → 🎰 Профиль трейдера | 2 requests |
-| [🏆 Top traders of a specific market](#pmleaders) | `топ рынка 654412` | 🎲 Polymarket → 🏆 Топ-трейдеры рынка | price not named in the official list |
-| [🔍 Free-form question to the Nansen agent](#agent) | — | биржевая карточка → 🔍 Nansen<br>вопрос в личке или в чате | 200 credits (fast) or 750 (expert) — the MOST expensive path |
-| [🧮 My contest tally](#tally) | `нансен зачёт`<br>`мой зачёт` | 🧠 Nansen → 🧮 Мой зачёт в конкурсе | free, reads its own log |
-| [📰 Morning digest and tweet jobs](#digest) | — | по расписанию, без человека | counted separately from people: a job has no person and does not go into the tally |
+| [💹 Smart money inflow by window](#flows) | `smart flows` | 🧠 Nansen → 💹 Smart flows (1h/24h/7d/30d) | price not named in the official list · counted on a separate line |
+| [🔥 Smart Money inside the shared Trends screen](#trends) | — | 🔗 Onchain → Trends → Smart Money | 1 credit |
+| [💼 What smart money accumulates](#holdings) | `smart holdings` | 🧠 Nansen → 💼 What they hold | 3 credits |
+| [🧠 Smart money trades over 24h + share of market cap](#trades) | `smart trades` | 🧠 Nansen → 🧠 Smart money trades now | 1–5 credits |
+| [🏆 Top perp traders](#perpleaders) | `top perps` | 🧠 Nansen → 🏆 Top perp traders | 5 credits |
+| [💥 Leveraged positions and the LIQUIDATION PRICE by token](#perppos) | `perp positions BTC`<br>`liquidations BTC` | token card (e.g. BTC) → 💥 Liq. | 5 credits |
+| [🗺 Liquidation map: where other people's leverage hangs](#liqmap) | `liq map BTC` | token card → 💥 Liq. → 🗺 Liquidation map | 5 credits (the same request as the position list) |
+| [🩺 A wallet's perp account and room to liquidation](#walletperps) | `nansen perp 0x…` | 🧠 Nansen → 🩺 Wallet perp account | price not named in the official list |
+| [🧠 Token breakdown: flows, Nansen Score, holder labels](#tokencheck) | `passport 0x… deep` | token/meme card → 🧠 | 4 requests, about 12 credits |
+| [🔄 Who net-bought and who sold a token](#wbs) | `who bought 0x… 7`<br>`who bought sold 0x…` | token card → 🧠 → 🔄 Who bought and sold | 1 credit per side |
+| [🪪 Token info sheet from Nansen](#tinfo) | `token info 0x…` | 🧠 Nansen → 🪪 Token information | 1 credit |
+| [📊 Holder-segment flows AS A CHART](#flowpng) | `flows chart 0x…` | token card → 🧠 → 📊 Flows chart | 1 credit |
+| [🧪 Backtest on onchain candles](#backtest) | — | meme card → 🧪 Backtest | 5 credits for 89 daily candles |
+| [👤 Wallet profile: labels, PnL, related](#profile) | `profile 0x…`<br>`profile 0x… deep` | bare address in DM → 🕵 Dossier | 3 requests; "deeper" adds premium labels for 150 credits |
+| [🤝 Who a wallet trades with most](#cparty) | `counterparties 0x…` | 🧠 Nansen → 🤝 Wallet counterparties | price not named in the official list |
+| [💼 Wallet portfolio per Nansen data](#balance) | `nansen balance 0x…` | 🧠 Nansen → 💼 Wallet portfolio | price not named in the official list |
+| [🎲 Trending Polymarket markets with market_id](#pmmarkets) | `polymarket markets` | 🧠 Nansen → 🎲 Polymarket → 🎲 Trending markets | price not named in the official list |
+| [📈 Market probability chart over time](#pmchart) | `polymarket chart 654412` | markets list → 📈 N | price not named in the official list |
+| [📖 Polymarket order book](#pmbook) | `polymarket orderbook 654412` | markets list → 📖 N | price not named in the official list |
+| [🎭 Who holds the market and how they guessed before](#pmrep) | `market reputation 654412`<br>`who holds market 654412` | markets list → 🎭 N | 6 requests (holders + lifetime history of each of the five) |
+| [🎰 Polymarket trader profile](#pmwallet) | `polymarket profile 0x…` | 🎲 Polymarket → 🎰 Trader profile | 2 requests |
+| [🏆 Top traders of a specific market](#pmleaders) | `market leaders 654412` | 🎲 Polymarket → 🏆 Market leaders | price not named in the official list |
+| [🔍 Free-form question to the Nansen agent](#agent) | — | exchange card → 🔍 Nansen<br>a question in DM or chat | 200 credits (fast) or 750 (expert) — the MOST expensive path |
+| [🧮 My contest tally](#tally) | `nansen stats` | 🧠 Nansen → 🧮 My contest tally | free, reads its own log |
+| [📰 Morning digest and tweet jobs](#digest) | — | on a schedule, no human | counted separately from people: a job has no person and does not go into the tally |
 
 ---
 
@@ -48,8 +48,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 💹 Smart money inflow by window
 
-**Say to the bot:** `смарт потоки`
-**By button:** 🧠 Nansen → 💹 Смарт-потоки → 1ч/24ч/7д/30д
+**Say to the bot:** `smart flows`
+**By button:** 🧠 Nansen → 💹 Smart flows (1h/24h/7d/30d)
 
 **What you get:** tickers with net inflow over the window; tapping a ticker opens the token card
 
@@ -71,7 +71,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🔥 Smart Money inside the shared Trends screen
 
-**By button:** 🔗 Ончейн → Тренды → Smart Money
+**By button:** 🔗 Onchain → Trends → Smart Money
 
 **What you get:** tokens with positive netflow embedded into the shared Trends screen; a tap opens the token card
 
@@ -93,8 +93,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 💼 What smart money accumulates
 
-**Say to the bot:** `смарт холдинги`
-**By button:** 🧠 Nansen → 💼 Что копят
+**Say to the bot:** `smart holdings`
+**By button:** 🧠 Nansen → 💼 What they hold
 
 **What you get:** top positions by $ with the 24h change
 
@@ -116,8 +116,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🧠 Smart money trades over 24h + share of market cap
 
-**Say to the bot:** `смарт сделки`
-**By button:** 🧠 Nansen → 🧠 Сделки smart money сейчас
+**Say to the bot:** `smart trades`
+**By button:** 🧠 Nansen → 🧠 Smart money trades now
 
 **What you get:** who entered what and for how much, plus the token market cap and the trade's SHARE of it
 
@@ -139,8 +139,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🏆 Top perp traders
 
-**Say to the bot:** `топ перпы`
-**By button:** 🧠 Nansen → 🏆 Топ перп-трейдеры
+**Say to the bot:** `top perps`
+**By button:** 🧠 Nansen → 🏆 Top perp traders
 
 **What you get:** profitable perp accounts; tapping a trader opens their account
 
@@ -162,8 +162,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 💥 Leveraged positions and the LIQUIDATION PRICE by token
 
-**Say to the bot:** `перп позиции BTC` · `ликвидации BTC`
-**By button:** карточка токена (например BTC) → 💥 Ликвид.
+**Say to the bot:** `perp positions BTC` · `liquidations BTC`
+**By button:** token card (e.g. BTC) → 💥 Liq.
 
 **What you get:** position size, leverage, unrealized PnL and the liquidation price for each account
 
@@ -185,8 +185,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🗺 Liquidation map: where other people's leverage hangs
 
-**Say to the bot:** `карта ликвидаций BTC` · `ликвид карта BTC`
-**By button:** карточка токена → 💥 Ликвид. → 🗺 Карта ликвидаций
+**Say to the bot:** `liq map BTC`
+**By button:** token card → 💥 Liq. → 🗺 Liquidation map
 
 **What you get:** an image: position sizes by liquidation-price level, red is longs, green is shorts, the dashed line is the current price. Plus a caption with the magnitude
 
@@ -208,8 +208,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🩺 A wallet's perp account and room to liquidation
 
-**Say to the bot:** `нансен перпы 0x…`
-**By button:** 🧠 Nansen → 🩺 Счёт кошелька на перпах
+**Say to the bot:** `nansen perp 0x…`
+**By button:** 🧠 Nansen → 🩺 Wallet perp account
 
 **What you get:** capital, how much is collateralized, unrealized PnL, account health and positions
 
@@ -231,8 +231,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🧠 Token breakdown: flows, Nansen Score, holder labels
 
-**Say to the bot:** `паспорт 0x… глубже`
-**By button:** карточка токена/мема → 🧠
+**Say to the bot:** `passport 0x… deep`
+**By button:** token/meme card → 🧠
 
 **What you get:** net flows by holder segment, Nansen Score, top-holder labels, top by PnL
 
@@ -254,8 +254,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🔄 Who net-bought and who sold a token
 
-**Say to the bot:** `кто входил 0x… 7` · `кто выходил 0x…`
-**By button:** карточка токена → 🧠 → 🔄 Кто входил
+**Say to the bot:** `who bought 0x… 7` · `who bought sold 0x…`
+**By button:** token card → 🧠 → 🔄 Who bought and sold
 
 **What you get:** a label or address and the $ volume for each side over the period
 
@@ -277,8 +277,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🪪 Token info sheet from Nansen
 
-**Say to the bot:** `инфо токен 0x…`
-**By button:** 🧠 Nansen → 🪪 Справка по токену
+**Say to the bot:** `token info 0x…`
+**By button:** 🧠 Nansen → 🪪 Token information
 
 **What you get:** market cap, volume, liquidity, holder count
 
@@ -300,8 +300,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 📊 Holder-segment flows AS A CHART
 
-**Say to the bot:** `потоки картинкой 0x…`
-**By button:** карточка токена → 🧠 → 📊 Потоки картинкой
+**Say to the bot:** `flows chart 0x…`
+**By button:** token card → 🧠 → 📊 Flows chart
 
 **What you get:** bars by segment (smart money, whales, top-PnL, public figures, exchanges, fresh wallets); color means the SIGN of the flow, the source is baked into the canvas
 
@@ -323,7 +323,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🧪 Backtest on onchain candles
 
-**By button:** карточка мема → 🧪 Бэктест
+**By button:** meme card → 🧪 Backtest
 
 **What you get:** a run of a simple strategy over the token's historical candles
 
@@ -345,8 +345,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 👤 Wallet profile: labels, PnL, related
 
-**Say to the bot:** `профиль 0x…` · `профиль 0x… глубже`
-**By button:** голый адрес в личку → 🕵 Досье
+**Say to the bot:** `profile 0x…` · `profile 0x… deep`
+**By button:** bare address in DM → 🕵 Dossier
 
 **What you get:** labels, PnL and win rate, related wallets
 
@@ -368,8 +368,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🤝 Who a wallet trades with most
 
-**Say to the bot:** `контрагенты 0x…`
-**By button:** 🧠 Nansen → 🤝 С кем торгует кошелёк
+**Say to the bot:** `counterparties 0x…`
+**By button:** 🧠 Nansen → 🤝 Wallet counterparties
 
 **What you get:** counterparties over 30 days and volumes
 
@@ -391,8 +391,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 💼 Wallet portfolio per Nansen data
 
-**Say to the bot:** `нансен баланс 0x…`
-**By button:** 🧠 Nansen → 💼 Портфель кошелька
+**Say to the bot:** `nansen balance 0x…`
+**By button:** 🧠 Nansen → 💼 Wallet portfolio
 
 **What you get:** portfolio composition by $ without spam tokens
 
@@ -414,8 +414,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🎲 Trending Polymarket markets with market_id
 
-**Say to the bot:** `полимаркет рынки` · `polymarket markets`
-**By button:** 🧠 Nansen → 🎲 Polymarket → 🎲 Трендовые рынки
+**Say to the bot:** `polymarket markets`
+**By button:** 🧠 Nansen → 🎲 Polymarket → 🎲 Trending markets
 
 **What you get:** markets by volume, probability, 24h volume and a COPYABLE market_id; three rows of buttons under the list
 
@@ -437,8 +437,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 📈 Market probability chart over time
 
-**Say to the bot:** `полимаркет график 654412`
-**By button:** список рынков → 📈 N
+**Say to the bot:** `polymarket chart 654412`
+**By button:** markets list → 📈 N
 
 **What you get:** an image: how the probability changed, the 50% line separating "more likely yes" from "more likely no"
 
@@ -460,8 +460,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 📖 Polymarket order book
 
-**Say to the bot:** `полимаркет стакан 654412`
-**By button:** список рынков → 📖 N
+**Say to the bot:** `polymarket orderbook 654412`
+**By button:** markets list → 📖 N
 
 **What you get:** order levels by side and a depth line
 
@@ -483,8 +483,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🎭 Who holds the market and how they guessed before
 
-**Say to the bot:** `репутация рынка 654412` · `кто держит рынок 654412` · `market reputation 654412` · `who holds market 654412`
-**By button:** список рынков → 🎭 N
+**Say to the bot:** `market reputation 654412` · `who holds market 654412`
+**By button:** markets list → 🎭 N
 
 **What you get:** how much money sits with wallets below the win-rate threshold, a breakdown by side, and holders with win rate, PnL and market count
 
@@ -506,8 +506,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🎰 Polymarket trader profile
 
-**Say to the bot:** `полимаркет профиль 0x…`
-**By button:** 🎲 Polymarket → 🎰 Профиль трейдера
+**Say to the bot:** `polymarket profile 0x…`
+**By button:** 🎲 Polymarket → 🎰 Trader profile
 
 **What you get:** lifetime PnL, win rate, wallet age and top markets by PnL
 
@@ -529,8 +529,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🏆 Top traders of a specific market
 
-**Say to the bot:** `топ рынка 654412`
-**By button:** 🎲 Polymarket → 🏆 Топ-трейдеры рынка
+**Say to the bot:** `market leaders 654412`
+**By button:** 🎲 Polymarket → 🏆 Market leaders
 
 **What you get:** who made and lost the most on this market, with the side indicated
 
@@ -552,7 +552,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🔍 Free-form question to the Nansen agent
 
-**By button:** биржевая карточка → 🔍 Nansen · вопрос в личке или в чате
+**By button:** exchange card → 🔍 Nansen · a question in DM or chat
 
 **What you get:** the agent's answer in words, with a source attribution
 
@@ -574,8 +574,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🧮 My contest tally
 
-**Say to the bot:** `нансен зачёт` · `мой зачёт`
-**By button:** 🧠 Nansen → 🧮 Мой зачёт в конкурсе
+**Say to the bot:** `nansen stats`
+**By button:** 🧠 Nansen → 🧮 My contest tally
 
 **What you get:** how many calls and credits per person and their rank; a leaderboard WITHOUT names and IDs
 
@@ -595,7 +595,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 📰 Morning digest and tweet jobs
 
-**By button:** по расписанию, без человека
+**By button:** on a schedule, no human
 
 **What you get:** the smart money section in the morning digest
 

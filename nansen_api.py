@@ -1276,14 +1276,20 @@ def _usd(x):
     return f"{x:.0f}"
 
 
-def flow_intelligence_line(chain, token_address):
-    """Строка для карточки токена: нетто-потоки 24ч по сегментам. -> str | None."""
+def flow_intelligence_line(chain, token_address, lang='ru'):
+    """Строка для карточки токена: нетто-потоки 24ч по сегментам. -> str | None.
+    lang: 'en' даёт англоязычную строку."""
     f = tgm_flow_intelligence(chain, token_address, "1d")
     if not f:
         return None
+    en = (lang == 'en')
     parts = []
-    seg = [("smart_trader", "🧠SM"), ("whale", "🐳киты"), ("top_pnl", "🏆топ-PnL"),
-           ("public_figure", "🎤публ"), ("exchange", "🏦биржи"), ("fresh_wallets", "🆕свежие")]
+    if en:
+        seg = [("smart_trader", "🧠SM"), ("whale", "🐳whales"), ("top_pnl", "🏆top-PnL"),
+               ("public_figure", "🎤public"), ("exchange", "🏦CEX"), ("fresh_wallets", "🆕fresh")]
+    else:
+        seg = [("smart_trader", "🧠SM"), ("whale", "🐳киты"), ("top_pnl", "🏆топ-PnL"),
+               ("public_figure", "🎤публ"), ("exchange", "🏦биржи"), ("fresh_wallets", "🆕свежие")]
     for key, lbl in seg:
         v = f.get(f"{key}_net_flow_usd")
         if v is None:
@@ -1298,14 +1304,17 @@ def flow_intelligence_line(chain, token_address):
         parts.append(f"{lbl} {sign}${_usd(abs(v))}")
     if not parts:
         return None
-    return "🧠 <b>Nansen потоки 24ч:</b> " + " · ".join(parts[:5])
+    _h = "🧠 <b>Nansen flows 24h:</b> " if en else "🧠 <b>Nansen потоки 24ч:</b> "
+    return _h + " · ".join(parts[:5])
 
 
-def nansen_score_line(chain, token_address):
-    """Строка Nansen Score: сводка risk/reward индикаторов. -> str | None."""
+def nansen_score_line(chain, token_address, lang='ru'):
+    """Строка Nansen Score: сводка risk/reward индикаторов. -> str | None.
+    lang: 'en' даёт англоязычную строку."""
     d = tgm_indicators(chain, token_address)
     if not d:
         return None
+    en = (lang == 'en')
     risk = d.get("risk_indicators") or []
     reward = d.get("reward_indicators") or []
     hi_risk = sum(1 for r in risk if str(r.get("score")).lower() == "high")
@@ -1313,24 +1322,40 @@ def nansen_score_line(chain, token_address):
     bear = sum(1 for r in reward if str(r.get("score")).lower() == "bearish")
     bits = []
     if risk:
-        bits.append(f"риск {'🔴 высокий' if hi_risk >= 2 else ('🟡 средний' if hi_risk == 1 else '🟢 низкий')}")
+        if en:
+            bits.append("risk %s" % ('🔴 high' if hi_risk >= 2 else
+                                     ('🟡 medium' if hi_risk == 1 else '🟢 low')))
+        else:
+            bits.append("риск %s" % ('🔴 высокий' if hi_risk >= 2 else
+                                     ('🟡 средний' if hi_risk == 1 else '🟢 низкий')))
     if reward:
         if bull > bear:
-            bits.append(f"потенциал 🟢 бычий ({bull}/{len(reward)})")
+            bits.append((f"potential 🟢 bullish ({bull}/{len(reward)})") if en
+                        else (f"потенциал 🟢 бычий ({bull}/{len(reward)})"))
         elif bear > bull:
-            bits.append(f"потенциал 🔴 медвежий ({bear}/{len(reward)})")
+            bits.append((f"potential 🔴 bearish ({bear}/{len(reward)})") if en
+                        else (f"потенциал 🔴 медвежий ({bear}/{len(reward)})"))
         else:
-            bits.append("потенциал ⚪ нейтральный")
+            bits.append("potential ⚪ neutral" if en else "потенциал ⚪ нейтральный")
     if not bits:
         return None
     return "📊 <b>Nansen Score:</b> " + " · ".join(bits)
 
 
-def labeled_holders_line(chain, token_address, top=20):
-    """Строка «кто в топ-холдерах по меткам»: сколько SM/фондов/бирж/китов. -> str | None."""
+def labeled_holders_line(chain, token_address, lang='ru', top=20):
+    """Строка «кто в топ-холдерах по меткам»: сколько SM/фондов/бирж/китов. -> str | None.
+    lang: 'en' даёт англоязычную строку. ПОРЯДОК АРГУМЕНТОВ: lang перед top намеренно —
+    общий цикл в token_nansen_block_ex зовёт три line-функции единообразно `fn(chain, addr,
+    lang)`, и у всех трёх третий позиционный аргумент обязан быть lang."""
     rows = tgm_holders(chain, token_address, per_page=top)
     if not rows:
         return None
+    en = (lang == 'en')
+    _NM = {'sm': '🧠 smart money',
+           'fund': ('🏛 funds' if en else '🏛 фонды'),
+           'cex': ('🏦 CEX' if en else '🏦 биржи'),
+           'whale': ('🐳 whales' if en else '🐳 киты'),
+           'pub': ('🎤 public figures' if en else '🎤 публ.фигуры')}
     buckets = {}
     for r in rows:
         lbl = (r.get("address_label") or "").strip()
@@ -1338,30 +1363,33 @@ def labeled_holders_line(chain, token_address, top=20):
             continue
         low = lbl.lower()
         if "smart" in low or "trader" in low:
-            k = "🧠 smart money"
+            k = _NM['sm']
         elif "fund" in low:
-            k = "🏛 фонды"
+            k = _NM['fund']
         elif "exchange" in low or "🏦" in lbl:
-            k = "🏦 биржи"
+            k = _NM['cex']
         elif "whale" in low:
-            k = "🐳 киты"
+            k = _NM['whale']
         elif "public" in low or "figure" in low:
-            k = "🎤 публ.фигуры"
+            k = _NM['pub']
         else:
             continue
         buckets[k] = buckets.get(k, 0) + 1
     if not buckets:
         return None
     inner = ", ".join(f"{v} {k}" for k, v in sorted(buckets.items(), key=lambda x: -x[1]))
-    return f"🏷 <b>В топ-{top} холдерах:</b> {inner}"
+    return (f"🏷 <b>In top-{top} holders:</b> {inner}") if en \
+        else (f"🏷 <b>В топ-{top} холдерах:</b> {inner}")
 
 
-def pnl_leaders_block(chain, token_address, top=5):
-    """Блок «топ-трейдеры токена по PnL» для отдельной карточки/кнопки. -> str | None."""
+def pnl_leaders_block(chain, token_address, top=5, lang='ru'):
+    """Блок «топ-трейдеры токена по PnL» для отдельной карточки/кнопки. -> str | None.
+    lang: 'en' даёт англоязычный блок."""
     rows = tgm_pnl_leaderboard(chain, token_address, per_page=top)
     if not rows:
         return None
-    L = [f"🏆 <b>Топ-трейдеры по PnL</b> (реализ.):"]
+    L = ["🏆 <b>Top traders by PnL</b> (realized):" if lang == 'en'
+         else "🏆 <b>Топ-трейдеры по PnL</b> (реализ.):"]
     for i, r in enumerate(rows[:top], 1):
         lbl = (r.get("trader_address_label") or "").strip()
         addr = r.get("trader_address") or ""
@@ -1377,7 +1405,7 @@ def pnl_leaders_block(chain, token_address, top=5):
     return "\n".join(L)
 
 
-def wallet_profile_block_ex(address, chain="ethereum", premium=False):
+def wallet_profile_block_ex(address, chain="ethereum", premium=False, lang='ru'):
     """Профиль кошелька И ПРИЧИНА пустоты. -> (str|None, reason).
 
     reason: 'ok' | 'nokey' | 'nocredits' | 'ratelimit' | 'timeout' | 'http' | 'empty'.
@@ -1386,25 +1414,28 @@ def wallet_profile_block_ex(address, chain="ethereum", premium=False):
     if not _key():
         return None, 'nokey'
     _tele.clear()
-    txt = wallet_profile_block(address, chain, premium)
+    txt = wallet_profile_block(address, chain, premium, lang)
     return (txt, 'ok') if txt else (None, fail_reason('empty'))
 
 
-def wallet_profile_block(address, chain="ethereum", premium=False):
-    """Полный профиль кошелька для карточки: метки + PnL/winrate + связанные. -> str | None."""
+def wallet_profile_block(address, chain="ethereum", premium=False, lang='ru'):
+    """Полный профиль кошелька для карточки: метки + PnL/winrate + связанные. -> str | None.
+    lang: 'en' даёт англоязычный экран."""
     labels = profiler_labels(address, chain, premium=premium) or []
     pnl = profiler_pnl_summary(address, chain) or {}
     rel = profiler_related_wallets(address, chain, per_page=5) or []
     if not (labels or pnl or rel):
         return None
+    en = (lang == 'en')
     short = f"{address[:6]}…{address[-4:]}"
-    L = [f"👤 <b>Профиль кошелька</b> <code>{short}</code> [{chain}]"]
+    L = [(f"👤 <b>Wallet profile</b> <code>{short}</code> [{chain}]") if en
+         else (f"👤 <b>Профиль кошелька</b> <code>{short}</code> [{chain}]")]
     # ЧТО НЕ ПРИЕХАЛО - НАЗЫВАЕТСЯ ЗДЕСЬ, В САМОМ БЛОКЕ. Профиль собирается из ТРЁХ запросов,
     # и раньше хватало одного удачного, чтобы блок вернулся как 'ok': человек видел целую
     # карточку без меток и без PnL и не мог узнать, что их не спрашивали успешно. Живой прогон
     # 14.09: два запроса из трёх отдали 422, на экран приехала одна строка про связанные
     # кошельки, и выглядело это как «у адреса больше ничего нет».
-    _miss = missing_note('ru', total=3)
+    _miss = missing_note(lang, total=3)
     if _miss:
         L.append(_miss)
     if labels:
@@ -1416,10 +1447,11 @@ def wallet_profile_block(address, chain="ethereum", premium=False):
         rp = pnl.get("realized_pnl_usd")
         rpp = pnl.get("realized_pnl_percent")
         n = pnl.get("traded_times") or pnl.get("traded_token_count")
+        _pnl_lbl = "realized PnL " if en else "реализ. PnL "
         seg = []
         if rp is not None:
             try:
-                seg.append(("реализ. PnL +$" if float(rp) >= 0 else "реализ. PnL -$") + _usd(abs(float(rp))))
+                seg.append((_pnl_lbl + "+$" if float(rp) >= 0 else _pnl_lbl + "-$") + _usd(abs(float(rp))))
             except (TypeError, ValueError):
                 pass
         if rpp not in (None, ""):
@@ -1429,33 +1461,37 @@ def wallet_profile_block(address, chain="ethereum", premium=False):
                 pass
         if wr not in (None, ""):
             try:
-                seg.append(f"winrate {float(wr)*100:.0f}%" if float(wr) <= 1 else f"winrate {float(wr):.0f}%")
+                seg.append(f"win rate {float(wr)*100:.0f}%" if float(wr) <= 1 else f"win rate {float(wr):.0f}%")
             except (TypeError, ValueError):
                 pass
         if n:
-            seg.append(f"сделок {n}")
+            seg.append((f"trades {n}") if en else (f"сделок {n}"))
         if seg:
             L.append("📈 " + " · ".join(seg))
         top5 = pnl.get("top5_tokens") or []
         if top5:
             toks = ", ".join((t.get("token_symbol") or "?") for t in top5[:5])
-            L.append(f"💼 топ-токены: {toks}")
+            L.append((f"💼 top tokens: {toks}") if en else (f"💼 топ-токены: {toks}"))
     if rel:
         rl = ", ".join((r.get("relation") or "?") for r in rel[:4])
-        L.append(f"🔗 связанных кошельков: {len(rel)}+ ({rl})")
-    return with_source("\n".join(L))
+        L.append((f"🔗 related wallets: {len(rel)}+ ({rl})") if en
+                 else (f"🔗 связанных кошельков: {len(rel)}+ ({rl})"))
+    return with_source("\n".join(L), lang)
 
 
-def perp_leaders_block(top=8, days=7, rows=None, bot_un=None):
+def perp_leaders_block(top=8, days=7, rows=None, bot_un=None, lang='ru'):
     """Блок «топ прибыльных перп-трейдеров (HL)» для фида/карточки. -> str | None.
     rows: если переданы (уже загружены вызывающим) — не дёргаем API повторно.
     bot_un: если задан — имя трейдера становится ССЫЛКОЙ (deep-link ?start=acc_<addr>
-    -> экран счёта DeBank), как названия в «Трендах». Иначе обычный текст (фид/карточка)."""
+    -> экран счёта DeBank), как названия в «Трендах». Иначе обычный текст (фид/карточка).
+    lang: 'en' даёт англоязычный экран."""
     if rows is None:
         rows = perp_leaderboard(per_page=top, days=days)
     if not rows:
         return None
-    L = [f"🏆 <b>Топ перп-трейдеры (Hyperliquid, {days}д):</b>"]
+    en = (lang == 'en')
+    L = [('🏆 <b>Top perp traders (Hyperliquid, %sd):</b>' % days) if en
+         else ('🏆 <b>Топ перп-трейдеры (Hyperliquid, %sд):</b>' % days)]
     for i, r in enumerate(rows[:top], 1):
         lbl = (r.get("trader_address_label") or "").strip()
         addr = r.get("trader_address") or ""
@@ -1471,8 +1507,9 @@ def perp_leaders_block(top=8, days=7, rows=None, bot_un=None):
         roi_s = (f" · ROI {float(roi):+.0f}%") if roi not in (None, "") else ""
         L.append(f"{i}. {who}: {pnl_s}{roi_s}")
     if bot_un:
-        L.append("\nТапни трейдера — открою его счёт (DeBank).")
-    return with_source("\n".join(L))
+        L.append("\nTap a trader to open their account (DeBank)." if en
+                 else "\nТапни трейдера — открою его счёт (DeBank).")
+    return with_source("\n".join(L), lang)
 
 
 
@@ -1662,8 +1699,9 @@ def token_info_block(chain, token_address, lang='ru'):
     _shape("token-information", row)
     sym = _first(row, ("symbol", "token_symbol"), "?")
     name = _first(row, ("name", "token_name"), "")
-    head = ("🪪 <b>Nansen · справка по токену</b> %s%s [%s]"
-            % (sym, (" (%s)" % name) if name else "", chain))
+    _htitle = "Nansen · token info" if lang == 'en' else "Nansen · справка по токену"
+    head = ("🪪 <b>%s</b> %s%s [%s]"
+            % (_htitle, sym, (" (%s)" % name) if name else "", chain))
     L = [head]
     _pairs = (("market_cap", "капитализация", "market cap"),
               ("fully_diluted_valuation", "FDV", "FDV"),
@@ -1757,7 +1795,7 @@ def wallet_balance_block(address, chain="ethereum", top=12, lang='ru'):
     return with_source("\n".join(L), lang), 'ok'
 
 
-def token_nansen_block_ex(chain, token_address):
+def token_nansen_block_ex(chain, token_address, lang='ru'):
     """То же, что token_nansen_block, но ВОЗВРАЩАЕТ И ПРИЧИНУ пустоты. -> (text|None, reason).
     reason: 'ok' | 'nokey' | 'nocredits' | 'ratelimit' | 'timeout' | 'http' | 'empty'.
 
@@ -1777,7 +1815,7 @@ def token_nansen_block_ex(chain, token_address):
     parts = []
     for fn in (flow_intelligence_line, nansen_score_line, labeled_holders_line):
         try:
-            s = fn(chain, token_address)
+            s = fn(chain, token_address, lang)
         except Exception as e:
             _tele.note('http')
             print("[nansen] %s(%s): %s" % (getattr(fn, '__name__', '?'), chain, str(e)[:100]))
@@ -1785,7 +1823,7 @@ def token_nansen_block_ex(chain, token_address):
         if s:
             parts.append(s)
     try:
-        pnl = pnl_leaders_block(chain, token_address, top=5)
+        pnl = pnl_leaders_block(chain, token_address, top=5, lang=lang)
     except Exception as e:
         _tele.note('http')
         print("[nansen] pnl_leaders(%s): %s" % (chain, str(e)[:100]))
@@ -1797,18 +1835,20 @@ def token_nansen_block_ex(chain, token_address):
         # вернуть 'ok': человек нажимал 🧠 ради Nansen Score, получал одни потоки и читал это
         # как «Score у токена нет». Отсутствие красного флага снова читалось бы как его
         # отсутствие, только теперь внутри непустого блока.
-        _miss = missing_note('ru', total=4)
-        _body = "🧠 <b>Nansen · разбор токена</b>\n\n" + "\n\n".join(parts)
+        _miss = missing_note(lang, total=4)
+        _head = "🧠 <b>Nansen · token breakdown</b>" if lang == 'en' \
+            else "🧠 <b>Nansen · разбор токена</b>"
+        _body = _head + "\n\n" + "\n\n".join(parts)
         if _miss:
             _body += "\n\n" + _miss
-        return with_source(_body), 'ok'
+        return with_source(_body, lang), 'ok'
     return None, fail_reason('empty')
 
 
-def token_nansen_block(chain, token_address):
+def token_nansen_block(chain, token_address, lang='ru'):
     """Единый Nansen-блок по токену (кнопка 🧠 на карточке контракта / глубокий паспорт):
     потоки по сегментам + Nansen Score + метки топ-холдеров + топ-трейдеры по PnL. -> str | None."""
-    return token_nansen_block_ex(chain, token_address)[0]
+    return token_nansen_block_ex(chain, token_address, lang)[0]
 
 
 
@@ -1832,18 +1872,22 @@ def sm_netflow(chains=None, tf="24h", per_page=12, direction="DESC"):
                        ckey=f"smnf:{','.join(chains)}:{tf}:{per_page}:{direction}"))
 
 
-def sm_netflow_block(chains=None, tf="24h", top=10, rows=None, bot_un=None):
+def sm_netflow_block(chains=None, tf="24h", top=10, rows=None, bot_un=None, lang='ru'):
     """Готовый блок «приток smart money за <tf>» для карточки/подменю. -> str | None.
     rows: если переданы (уже загружены вызывающим) — не дёргаем API повторно.
     bot_un: если задан — тикер становится ССЫЛКОЙ (deep-link ?start=tok_<addr>
-    -> карточка/паспорт токена), как названия в «Трендах». Иначе обычный текст."""
+    -> карточка/паспорт токена), как названия в «Трендах». Иначе обычный текст.
+    lang: 'en' даёт англоязычный экран - витрина конкурса англоязычная."""
     tf = tf if tf in _SMNF_FIELD else "24h"
     if rows is None:
         rows = sm_netflow(chains, tf, top)
     if not rows:
         return None
+    en = (lang == 'en')
     field = _SMNF_FIELD[tf]
-    L = [f"🧠 <b>Приток smart money за {_SMNF_LBL[tf]}</b> (Nansen netflow):"]
+    _tf = tf if en else _SMNF_LBL[tf]
+    L = [('🧠 <b>Smart money inflow, %s</b> (Nansen netflow):' % _tf) if en
+         else ('🧠 <b>Приток smart money за %s</b> (Nansen netflow):' % _tf)]
     for i, r in enumerate(rows[:top], 1):
         sym = r.get("token_symbol") or "?"
         addr = (r.get("token_address") or "").strip()
@@ -1857,9 +1901,13 @@ def sm_netflow_block(chains=None, tf="24h", top=10, rows=None, bot_un=None):
         if bot_un and addr:
             sym_disp = '<a href="https://t.me/%s?start=tok_%s"><b>%s</b></a>' % (bot_un, addr, sym)
         L.append(f"{i}. {sym_disp} [{ch}] · {vs}")
-    tail = "тапни тикер" if bot_un else "пришли тикер"
-    L.append(f"\nТФ ниже переключает окно · {tail} — открою карточку.")
-    return with_source("\n".join(L))
+    if en:
+        tail = "tap a ticker" if bot_un else "send a ticker"
+        L.append("\nThe buttons below switch the window · %s to open the card." % tail)
+    else:
+        tail = "тапни тикер" if bot_un else "пришли тикер"
+        L.append(f"\nТФ ниже переключает окно · {tail} — открою карточку.")
+    return with_source("\n".join(L), lang)
 
 
 
@@ -2817,7 +2865,11 @@ def pm_markets_block(query="", top=10, lang='ru', rows=None):
         rows = pm_market_screener(query=query, per_page=top)
     if not rows:
         return None
-    head = "🎲 <b>Трендовые рынки Polymarket</b>" + (f" · «{query}»" if query else " (объём 24ч)")
+    en = (lang == 'en')
+    if en:
+        head = "🎲 <b>Trending Polymarket markets</b>" + (f" · «{query}»" if query else " (24h volume)")
+    else:
+        head = "🎲 <b>Трендовые рынки Polymarket</b>" + (f" · «{query}»" if query else " (объём 24ч)")
     L = [head + ":"]
     _no_id = 0
     for i, r in enumerate(rows[:top], 1):
@@ -2840,8 +2892,8 @@ def pm_markets_block(query="", top=10, lang='ru', rows=None):
     if _no_id and _no_id == min(len(rows), top):
         L.append('\n' + schema_gap_note(rows[0], 'ID рынка' if lang != 'en' else 'Market ID',
                                         lang))
-    L.append("\nРазбор трейдера: «полимаркет профиль 0x…»." if lang != 'en'
-             else "\nTrader breakdown: «полимаркет профиль 0x…».")
+    L.append("\nРазбор трейдера: «полимаркет профиль 0x…»." if not en
+             else "\nTrader breakdown: «polymarket profile 0x…».")
     return with_source("\n".join(L), lang)
 
 
@@ -3158,14 +3210,17 @@ def pm_reputation_block(rep, market_id='', lang='ru', top=PM_REP_TOP):
     return with_source('\n'.join(L), lang, age_sec=rep.get('age_sec'))
 
 
-def pm_wallet_block(address):
-    """Профиль трейдера Polymarket: PnL/winrate/возраст + топ-рынки по PnL. -> str | None."""
+def pm_wallet_block(address, lang='ru'):
+    """Профиль трейдера Polymarket: PnL/winrate/возраст + топ-рынки по PnL. -> str | None.
+    lang: 'en' даёт англоязычный экран."""
     s = pm_address_summary(address)
     by = pm_pnl_by_address(address, per_page=5) or []
     if not s and not by:
         return None
+    en = (lang == 'en')
     short = f"{address[:6]}…{address[-4:]}"
-    L = [f"🎰 <b>Polymarket · профиль</b> <code>{short}</code>"]
+    L = [(f"🎰 <b>Polymarket · trader profile</b> <code>{short}</code>") if en
+         else (f"🎰 <b>Polymarket · профиль</b> <code>{short}</code>")]
     if s:
         tot = s.get("total_pnl_usd")
         rp = s.get("realized_pnl_usd")
@@ -3175,12 +3230,14 @@ def pm_wallet_block(address):
         except (TypeError, ValueError):
             tots = "?"
         seg = [f"PnL {tots}"]
+        _rlz = "realized " if en else "реализ. "
+        _url = "unrealized " if en else "нереализ. "
         try:
-            seg.append("реализ. " + ("+$" if float(rp) >= 0 else "-$") + _usd(abs(float(rp))))
+            seg.append(_rlz + ("+$" if float(rp) >= 0 else "-$") + _usd(abs(float(rp))))
         except (TypeError, ValueError):
             pass
         try:
-            seg.append("нереализ. " + ("+$" if float(up) >= 0 else "-$") + _usd(abs(float(up))))
+            seg.append(_url + ("+$" if float(up) >= 0 else "-$") + _usd(abs(float(up))))
         except (TypeError, ValueError):
             pass
         L.append("📈 " + " · ".join(seg))
@@ -3190,15 +3247,15 @@ def pm_wallet_block(address):
         age = s.get("wallet_age_days")
         seg2 = []
         if wr is not None:
-            seg2.append(f"winrate {wr:.0f}%")
+            seg2.append(f"win rate {wr:.0f}%")
         if won is not None and tr is not None:
-            seg2.append(f"выиграно {won}/{tr}")
+            seg2.append((f"won {won}/{tr}") if en else (f"выиграно {won}/{tr}"))
         if age not in (None, ""):
-            seg2.append(f"возраст {int(float(age))}д")
+            seg2.append((f"age {int(float(age))}d") if en else (f"возраст {int(float(age))}д"))
         if seg2:
             L.append("🎯 " + " · ".join(seg2))
     if by:
-        L.append("💼 топ-рынки по PnL:")
+        L.append("💼 top markets by PnL:" if en else "💼 топ-рынки по PnL:")
         for r in by[:5]:
             q = (r.get("question") or "?")[:52]
             side = r.get("side_held") or ""
@@ -3208,16 +3265,20 @@ def pm_wallet_block(address):
             except (TypeError, ValueError):
                 vs = "?"
             L.append(f"• {q} [{side}] · {vs}")
-    return with_source("\n".join(L))
+    return with_source("\n".join(L), lang)
 
 
-def pm_market_leaders_block(market_id, top=10):
-    """Топ-трейдеры конкретного рынка Polymarket по PnL. -> str | None."""
+def pm_market_leaders_block(market_id, top=10, lang='ru'):
+    """Топ-трейдеры конкретного рынка Polymarket по PnL. -> str | None.
+    lang: 'en' даёт англоязычный экран."""
     rows = pm_pnl_by_market(market_id, per_page=top)
     if not rows:
         return None
-    q = (rows[0].get("question") or rows[0].get("event_title") or f"рынок {market_id}")[:70]
-    L = [f"🏆 <b>Топ-трейдеры рынка</b>\n<i>{q}</i>:"]
+    en = (lang == 'en')
+    _fallback = (f"market {market_id}") if en else (f"рынок {market_id}")
+    q = (rows[0].get("question") or rows[0].get("event_title") or _fallback)[:70]
+    L = [(f"🏆 <b>Market top traders</b>\n<i>{q}</i>:") if en
+         else (f"🏆 <b>Топ-трейдеры рынка</b>\n<i>{q}</i>:")]
     for i, r in enumerate(rows[:top], 1):
         addr = r.get("address") or ""
         who = f"{addr[:6]}…{addr[-4:]}" if addr else "?"
@@ -3228,7 +3289,7 @@ def pm_market_leaders_block(market_id, top=10):
         except (TypeError, ValueError):
             vs = "?"
         L.append(f"{i}. {who} [{side}] · {vs}")
-    return with_source("\n".join(L))
+    return with_source("\n".join(L), lang)
 
 
 
