@@ -51,7 +51,12 @@ if _OC not in sys.path:
 #: списка не обслуживается, а не «наверное сработает». Ключ = имя сцены телеметрии, поэтому
 #: расход мини-аппа складывается с расходом чата по ОДНОЙ сцене (мини-апп - новая ПОВЕРХНОСТЬ
 #: старой сцены, а не новая сцена).
-SCENES = ('pm_markets', 'pm_reputation', 'liq_map', 'smart_trades')
+SCENES = ('pm_markets', 'pm_reputation', 'liq_map', 'smart_trades',
+          # ДВЕ СЦЕНЫ СРАВНЕНИЯ. Остальные отвечают про ОДИН объект (рынок, токен), а решение
+          # принимают МЕЖДУ объектами: из десяти разогретых рынков выбрать тот, где против
+          # тебя стоят не случайные люди, и из четырёх перпов - тот, у кого путь до плотного
+          # уровня короче. Руками это никто не собирает: там 13-17 запросов на экран.
+          'sharp_markets', 'perp_risk')
 
 #: ПОВЕРХНОСТИ. 'chat' - ответ в Telegram-чате, 'miniapp' - экран мини-аппа.
 SURFACES = ('chat', 'miniapp')
@@ -193,7 +198,12 @@ def pm_reputation_data(market_id, top=None, lang='ru'):
                                                 'prediction-market/address-summary')),
                      freshness_seconds=rep.get('age_sec'),
                      caveats=_pm_caveats(rep, _top, lang),
-                     extra={'threshold_weak_wr': N.PM_WEAK_WR, 'top': _top,
+                     # ОБА ПОРОГА ЕДУТ ЧИСЛОМ. Порог «острых» (60%) жил ТОЛЬКО в мини-аппе -
+                     # страница красила столбик зелёным по своему зашитому числу, которого бот
+                     # не знал. Одно число в двух местах = молчаливое расхождение на первой
+                     # правке, ровно то, против чего Закон 0.
+                     extra={'threshold_weak_wr': N.PM_WEAK_WR,
+                            'threshold_strong_wr': N.PM_SHARP_WR, 'top': _top,
                             'market_id': str(market_id)})
 
 
@@ -236,7 +246,7 @@ def _pm_caveats(rep, top, lang):
 # ═══════════════════════════════════════════════════════════════════════════════
 # СЦЕНА 2. liq_map - где висит чужое плечо
 # ═══════════════════════════════════════════════════════════════════════════════
-def liq_map_data(token, mark=None, lang='ru', rows=None):
+def liq_map_data(token, mark=None, lang='ru', rows=None, tokens=None):
     """Карта ликвидаций по перп-токену. -> конверт.
 
     `mark` (текущая цена) НЕОБЯЗАТЕЛЕН и передаётся снаружи: он приезжает не из Nansen, а с
@@ -269,7 +279,12 @@ def liq_map_data(token, mark=None, lang='ru', rows=None):
     return _envelope('liq_map', cl, 'ok', lang, cost_requests=1, cost_credits=_cr,
                      freshness_seconds=_tele().age(),
                      caveats=_liq_caveats(cl, lang),
-                     extra={'token': _tok})
+                     # `known_tokens` - ИЗМЕРЕННЫЙ список перп-тикеров (топ по суточному объёму
+                     # Hyperliquid), а не зашитая четвёрка. Экран рисует по нему кнопки, но
+                     # НЕ ограничивает ими ввод: карта строится по любому тикеру, какой примет
+                     # площадка, и отказ по незнакомому тикеру приезжает состоянием, а не
+                     # запретом на кнопке.
+                     extra={'token': _tok, 'known_tokens': list(tokens or ())})
 
 
 def _liq_caveats(cl, lang):
@@ -337,6 +352,142 @@ def _sm_caveats(d, lang):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# СЦЕНА 4. sharp_markets - у какого рынка деньги острее (сравнение рынков)
+# ═══════════════════════════════════════════════════════════════════════════════
+def sharp_markets_data(lang='ru', markets=None, holders=None, d=None):
+    """Сравнение трендовых рынков по составу держателей. -> конверт.
+
+    Числа целиком считает `nansen_api.sharp_markets`: оба порога винрейта, острые и слабые
+    деньги, обрезка. Здесь только конверт - порог, посчитанный ещё и тут, разъехался бы с
+    ботом на первой правке.
+    """
+    N = _n()
+    _m = int(markets or N.SHARP_MARKETS_N)
+    _h = int(holders or N.SHARP_HOLDERS)
+    _what = ('рынков Polymarket' if lang != 'en' else 'Polymarket markets')
+    _eps = ('prediction-market/market-screener', 'prediction-market/top-holders',
+            'prediction-market/address-summary')
+    _cr = _credits_for(_eps)
+    if d is None:
+        d = N.sharp_markets(_m, _h)
+    if not d:
+        return _envelope('sharp_markets', None, N.fail_reason('empty'), lang, cost_requests=1,
+                         cost_credits=_cr, refusal_what=_what)
+    return _envelope('sharp_markets', d, 'ok', lang,
+                     cost_requests=int(d.get('calls') or 0), cost_credits=_cr,
+                     freshness_seconds=d.get('age_sec'),
+                     caveats=_sharp_caveats(d, lang),
+                     extra={'threshold_sharp_wr': d.get('wr_sharp'),
+                            'threshold_weak_wr': d.get('wr_weak')})
+
+
+def _sharp_caveats(d, lang):
+    """Оговорки скринера величинами. -> [str]."""
+    en = (lang == 'en')
+    out = []
+    _nod = sum(1 for r in d['rows'] if r.get('status') != 'ok')
+    if _nod:
+        out.append(('%d market(s) came back without holders and are shown as such, not dropped'
+                    if en else
+                    'по %d рынк(ам) держателей не отдали - они показаны как есть, а не '
+                    'выброшены') % _nod)
+    _unk = sum(int(r.get('unknown_n') or 0) for r in d['rows'])
+    if _unk:
+        out.append(('%d holder(s) across the compared markets have no measurable win rate - '
+                    'their money is counted on NEITHER side' if en else
+                    'у %d держател(ей) по сравниваемым рынкам нет измеримого винрейта - их '
+                    'деньги НЕ посчитаны ни в одну сторону') % _unk)
+    if d.get('skipped'):
+        out.append(('%d more trending market(s) were not compared: this screen compares %d'
+                    if en else
+                    'ещё %d разогретых рынков не сравнивали: экран сравнивает %d')
+                   % (int(d['skipped']), int(d.get('markets') or 0)))
+    if d.get('no_id'):
+        out.append(('%d market(s) came without an id: there is nothing to look their holders '
+                    'up by' if en else
+                    'у %d рынк(ов) не приехал id: искать их держателей нечем')
+                   % int(d['no_id']))
+    out.append(('a win rate is measured on %d holder(s) per market, not on the whole market'
+                if en else
+                'винрейт измерен по %d держател(ям) на рынок, а не по всему рынку')
+               % int(d.get('holders') or 0))
+    out.append('past win rate does not promise the future: this is the composition of the '
+               'money, not a forecast or advice' if en else
+               'винрейт в прошлом не обещает будущего: это состав денег, а не прогноз и не '
+               'совет')
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# СЦЕНА 5. perp_risk - у кого чужое плечо ближе к обрыву (сравнение перп-токенов)
+# ═══════════════════════════════════════════════════════════════════════════════
+#: ТОКЕНЫ БОРДА. Список закрыт нарочно: экран стоит один запрос на токен, и «сравни все»
+#: превратилось бы в счёт, который человек не заказывал. Те же четыре, что кнопками на карте.
+PERP_BOARD_TOKENS = ('BTC', 'ETH', 'SOL', 'HYPE')
+
+
+def perp_risk_data(tokens=None, marks=None, lang='ru', by_token=None):
+    """Борд риска по перпам: где плечо ближе к обрыву. -> конверт.
+
+    `marks` - {ТИКЕР: цена} снаружи, как и у карты: цена приезжает не из Nansen, а с
+    Hyperliquid, и её сбой не имеет права рушить борд. Нет цены - нет расстояния, и строка
+    честно уезжает в конец со словом (выдуманная цена дала бы «осталось 3%», которого никто
+    не мерил).
+
+    `by_token` - для тестов и репетиции: готовые строки вместо сети.
+    """
+    N, V = _n(), _viz()
+    _toks = tuple(t for t in (tokens or PERP_BOARD_TOKENS))[:6]
+    _what = ('позиций с плечом' if lang != 'en' else 'leveraged positions')
+    _cr = _credits_for(('tgm/perp-positions',))
+    if by_token is None:
+        by_token = {}
+        for t in _toks:
+            by_token[t] = {'rows': N.perp_positions(t, 50), 'mark': (marks or {}).get(t)}
+    d = V.liq_board(by_token)
+    if not d or not any(r.get('status') == 'ok' for r in d['rows']):
+        # НИ ОДНОЙ КАРТЫ - ЭТО ОТКАЗ, А НЕ БОРД ИЗ ПРОЧЕРКОВ. Четыре строки «карты нет»
+        # выглядят как измерение, которого не было.
+        return _envelope('perp_risk', None, N.fail_reason('empty'), lang,
+                         cost_requests=len(_toks), cost_credits=_cr, refusal_what=_what)
+    return _envelope('perp_risk', d, 'ok', lang, cost_requests=len(_toks), cost_credits=_cr,
+                     freshness_seconds=_tele().age(),
+                     caveats=_perp_risk_caveats(d, lang),
+                     extra={'tokens': list(_toks)})
+
+
+def _perp_risk_caveats(d, lang):
+    """Оговорки борда величинами. -> [str]."""
+    en = (lang == 'en')
+    out = []
+    _nomap = sum(1 for r in d['rows'] if r.get('status') != 'ok')
+    if _nomap:
+        out.append(('%d token(s) have no map and are shown as such: silence there would read '
+                    'as "no leverage"' if en else
+                    'по %d токен(ам) карты нет, и они показаны как есть: молчание про них '
+                    'читалось бы как «плеча нет»') % _nomap)
+    if d.get('no_mark'):
+        out.append(('for %d token(s) the current price did not load: their distance to the '
+                    'cluster is NOT measured, and last place is not "safer"' if en else
+                    'по %d токен(ам) текущая цена не взялась: расстояние до скопления НЕ '
+                    'измерено, и последнее место не значит «безопаснее»')
+                   % int(d['no_mark']))
+    _noliq = sum(int(r.get('no_liq') or 0) for r in d['rows'])
+    if _noliq:
+        out.append(('%d position(s) across the board had no liquidation price and are NOT on '
+                    'any map' if en else
+                    'у %d позиц(ий) по всему борду не было цены ликвидации - их на картах НЕТ')
+                   % _noliq)
+    out.append('distance is measured to the middle of the densest cluster, and the price does '
+               'not have to reach it' if en else
+               'расстояние измерено до середины самого плотного скопления, и цена не обязана '
+               'до него доходить')
+    out.append('these are where other people stop out, not a forecast' if en else
+               'это уровни чужих стопов, а не прогноз')
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # ДИСПЕТЧЕР И РЕНДЕР
 # ═══════════════════════════════════════════════════════════════════════════════
 #: КАКИЕ ПАРАМЕТРЫ ЖДЁТ СЦЕНА. Нужен шлюзу, чтобы отказать по форме ДО любого вызова Nansen.
@@ -345,6 +496,11 @@ SCENE_PARAMS = {
     'pm_reputation': ('market',),
     'liq_map': ('token',),
     'smart_trades': (),
+    # СРАВНИТЕЛЬНЫЕ ЭКРАНЫ ПАРАМЕТРОВ ОТ ЧЕЛОВЕКА НЕ ЖДУТ: что сравнивать, решает сам экран
+    # (топ скринера / список перп-токенов). Попроси он тикеры списком - человек снова работал
+    # бы ВНЕ экрана, как с ручным вводом market_id.
+    'sharp_markets': (),
+    'perp_risk': (),
 }
 
 
@@ -374,6 +530,10 @@ def rendered_text(env, bot_un=None):
         # РЕНДЕР ПОЛУЧАЕТ ГОТОВЫЙ СЛОВАРЬ, а не сырые строки: так текст и экран физически
         # читают одни и те же числа, без пересчёта.
         return N.sm_trades_block(p, bot_un, lang)
+    if sc == 'sharp_markets':
+        return N.sharp_markets_block(p, lang)
+    if sc == 'perp_risk':
+        return _viz().liq_board_caption(p, lang)
     return None
 
 
@@ -395,7 +555,13 @@ def scene_data(scene, params=None, lang='ru', bot_un=None, with_text=True):
     elif scene == 'pm_reputation':
         env = pm_reputation_data(params.get('market'), params.get('top'), lang)
     elif scene == 'liq_map':
-        env = liq_map_data(params.get('token'), params.get('mark'), lang)
+        env = liq_map_data(params.get('token'), params.get('mark'), lang,
+                           tokens=params.get('tokens'))
+    elif scene == 'sharp_markets':
+        env = sharp_markets_data(lang, params.get('markets'), params.get('holders'))
+    elif scene == 'perp_risk':
+        env = perp_risk_data(params.get('tokens'), params.get('marks'), lang,
+                             params.get('by_token'))
     else:
         env = smart_trades_data(lang, int(params.get('top') or 12))
     if with_text:

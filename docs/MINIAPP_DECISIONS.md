@@ -139,3 +139,45 @@ The mini-app writes `surface=miniapp` on the **same** scene names. Giving it its
 would have split “market reputation” into two rows of the daily summary, and neither row would
 answer “what did this screen cost in total”. The column is appended at the end of the log line, so
 files written before this change still parse.
+
+
+## An added quantity that erased the main one (caught on a live screenshot)
+
+The liquidation map got a second quantity: how much of each cluster sits on wallets Nansen has a
+name for (`address_label` from `tgm/perp-positions`). It was drawn as an inner bar across the **full
+width** of the column.
+
+On HYPE every one of the 45 positions carries a label. The inner bar therefore covered 100% of every
+column, and the map went **single-coloured**: longs and shorts — the entire point of that chart —
+disappeared from the screen while the legend kept promising red and green. The bug is not in the new
+number; it is in letting an *additional* quantity occupy the same pixels as the *primary* one.
+
+Fix: the named-money bar is now a narrow stripe down the centre of the column (42% of its width), so
+the side colour stays visible at any share, including 100%. In the chat image the same rule was
+already in force by accident — there the inner bar is half the height of the outer one.
+
+The caption learned the 100% case too: instead of making a person compare `$1.01B` with `$1.01B`, it
+says *“every position on this map sits on a wallet Nansen has a name for; the biggest: …”*.
+
+Long labels were cut mid-word (`Uses "TRADEXYZ1" HL Refe`), which reads as corrupted data rather than
+as an abbreviation. They are now cut at a word boundary with an ellipsis.
+
+## Four tickers were four hardcoded tickers
+
+The map offered BTC/ETH/SOL/HYPE — a list kept by hand in the page. Measured against Hyperliquid on
+2026-09-24, the actual top by 24h volume was `BTC, ETH, HYPE, ZEC, NEAR, SOL, XRP, UNI, KPEPE, TAO`:
+half of the buttons pointed away from where the leverage actually is, and the list would have rotted
+further in silence.
+
+Now the ticker list is **measured**: `oc_perps.hl_universe()` returns every perp coin in one request
+(`metaAndAssetCtxs` — the same response the price marker already used), `hl_top_tokens()` orders it by
+24h volume, and the list travels in the envelope as `known_tokens`. The page renders buttons from it
+and keeps the hardcoded four only as a fallback for when the venue is silent — a screen with no
+tickers at all would look broken.
+
+The map is **not** limited to that list: the mini-app has a free ticker input, and the chat command
+`карта ликвидаций <TICKER>` always accepted any ticker. An unknown ticker returns a state from the
+gateway (“no positions came back”), not a guess from the page about what exists.
+
+The risk board follows the same measured order (top four), instead of comparing whatever four were
+frozen into the code.

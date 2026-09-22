@@ -29,8 +29,9 @@ Built for the **Nansen Meridian Buildathon**.
 
 ## Mini-app: the same answer, on a phone
 
-The three screens above also run as a **Telegram mini-app** — the hero, the liquidation map, and a
-live feed of the API calls themselves. See it in under a minute, no key and no Telegram account:
+The screens above also run as a **Telegram mini-app** — the hero, the sharp-money market
+comparison, the liquidation map with a four-token risk board, and a live feed of the API calls
+themselves. See it in under a minute, no key and no Telegram account:
 
 ```bash
 python3 -m http.server 8080
@@ -46,14 +47,14 @@ say in chat, so the picture and the words cannot drift apart. A law test injects
 dictionary and requires **both** outputs to change; if only one does, a second source of truth has
 appeared and the build goes red.
 
-The third screen is the liveness proof the contest asks for: one row per network call — endpoint,
+The last screen is the liveness proof the contest asks for: one row per network call — endpoint,
 outcome class, milliseconds, credits, cache or wire, and which surface asked. It costs nothing extra,
 because the telemetry was already writing those rows.
 
 Decisions, including the screen deliberately **not** shipped and two leaks the scrubber caught before
 production: [`docs/MINIAPP_DECISIONS.md`](docs/MINIAPP_DECISIONS.md).
 
-**53 Nansen API routes** · **25 documented workflows** · **28 named telemetry scenes** ·
+**53 Nansen API routes** · **27 documented workflows** · **30 named telemetry scenes** ·
 **8 distinct failure states**
 
 - [`docs/proofs/LIVE_HERO_2026-09-20.md`](docs/proofs/LIVE_HERO_2026-09-20.md) — sanitized live hero proof: 4 calls, 3 known histories, 0 failures.
@@ -196,8 +197,8 @@ separately — a visible “184 unpriced calls” is better than a tidy total bu
 The generated catalog distinguishes **client capability** from **shipped workflow**:
 
 - 53 unique network routes exist in the client;
-- 25 workflows are documented:
-  - 23 user-facing workflows that call Nansen;
+- 27 workflows are documented:
+  - 25 user-facing workflows that call Nansen;
   - 1 background digest workflow;
   - 1 local contribution-tally workflow;
 - 29 unique API routes drive those workflows;

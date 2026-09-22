@@ -1,0 +1,96 @@
+{
+ "caveats": [
+  "4 position(s) across the board had no liquidation price and are NOT on any map",
+  "distance is measured to the middle of the densest cluster, and the price does not have to reach it",
+  "these are where other people stop out, not a forecast"
+ ],
+ "cost_credits": null,
+ "cost_requests": 4,
+ "freshness_seconds": null,
+ "lang": "en",
+ "outcome": "ok",
+ "payload": {
+  "age_sec": null,
+  "no_mark": 0,
+  "rows": [
+   {
+    "gap_pct": -27.480024065593664,
+    "longs": 23400000.0,
+    "mark": 86193.0,
+    "named": 26400000.0,
+    "no_liq": 1,
+    "shorts": 8200000.0,
+    "shown": 5,
+    "status": "ok",
+    "tok": "BTC",
+    "top_hi": 63028.57142857143,
+    "top_lo": 61985.71428571428,
+    "top_side": "LONG",
+    "top_usd": 11800000.0,
+    "total": 31600000.0
+   },
+   {
+    "gap_pct": 2168.367791302905,
+    "longs": 23400000.0,
+    "mark": 2755.6,
+    "named": 26400000.0,
+    "no_liq": 1,
+    "shorts": 8200000.0,
+    "shown": 5,
+    "status": "ok",
+    "tok": "ETH",
+    "top_hi": 63028.57142857143,
+    "top_lo": 61985.71428571428,
+    "top_side": "LONG",
+    "top_usd": 11800000.0,
+    "total": 31600000.0
+   },
+   {
+    "gap_pct": 3737.854906191616,
+    "longs": 23400000.0,
+    "mark": 1628.7,
+    "named": 26400000.0,
+    "no_liq": 1,
+    "shorts": 8200000.0,
+    "shown": 5,
+    "status": "ok",
+    "tok": "ZEC",
+    "top_hi": 63028.57142857143,
+    "top_lo": 61985.71428571428,
+    "top_side": "LONG",
+    "top_usd": 11800000.0,
+    "total": 31600000.0
+   },
+   {
+    "gap_pct": 64223.245366829935,
+    "longs": 23400000.0,
+    "mark": 97.1766,
+    "named": 26400000.0,
+    "no_liq": 1,
+    "shorts": 8200000.0,
+    "shown": 5,
+    "status": "ok",
+    "tok": "HYPE",
+    "top_hi": 63028.57142857143,
+    "top_lo": 61985.71428571428,
+    "top_side": "LONG",
+    "top_usd": 11800000.0,
+    "total": 31600000.0
+   }
+  ],
+  "tokens": 4
+ },
+ "provenance": "synthetic",
+ "recorded_at": "2026-09-22T23:53:24Z",
+ "rehearsal": true,
+ "rendered_text": "⚔️ <b>Where other people's leverage is closest to the edge</b>\nOrder is by distance from the current price to the densest liquidation cluster, not by its size: $300M three per cent away and $300M forty per cent away are different situations.\n\n1. <b>BTC</b>: $11.8M in the densest cluster (longs), 27.5% below the price\n    on the map $31.6M across 5 position(s) · longs $23.4M vs shorts $8.2M\n    of that $26.4M sits on wallets Nansen has a name for\n2. <b>ETH</b>: $11.8M in the densest cluster (longs), 2168.4% above the price\n    on the map $31.6M across 5 position(s) · longs $23.4M vs shorts $8.2M\n    of that $26.4M sits on wallets Nansen has a name for\n3. <b>ZEC</b>: $11.8M in the densest cluster (longs), 3737.9% above the price\n    on the map $31.6M across 5 position(s) · longs $23.4M vs shorts $8.2M\n    of that $26.4M sits on wallets Nansen has a name for\n4. <b>HYPE</b>: $11.8M in the densest cluster (longs), 64223.2% above the price\n    on the map $31.6M across 5 position(s) · longs $23.4M vs shorts $8.2M\n    of that $26.4M sits on wallets Nansen has a name for\n\n<i>These are where other people stop out, not a forecast and not advice. Source: Nansen.</i>",
+ "scene": "perp_risk",
+ "source": "Nansen",
+ "surface": "miniapp",
+ "tokens": [
+  "BTC",
+  "ETH",
+  "HYPE",
+  "ZEC"
+ ]
+}

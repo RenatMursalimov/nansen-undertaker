@@ -77,6 +77,16 @@ PERP_ROWS = [
 ]
 PERP_MARK = 67250.0
 
+#: ВТОРОЙ ТОКЕН ДЛЯ БОРДА РИСКА. Нужен именно ВТОРОЙ набор: борд сортирует по расстоянию от
+#: цены до скопления, и на одинаковых входах сортировка не проверяется - все строки совпадут.
+#: Здесь скопление БЛИЖЕ к цене, чем у BTC, и в baseline видно, что ETH встал первым.
+PERP_ROWS_ETH = [
+    {'address_label': 'Fund Z', 'side': 'SHORT', 'position_value_usd': 5000000.0,
+     'leverage': 8, 'liquidation_price': 3070.0},
+    {'address': '0x3333000000000000000000000000000000000033', 'side': 'LONG',
+     'position_value_usd': 2500000.0, 'leverage': 12, 'liquidation_price': 2840.0},
+]
+
 #: Строки скринера рынков: вход в hero. Форма настоящая (поля сняты живой пробой 20.09),
 #: числа вымышленные. Третий рынок НАРОЧНО без id - экран обязан назвать это числом, а не
 #: тихо укоротить список.
@@ -137,6 +147,33 @@ def _sections():
     for lang in ('ru', 'en'):
         out.append(('smart_trades.%s' % lang,
                     N.sm_trades_block(SM_TRADE_ROWS, None, lang)))
+
+    # ── 4. sharp_markets: сравнение рынков. Подменяются ТЕ ЖЕ две функции, что в сцене 1,
+    #    поэтому по каждому рынку приезжают одни и те же держатели - для baseline это и нужно:
+    #    он сторожит ФОРМУ текста, а не разнообразие данных.
+    _keep2 = (N._post_fix, N.pm_address_summary, N.pm_market_screener)
+    try:
+        def _fix2(path, body, **k):
+            return list(PM_HOLDERS) if 'top-holders' in str(path) else None
+        N._post_fix = _fix2
+        N.pm_address_summary = lambda addr, **k: PM_SUMMARIES.get(addr)
+        N.pm_market_screener = lambda query='', per_page=12, **k: list(PM_MARKETS)
+        d = N.sharp_markets(4, 3)
+        for lang in ('ru', 'en'):
+            out.append(('sharp_markets.%s' % lang, N.sharp_markets_block(d, lang)))
+    finally:
+        N._post_fix, N.pm_address_summary, N.pm_market_screener = _keep2
+
+    # ── 5. perp_risk: борд считается ИЗ ТЕХ ЖЕ строк позиций, что карта. Цены заданы здесь
+    #    константами: расстояние до скопления - главное число борда, и брать его из живого
+    #    Hyperliquid значило бы получать новый baseline каждую минуту.
+    _board = {'BTC': {'rows': PERP_ROWS, 'mark': PERP_MARK},
+              'ETH': {'rows': PERP_ROWS_ETH, 'mark': 3000.0},
+              'SOL': {'rows': [], 'mark': 150.0},
+              'HYPE': {'rows': PERP_ROWS, 'mark': None}}
+    bd = V.liq_board(_board)
+    for lang in ('ru', 'en'):
+        out.append(('perp_risk.%s' % lang, V.liq_board_caption(bd, lang)))
     return out
 
 

@@ -54,6 +54,16 @@ os.environ.setdefault('DB_BACKEND', 'sqlite')
 #:   why     - зачем это, одной мыслью
 #:   hook    - зацепка для твита (EN), ≤200 символов
 #:   menu    - ключ подписи в меню (проверяется), либо None
+#:   where   - ГДЕ это можно позвать (проверяется, см. WHERE_KINDS). Нет поля = только личка.
+#:   gcb     - callback-данные групповой кнопки (обязательны при where='group_btn')
+#:
+#: ПОЧЕМУ ПОЯВИЛОСЬ ПОЛЕ `where`. Запрос владельца: «указано ли, что множество сценариев можно
+#: не только в личке, но и в группе запрашивать у агента». Ответ на момент запроса был - НЕТ, и
+#: это была не забытая строчка в документе, а отсутствие самого утверждения: каталог обещал
+#: «скажи боту» и «нажми кнопку», не говоря, в каком чате это работает. Человек, прочитавший
+#: каталог в группе и набравший там «смарт потоки», не получал НИЧЕГО - команды словами живут
+#: только в личке. Молчание документа о поверхности - это обещание, которое он не держит.
+WHERE_KINDS = ('dm', 'group_btn', 'group_agent')
 SCENARIOS = [
     # ── SMART MONEY ───────────────────────────────────────────────────────────
     {'id': 'flows', 'title': '💹 Приток smart money по окнам',
@@ -103,6 +113,7 @@ SCENARIOS = [
      'cmds': ['перп позиции BTC', 'ликвидации BTC'],
      'btns': ['карточка токена (например BTC) → 💥 Ликвид.'],
      'eps': ['tgm/perp-positions'], 'scene': 'perp_positions', 'menu': 'nsn_perppos',
+     'where': ('dm', 'group_btn'), 'gcb': 'cx:perp',
      'price': '5 кредитов',
      'gives': 'размер позиции, плечо, нереализованный PnL и цену ликвидации по каждому счёту',
      'why': 'до этого эндпоинта цены ликвидации у нас не было вовсе - про неё догадывались '
@@ -110,11 +121,15 @@ SCENARIOS = [
      'hook': 'Leveraged positions with the one number nobody shows: the liquidation price.'},
     {'id': 'liqmap', 'app': True, 'title': '🗺 Карта ликвидаций: где висит чужое плечо',
      'cmds': ['карта ликвидаций BTC', 'ликвид карта BTC'],
-     'btns': ['карточка токена → 💥 Ликвид. → 🗺 Карта ликвидаций'],
+     'btns': ['карточка токена → 💥 Ликвид. → 🗺 Карта ликвидаций',
+              'мини-апп → 🗺 Liquidations → тикер кнопкой или своим вводом'],
      'eps': ['tgm/perp-positions'], 'scene': 'liq_map', 'menu': 'nsn_liqmap',
+     'where': ('dm', 'group_btn'), 'gcb': 'cx:liqmap',
      'price': '5 кредитов (тот же запрос, что у списка позиций)',
      'gives': 'картинку: суммы позиций по уровням цены ликвидации, красное - лонги, зелёное - '
-              'шорты, пунктир - текущая цена. Плюс подпись величиной',
+              'шорты, синее - деньги на кошельках с меткой Nansen, пунктир - текущая цена. '
+              'Плюс подпись величиной. Тикер ЛЮБОЙ, какой есть на площадке; кнопки в '
+              'мини-аппе - топ по измеренному суточному объёму Hyperliquid, а не зашитый список',
      'why': 'список позиций отвечает «кто стоит», а карта - «на каком уровне рынок поедет '
             'быстро»; это не строка, а распределение',
      'hook': 'A liquidation map: $22.5M of leverage stacked between $61.5K and $62.4K. '
@@ -132,6 +147,7 @@ SCENARIOS = [
      'eps': ['tgm/flow-intelligence', 'tgm/indicators', 'tgm/holders',
              'tgm/pnl-leaderboard'],
      'scene': 'token_check', 'menu': 'nsn_token',
+     'where': ('dm', 'group_btn'), 'gcb': 'hs:nsn',
      'price': '4 запроса, около 12 кредитов',
      'gives': 'нетто-потоки по сегментам холдеров, Nansen Score, метки топ-холдеров, топ по PnL',
      'why': 'один экран отвечает на «кто в этом токене» четырьмя разными способами',
@@ -141,6 +157,7 @@ SCENARIOS = [
      'cmds': ['кто входил 0x… 7', 'кто выходил 0x…'],
      'btns': ['карточка токена → 🧠 → 🔄 Кто входил'],
      'eps': ['tgm/who-bought-sold'], 'scene': 'who_bought_sold', 'menu': 'nsn_wbs',
+     'where': ('dm', 'group_btn'), 'gcb': 'hs:wbs',
      'price': '1 кредит за сторону',
      'gives': 'метку или адрес и объём $ по каждой стороне за период',
      'why': 'нетто-поток - это итог; здесь видно, КТО его сделал',
@@ -155,6 +172,7 @@ SCENARIOS = [
     {'id': 'flowpng', 'title': '📊 Потоки по сегментам холдеров КАРТИНКОЙ',
      'cmds': ['потоки картинкой 0x…'], 'btns': ['карточка токена → 🧠 → 📊 Потоки картинкой'],
      'eps': ['tgm/flow-intelligence'], 'scene': 'token_check', 'menu': 'nsn_flowpng',
+     'where': ('dm', 'group_btn'), 'gcb': 'hs:nflow',
      'price': '1 кредит',
      'gives': 'столбики по сегментам (smart money, киты, топ-PnL, публичные фигуры, биржи, '
               'свежие кошельки); цвет означает ЗНАК потока, источник вшит в полотно',
@@ -261,11 +279,41 @@ SCENARIOS = [
     {'id': 'agent', 'title': '🔍 Свободный вопрос агенту Nansen',
      'cmds': [], 'btns': ['биржевая карточка → 🔍 Nansen', 'вопрос в личке или в чате'],
      'eps': ['agent/fast', 'agent/expert'], 'scene': 'agent_free', 'menu': None,
+     'where': ('dm', 'group_btn', 'group_agent'), 'gcb': 'cx:nansen',
      'price': '200 кредитов (fast) или 750 (expert) - САМЫЙ дорогой путь',
      'gives': 'ответ агента на вопрос словами, с подписью источника',
      'why': 'единственная дверь для вопросов, под которые нет структурного эндпоинта',
      'hook': 'The agent is the expensive path: 200 credits, or 750 in expert mode. So every '
              'screen prints what it cost.'},
+    # ── СРАВНИТЕЛЬНЫЕ ЭКРАНЫ: не «что по этому объекту», а «какой из них выбрать» ────────
+    {'id': 'sharpmarkets', 'app': True,
+     'title': '🎯 Где на Polymarket деньги острые (сравнение рынков)',
+     'cmds': ['острые деньги', 'sharp money'],
+     'btns': ['🧠 Nansen → 🎯 Где деньги острые (рынки)'],
+     'eps': ['prediction-market/market-screener', 'prediction-market/top-holders',
+             'prediction-market/address-summary'],
+     'scene': 'sharp_markets', 'menu': 'nsn_sharp',
+     'price': 'цена не названа в официальном списке · 1 + N + N×H запросов (по умолчанию 13)',
+     'gives': 'четыре разогретых рынка рядом: сколько денег у кошельков с винрейтом от 60% '
+              'против денег тех, у кого ниже 40%, и кто крупнейший «острый» держатель',
+     'why': 'разбор одного рынка не отвечает на вопрос выбора: из десяти разогретых нужен тот, '
+            'где против тебя стоят не случайные люди, а это видно только рядом',
+     'hook': 'Four heated Polymarket markets side by side: how much money sits with wallets '
+             'that were right before, and how much with wallets that were not.'},
+    {'id': 'perprisk', 'app': True, 'title': '⚔️ Борд риска: у кого плечо ближе к обрыву',
+     'cmds': ['борд риска', 'risk board'],
+     'btns': ['🧠 Nansen → ⚔️ Борд риска по перпам',
+              'карта ликвидаций → ⚔️ Сравнить все четыре'],
+     'eps': ['tgm/perp-positions'], 'scene': 'perp_risk', 'menu': 'nsn_board',
+     'where': ('dm', 'group_btn'), 'gcb': 'cx:board',
+     'price': 'цена не названа в официальном списке · по одному запросу на токен (4)',
+     'gives': 'BTC/ETH/SOL/HYPE в порядке БЛИЗОСТИ цены к самому плотному скоплению '
+              'ликвидаций: расстояние в процентах, сторона скопления, лонги против шортов и '
+              'сколько из этого висит на кошельках с меткой Nansen',
+     'why': 'карта одного токена не отвечает на вопрос «а у других как»: рынок первым проедет '
+            'тот уровень, до которого путь короче, и сравнение показывает именно его',
+     'hook': 'Four perp markets ranked by how close the price is to the densest liquidation '
+             'cluster - not by how big that cluster is.'},
     {'id': 'tally', 'title': '🧮 Мой зачёт в конкурсе',
      'cmds': ['нансен зачёт', 'мой зачёт'], 'btns': ['🧠 Nansen → 🧮 Мой зачёт в конкурсе'],
      'eps': [], 'scene': None, 'menu': 'nsn_tally', 'price': 'бесплатно, читает свой лог',
@@ -336,12 +384,15 @@ _EN = {
                 'why': 'before this endpoint we had no liquidation price at all — it was guessed '
                        'from the entry price'},
     'liqmap': {'cmds': ['liquidation map BTC', 'liq map BTC'],
-               'btns': ['token card → 💥 Liq. → 🗺 Liquidation map'],
+               'btns': ['token card → 💥 Liq. → 🗺 Liquidation map',
+                        'mini-app → 🗺 Liquidations → a ticker button or your own input'],
                'title': "🗺 Liquidation map: where other people's leverage hangs",
                'price': '5 credits (the same request as the position list)',
                'gives': 'an image: position sizes by liquidation-price level, red is longs, '
-                        'green is shorts, the dashed line is the current price. Plus a caption '
-                        'with the magnitude',
+                        'green is shorts, blue is the money on wallets Nansen has a name for, '
+                        'the dashed line is the current price. Plus a caption with the '
+                        'magnitude. ANY ticker the venue has; the mini-app buttons are the top '
+                        'by measured 24h Hyperliquid volume, not a list kept by hand',
                'why': 'the position list answers "who is in", the map answers "at which level '
                       'the market moves fast"; it is not a line but a distribution'},
     'walletperps': {'cmds': ['nansen perp 0x…'], 'btns': ['🧠 Nansen → 🩺 Wallet perp account'],
@@ -447,6 +498,29 @@ _EN = {
               'price': '200 credits (fast) or 750 (expert) — the MOST expensive path',
               'gives': "the agent's answer in words, with a source attribution",
               'why': 'the only door for questions that have no structural endpoint'},
+    'sharpmarkets': {'cmds': ['sharp money'],
+                     'btns': ['🧠 Nansen → 🎯 Where money is sharp'],
+                     'title': '🎯 Where the money on Polymarket is sharp (market comparison)',
+                     'price': 'price not named in the official list · 1 + N + N×H requests '
+                              '(13 by default)',
+                     'gives': 'four heated markets side by side: how much money sits with '
+                              'wallets whose win rate is at or above 60% against the money of '
+                              'those below 40%, plus the biggest sharp holder',
+                     'why': 'a single-market breakdown does not answer the question of choice: '
+                            'out of ten heated markets you want the one where the other side '
+                            'is not random people, and that only shows up side by side'},
+    'perprisk': {'cmds': ['risk board'],
+                 'btns': ['🧠 Nansen → ⚔️ Perp risk board',
+                          'liquidation map → ⚔️ Compare all four'],
+                 'title': '⚔️ Risk board: whose leverage is closest to the edge',
+                 'price': 'price not named in the official list · one request per token (4)',
+                 'gives': 'BTC/ETH/SOL/HYPE ordered by how CLOSE the price is to the densest '
+                          'liquidation cluster: distance in per cent, the side of that cluster, '
+                          'longs against shorts, and how much of it sits on wallets Nansen has '
+                          'a name for',
+                 'why': 'a single map does not answer "and how about the others": the market '
+                        'runs through the nearest level first, and only a comparison shows '
+                        'which one that is'},
     'tally': {'cmds': ['nansen stats'], 'btns': ['🧠 Nansen → 🧮 My contest tally'],
               'title': '🧮 My contest tally',
               'price': 'free, reads its own log',
@@ -662,11 +736,138 @@ def _verify():
     except ImportError as e:                       # noqa: BLE001
         bad.append('nansen_scene не импортируется (%s) - пометки мини-аппа не проверить'
                    % str(e)[:60])
+    # ═══ «ГДЕ ЭТО РАБОТАЕТ» ПРОВЕРЯЕТСЯ ПО КОДУ, А НЕ НА СЛОВО ═══
+    # Утверждение «это можно позвать в группе» - самое опасное в каталоге: человек читает его,
+    # идёт в группу и либо получает ответ, либо не получает ничего и решает, что бот сломан.
+    # Поэтому у групповой кнопки обязаны найтись ТРИ вещи: сама кнопка в коде карточки,
+    # обработчик её действия и регистрация префикса в боте. Нет любой из трёх - каталог не
+    # пишется.
+    try:
+        _cards = ''
+        for _f2 in ('onchain/hub_scanner.py', 'onchain/oc_major.py', 'onchain/oc_dm.py'):
+            _cards += open(os.path.join(ROOT, _f2), encoding='utf-8').read()
+        _cbs = open(os.path.join(ROOT, 'onchain', 'oc_callbacks.py'), encoding='utf-8').read()
+        _bot = open(os.path.join(ROOT, 'bot.py'), encoding='utf-8').read()
+        _pub = open(os.path.join(ROOT, 'pub_tools.py'), encoding='utf-8').read()
+    except OSError as e:                           # noqa: BLE001
+        bad.append('файлы кнопок/роутера не читаются (%s) - поверхности не проверить'
+                   % str(e)[:60])
+        _cards = _cbs = _bot = _pub = ''
+    for sc in SCENARIOS:
+        _id, _w = sc['id'], _where(sc)
+        for _k in _w:
+            if _k not in WHERE_KINDS:
+                bad.append('%s: поверхность %r вне закрытого списка' % (_id, _k))
+        if 'group_btn' in _w:
+            _g = sc.get('gcb') or ''
+            if not _g:
+                bad.append('%s: обещана групповая кнопка, но её callback не назван (gcb)' % _id)
+            elif _cards:
+                if _g not in _cards:
+                    bad.append('%s: кнопки %r нет ни в одной клавиатуре карточки' % (_id, _g))
+                _act = _g.split(':', 1)[1] if ':' in _g else _g
+                if ('"%s"' % _act) not in _cbs and ("'%s'" % _act) not in _cbs:
+                    bad.append('%s: действие %r не разбирается обработчиком' % (_id, _act))
+                _pref = _g.split(':', 1)[0]
+                if ("^%s:" % _pref) not in _bot:
+                    bad.append('%s: префикс %r не раздаётся обработчику в bot.py'
+                               % (_id, _pref))
+        if 'group_agent' in _w and _pub:
+            # АГЕНТСКАЯ ДВЕРЬ В ГРУППЕ - ЭТО РОВНО ОДИН ИНСТРУМЕНТ. Не станет его в наборе -
+            # каталог не имеет права продолжать обещать вопрос словами в группе.
+            if 'def nansen_lookup' not in _pub or 'nansen_lookup' not in _bot:
+                bad.append('%s: обещан вопрос агенту в группе, но инструмента nansen_lookup '
+                           'нет в наборе' % _id)
     # В _EN не должно быть лишних ключей: удалили сценарий — перевод не может остаться сиротой.
     _orphans = sorted(set(_EN) - {s['id'] for s in SCENARIOS})
     if _orphans:
         bad.append('в _EN есть перевод для несуществующих сценариев: %s' % ', '.join(_orphans))
     return bad
+
+
+def _where(sc):
+    """Поверхности сценария. -> tuple.
+
+    ПО УМОЛЧАНИЮ ТОЛЬКО ЛИЧКА, и это не лень, а факт кода: команды словами разбирает
+    `oc_dm.is_onchain_command`, которого групповой обработчик (`group_chat.handle_group_message`)
+    не зовёт ВООБЩЕ, а меню `ocm:*` в группу никто не отправляет. Поэтому «группа» - это
+    исключение, которое надо назвать и доказать, а не наоборот.
+    """
+    return tuple(sc.get('where') or ('dm',))
+
+
+def _where_txt(sc, lang='en'):
+    """Человеческая строка «где это работает». -> str."""
+    _en = (lang == 'en')
+    w = _where(sc)
+    bits = []
+    if 'dm' in w:
+        bits.append('in DM' if _en else 'в личке')
+    if 'group_btn' in w:
+        _g = sc.get('gcb', '?')
+        bits.append(('in a group — by the button on a card the bot itself posted (`%s`)' % _g)
+                    if _en else
+                    ('в группе — кнопкой на карточке, которую бот прислал сам (`%s`)' % _g))
+    if 'group_agent' in w:
+        bits.append('in a group — by asking the agent in words (address the bot: a mention by '
+                    'username, the nickname "гроб"/"undertaker", or a reply)' if _en else
+                    'в группе — словами у агента (нужно обратиться: упоминание по имени '
+                    'бота, кличка «гроб»/«гробовщик» или реплай)')
+    if 'group_btn' not in w and 'group_agent' not in w:
+        bits.append('**not in a group**: the word command is parsed only by the DM router'
+                    if _en else
+                    '**не в группе**: команду словами разбирает только личный роутер')
+    return ' · '.join(bits)
+
+
+def _doors_md(lang='en'):
+    """Раздел «три двери»: где вообще можно спросить Nansen. -> [str] строк документа.
+
+    ЭТОТ РАЗДЕЛ - ОТВЕТ НА ЖИВОЙ ВОПРОС ВЛАДЕЛЬЦА и на дефект документа: каталог перечислял
+    команды, не говоря, что словами они работают ТОЛЬКО в личке. В группе у Nansen две своих
+    двери, и у каждой свои условия - молчать о них значит либо терять половину функциональности
+    в глазах читателя, либо обещать ему то, чего в группе нет.
+    """
+    _en = (lang == 'en')
+    if _en:
+        return ['## Three doors: where Nansen can be asked at all', '',
+                '**💬 In DM** — every scenario. Word commands are parsed by the private router '
+                '(`oc_dm.is_onchain_command`), and the inline menus (`ocm:*`) and the mini-app '
+                'button live here too. No mode needs to be switched on.', '',
+                '**👥🔘 In a group, by a button** — the bot posts a card by itself (a bare '
+                'contract address, `график BTC`), and the Nansen buttons on that card answer '
+                'INTO THE GROUP. This is not the agent: these are the same structured screens '
+                'as in DM, with the same numbers.', '',
+                '**👥🤖 In a group, by asking the agent in words** — the agent tool '
+                '`nansen_lookup` (the Nansen AI agent). It needs the bot to be addressed: a '
+                'mention by username, the nickname ("гроб"/"гробовщик"/"undertaker") or a reply to the '
+                "bot's message. The group also has to be approved, and there is a per-person "
+                'daily cap on agent questions (the agent is the expensive path).', '',
+                '**Word commands do NOT work in a group.** The group handler never calls the '
+                'private router at all, so `smart flows` typed in a group reaches the agent at '
+                'best — a different, more expensive path with a different answer. This is a '
+                'property of the code, not an oversight of this document.', '',
+                '**The mini-app is DM-only.** Telegram rejects a message carrying a `web_app` '
+                'button if it goes to a group, and the bot posts no Nansen mini-app link there '
+                'either.', '']
+    return ['## Три двери: где вообще можно спросить Nansen', '',
+            '**💬 В личке** — все сценарии. Команды словами разбирает личный роутер '
+            '(`oc_dm.is_onchain_command`), здесь же живут меню (`ocm:*`) и кнопка мини-аппа. '
+            'Режим включать не нужно.', '',
+            '**👥🔘 В группе, кнопкой** — бот сам присылает карточку (голый контракт, '
+            '`график BTC`), и Nansen-кнопки на этой карточке отвечают В ГРУППУ. Это не агент: '
+            'это те же структурные экраны, что в личке, с теми же числами.', '',
+            '**👥🤖 В группе, словами у агента** — инструмент `nansen_lookup` (ИИ-агент '
+            'Nansen). Нужно обратиться к боту: упоминание по имени бота, кличка («гроб»/«гробовщик»/'
+            '«undertaker») или реплай на его сообщение. Плюс группа должна быть одобрена, а у '
+            'человека есть суточный лимит агентских вопросов (агент - самый дорогой путь).', '',
+            '**Команды словами в группе НЕ работают.** Групповой обработчик личный роутер не '
+            'зовёт вовсе, поэтому «смарт потоки», набранные в группе, в лучшем случае дойдут до '
+            'агента - это другой, более дорогой путь и другой ответ. Это свойство кода, а не '
+            'недосмотр документа.', '',
+            '**Мини-апп только в личке.** Telegram отвергает сообщение с кнопкой `web_app`, '
+            'если оно уходит в группу, и ссылку на Nansen-мини-апп бот в группу тоже не '
+            'присылает.', '']
 
 
 def _md(lang='en'):
@@ -728,19 +929,28 @@ def _md(lang='en'):
         L += ['| %d: %d user-facing on Nansen + %d background + %d local | %d | %d of %d in registry |'
               % (len(SCENARIOS), len(user_api), len(background), len(local), len(_eps),
                  len(_scenes), len(T.SCENES)), '']
+        L += _doors_md('en')
         L += ['## Short table', '',
-              '| Scenario | Say to the bot | By button | Price |', '|---|---|---|---|']
+              '| Scenario | Say to the bot | By button | Where | Price |',
+              '|---|---|---|---|---|']
     else:
         L += ['| %d: %d пользовательских на Nansen + %d фоновый + %d локальный | %d | %d из %d в реестре |'
               % (len(SCENARIOS), len(user_api), len(background), len(local), len(_eps),
                  len(_scenes), len(T.SCENES)), '']
+        L += _doors_md('ru')
         L += ['## Короткая таблица', '',
-              '| Сценарий | Сказать боту | Кнопкой | Цена |', '|---|---|---|---|']
+              '| Сценарий | Сказать боту | Кнопкой | Где | Цена |', '|---|---|---|---|---|']
     for sc in SCENARIOS:
         _c = '<br>'.join('`%s`' % c for c in _f(sc, 'cmds', lang)) or '—'
         _b = '<br>'.join(_f(sc, 'btns', lang)) or '—'
-        L.append('| [%s](#%s) | %s | %s | %s |'
-                 % (_f(sc, 'title', lang), sc['id'], _c, _b, _f(sc, 'price', lang)))
+        _w = _where(sc)
+        # В КОРОТКОЙ ТАБЛИЦЕ - ЗНАЧКАМИ, чтобы колонка не разорвала строку; расшифровка стоит
+        # выше, в разделе про двери, и полная фраза - у каждого сценария ниже.
+        _wt = ' '.join([x for x in (('💬' if 'dm' in _w else ''),
+                                    ('👥🔘' if 'group_btn' in _w else ''),
+                                    ('👥🤖' if 'group_agent' in _w else '')) if x])
+        L.append('| [%s](#%s) | %s | %s | %s | %s |'
+                 % (_f(sc, 'title', lang), sc['id'], _c, _b, _wt, _f(sc, 'price', lang)))
     L += ['', '---', '']
     for sc in SCENARIOS:
         L += ['<a name="%s"></a>' % sc['id'], '', '## %s' % _f(sc, 'title', lang), '']
@@ -752,6 +962,9 @@ def _md(lang='en'):
         if _btns:
             _by = '**By button:** ' if _en else '**Кнопкой:** '
             L.append(_by + ' · '.join(_btns))
+        # ГДЕ ЭТО РАБОТАЕТ - СТРОКОЙ У КАЖДОГО СЦЕНАРИЯ. Без неё каталог обещал «скажи боту»
+        # не уточняя, в каком чате: набравший команду в группе не получал НИЧЕГО.
+        L.append(('**Where:** ' if _en else '**Где:** ') + _where_txt(sc, lang))
         if sc.get('app'):
             # МИНИ-АПП - НОВАЯ ПОВЕРХНОСТЬ СТАРОЙ СЦЕНЫ, и каталог обязан это показать, иначе
             # читатель решит, что экранов на телефоне нет вовсе. Сцена телеметрии та же (ниже),
