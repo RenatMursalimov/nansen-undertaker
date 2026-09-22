@@ -1,0 +1,116 @@
+{
+ "caveats": [
+  "2 holder(s) have no measurable win rate - their money is counted on NEITHER side",
+  "1 more holder(s) were not examined: this screen caps wallet history lookups at 5",
+  "dollars are computed as shares × current price: the response has no ready total",
+  "past win rate does not promise the future: this is the composition of the money, not a forecast or advice"
+ ],
+ "cost_credits": null,
+ "cost_requests": 6,
+ "freshness_seconds": null,
+ "lang": "en",
+ "market_id": "654412",
+ "outcome": "ok",
+ "payload": {
+  "age_sec": null,
+  "by_side": {
+   "No": 715000.0000000001,
+   "Yes": 1597500.0
+  },
+  "calls": 6,
+  "failed": 0,
+  "failure_reasons": {},
+  "holders": [
+   {
+    "entry": 0.12,
+    "markets": 84,
+    "pnl": -120000.0,
+    "px": 0.45,
+    "shares": 1800000.0,
+    "side": "Yes",
+    "status": "ok",
+    "usd": 810000.0,
+    "who": "Whale A",
+    "wr": 33.0
+   },
+   {
+    "entry": 0.31,
+    "markets": 210,
+    "pnl": 340000.0,
+    "px": 0.45,
+    "shares": 1400000.0,
+    "side": "Yes",
+    "status": "ok",
+    "usd": 630000.0,
+    "who": "0xbbbb…0002",
+    "wr": 71.0
+   },
+   {
+    "entry": 0.6,
+    "markets": 51,
+    "pnl": -45000.0,
+    "px": 0.55,
+    "shares": 900000.0,
+    "side": "No",
+    "status": "ok",
+    "usd": 495000.00000000006,
+    "who": "Smart Money",
+    "wr": 38.0
+   },
+   {
+    "entry": null,
+    "markets": null,
+    "pnl": null,
+    "px": 0.55,
+    "shares": 400000.0,
+    "side": "No",
+    "status": "no_history",
+    "usd": 220000.00000000003,
+    "who": "0xdddd…0004",
+    "wr": null
+   },
+   {
+    "entry": null,
+    "markets": 3,
+    "pnl": 1000.0,
+    "px": 0.45,
+    "shares": 250000.0,
+    "side": "Yes",
+    "status": "no_winrate",
+    "usd": 112500.0,
+    "who": "0xeeee…0005",
+    "wr": null
+   },
+   {
+    "entry": null,
+    "markets": null,
+    "pnl": null,
+    "px": 0.45,
+    "shares": 100000.0,
+    "side": "Yes",
+    "status": null,
+    "usd": 45000.0,
+    "who": "0xffff…0006",
+    "wr": null
+   }
+  ],
+  "known": 3,
+  "market_id": "654412",
+  "no_history": 1,
+  "no_winrate": 1,
+  "strong_usd": 630000.0,
+  "total_usd": 2312500.0,
+  "unexamined": 1,
+  "unknown": 3,
+  "weak_usd": 1305000.0
+ },
+ "provenance": "synthetic",
+ "recorded_at": "2026-09-22T13:54:41Z",
+ "rehearsal": true,
+ "rendered_text": "🎭 <b>Who holds this market</b>\n<code>654412</code>\n\n💰 Of $1.94M examined, <b>$1.30M (67%)</b> sits with wallets whose win rate is below 40%.\n📊 Across all top holders: Yes $1.60M · No $715.0K\n\n<b>Holders</b> (5 of 6 examined):\n1. Whale A [Yes] · $810.0K · entry 12¢ → 45¢ · win rate 33% · PnL -$120.0K · 84 markets\n2. 0xbbbb…0002 [Yes] · $630.0K · entry 31¢ → 45¢ · win rate 71% · PnL +$340.0K · 210 markets\n3. Smart Money [No] · $495.0K · entry 60¢ → 55¢ · win rate 38% · PnL -$45.0K · 51 markets\n4. 0xdddd…0004 [No] · $220.0K · no history\n5. 0xeeee…0005 [Yes] · $112.5K · win-rate field missing · PnL +$1.0K · 3 markets\n\n⚠️ <i>2 holder(s) have no measurable win rate - their money is counted on NEITHER side. Assigning a win rate we do not know would be fitting the answer.</i>\n\nℹ️ <i>1 more holder(s) were not examined because this screen caps wallet history lookups at 5; this does not claim they have no history.</i>\n\n<i>Dollars are computed as shares × current price: the response has no ready total.</i>\n<i>Past win rate does not promise the future: this is the composition of the money, not a forecast or advice. Requests spent on this screen: 6.</i>\n\n<i>📡 Source: Nansen, freshness not measured</i>",
+ "scene": "pm_reputation",
+ "source": "Nansen",
+ "surface": "miniapp",
+ "threshold_weak_wr": 40.0,
+ "top": 5
+}

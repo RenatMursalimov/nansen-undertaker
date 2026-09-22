@@ -1,0 +1,61 @@
+{
+ "caveats": [
+  "1 row(s) have no market cap: the share of mcap is not computed for them",
+  "a share of market cap is the magnitude, the dollar amount alone is not"
+ ],
+ "cost_credits": null,
+ "cost_requests": 1,
+ "freshness_seconds": null,
+ "lang": "en",
+ "outcome": "ok",
+ "payload": {
+  "rows": [
+   {
+    "age_days": 3,
+    "chain": "base",
+    "i": 1,
+    "mcap": 2100000.0,
+    "mcap_num": 2100000.0,
+    "pct_of_mcap": 2.3,
+    "pct_shown": true,
+    "sym": "AAA",
+    "usd": 48300.0,
+    "who": "Smart Trader 1"
+   },
+   {
+    "age_days": 900,
+    "chain": "solana",
+    "i": 2,
+    "mcap": 50000000000.0,
+    "mcap_num": 50000000000.0,
+    "pct_of_mcap": 0.00024,
+    "pct_shown": false,
+    "sym": "BBB",
+    "usd": 120000.0,
+    "who": "Smart Trader 2"
+   },
+   {
+    "age_days": null,
+    "chain": "ethereum",
+    "i": 3,
+    "mcap": null,
+    "mcap_num": null,
+    "pct_of_mcap": null,
+    "pct_shown": false,
+    "sym": "CCC",
+    "usd": 9000.0,
+    "who": "0x3333…0033"
+   }
+  ],
+  "shown": 3,
+  "with_val": 3
+ },
+ "pct_min": 0.1,
+ "provenance": "synthetic",
+ "recorded_at": "2026-09-22T13:54:42Z",
+ "rehearsal": true,
+ "rendered_text": "🧠 <b>Smart money trades, 24h</b>\n1. Smart Trader 1 <b>AAA</b> [base] · $48.3K · mcap $2.10M · 2.3% of mcap · 3d\n2. Smart Trader 2 <b>BBB</b> [solana] · $120.0K · mcap $50.00B · 900d\n3. 0x3333…0033 <b>CCC</b> [ethereum] · $9.0K\n\nTap a ticker for the card.\n\n<i>📡 Source: Nansen, freshness not measured</i>",
+ "scene": "smart_trades",
+ "source": "Nansen",
+ "surface": "miniapp"
+}

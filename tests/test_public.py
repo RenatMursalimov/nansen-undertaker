@@ -449,6 +449,12 @@ def t_docs_are_here_and_name_prices():
         # Contest docs are English-primary; the Russian analog sits next to each as *_ru.md.
         'docs/CATALOG.md', 'docs/CATALOG_ru.md', 'docs/scenarios_ru.md',
         'docs/WINNER_PLAN.md', 'docs/WINNER_PLAN_ru.md', 'docs/submission-checklist_ru.md',
+        # MINI-APP. The page, the dictionary layer, the gateway and the rehearsal fixtures.
+        # Without the fixtures the 60-second judge path does not exist: the screen could only
+        # be opened with a live key, and that is exactly what a judge does not have.
+        'webapp/index.html', 'nansen_scene.py', 'nansen_gate.py',
+        'fixtures/pm_reputation.json', 'fixtures/liq_map.json', 'fixtures/smart_trades.json',
+        'docs/JUDGE.md', 'docs/MINIAPP_DECISIONS.md',
     )
     for rel in required:
         p = os.path.join(_ROOT, rel)

@@ -27,6 +27,32 @@ Nansen data drives the conclusion, not just the UI.
 
 Built for the **Nansen Meridian Buildathon**.
 
+## Mini-app: the same answer, on a phone
+
+The three screens above also run as a **Telegram mini-app** — the hero, the liquidation map, and a
+live feed of the API calls themselves. See it in under a minute, no key and no Telegram account:
+
+```bash
+python3 -m http.server 8080
+# http://127.0.0.1:8080/webapp/index.html?rehearsal=1
+```
+
+Step-by-step, with what you should see: [`docs/JUDGE.md`](docs/JUDGE.md).
+
+**The mini-app computes nothing.** Every screen renders the *same dictionary* the bot uses to build
+its chat message — `nansen_scene.py` builds it, `nansen_gate.py` guards it, `webapp/index.html` draws
+it with hand-rolled SVG and zero dependencies. Under each chart sits the exact sentence the bot would
+say in chat, so the picture and the words cannot drift apart. A law test injects one number into the
+dictionary and requires **both** outputs to change; if only one does, a second source of truth has
+appeared and the build goes red.
+
+The third screen is the liveness proof the contest asks for: one row per network call — endpoint,
+outcome class, milliseconds, credits, cache or wire, and which surface asked. It costs nothing extra,
+because the telemetry was already writing those rows.
+
+Decisions, including the screen deliberately **not** shipped and two leaks the scrubber caught before
+production: [`docs/MINIAPP_DECISIONS.md`](docs/MINIAPP_DECISIONS.md).
+
 **53 Nansen API routes** · **25 documented workflows** · **28 named telemetry scenes** ·
 **8 distinct failure states**
 
