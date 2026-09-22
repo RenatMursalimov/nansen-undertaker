@@ -252,7 +252,10 @@ See [`docs/WINNER_PLAN.md`](docs/WINNER_PLAN.md) and [`docs/submission.md`](docs
 
 ## Language and safety
 
-`NANSEN_LANG=en` selects English where production formatters support it. Documentation comments
+`NANSEN_LANG=en` selects English where production formatters support it. The judge-facing
+documents are English-primary; a Russian analog of each sits next to it as `*_ru.md`
+(`docs/CATALOG_ru.md`, `docs/scenarios_ru.md`, `docs/WINNER_PLAN_ru.md`,
+`docs/submission-checklist_ru.md`), generated from the same source. In-code documentation comments
 remain mostly Russian because they preserve the reasoning that led to each guard rail; replacing
 that reasoning with a thinner translation would lose the useful part.
 
