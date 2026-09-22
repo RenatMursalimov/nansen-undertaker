@@ -14,8 +14,8 @@
 | `assets/social-preview.png` | `2e02bc4b7b3180d0` | только в выжимке, в боте этого файла нет |
 | `cli.py` | `4c78de781214bcae` | только в выжимке, в боте этого файла нет |
 | `db.py` | `921eb925672e4612` | только в выжимке, в боте этого файла нет |
-| `docs/CATALOG.md` | `f2993070f64d4ef1` | из бота, приватные пути/сервисы заменены (см. ниже) |
-| `docs/CATALOG_ru.md` | `ac81bbfc2161dbd8` | из бота, приватные пути/сервисы заменены (см. ниже) |
+| `docs/CATALOG.md` | `1dabaf54fb0ef643` | из бота, приватные пути/сервисы заменены (см. ниже) |
+| `docs/CATALOG_ru.md` | `6137b4c77ae88c81` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/DEMO_SCRIPT.md` | `1aeb7dffe6ba17d8` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/ENDPOINT_SWEEP.md` | `fa80b03dff7c33fb` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/JUDGE.md` | `0bd885a0306f92ab` | из бота, приватные пути/сервисы заменены (см. ниже) |
@@ -53,12 +53,12 @@
 | `requirements.txt` | `56dbb14aff00e3cd` | только в выжимке, в боте этого файла нет |
 | `scrub.py` | `1e32639d8f18ac43` | только в выжимке, в боте этого файла нет |
 | `tests/test_public.py` | `4d6b452faded548b` | только в выжимке, в боте этого файла нет |
-| `tools/nansen_catalog.py` | `39f056e3f5805566` | байт-в-байт из бота |
+| `tools/nansen_catalog.py` | `49d7383bac8c914a` | байт-в-байт из бота |
 | `tools/nansen_daily.py` | `699fd28d7d76437d` | байт-в-байт из бота |
 | `tools/nansen_endpoint_sweep.py` | `6301136b4a7aa6c9` | байт-в-байт из бота |
 | `tools/nansen_live_smoke.py` | `923f06a1adebef3d` | байт-в-байт из бота |
 | `tools/nansen_meridian_corpus.py` | `4a604e9a98ceb0d8` | байт-в-байт из бота |
-| `tools/nansen_probe.py` | `0d478f951b3a3ad5` | байт-в-байт из бота |
+| `tools/nansen_probe.py` | `c31fca75b5864179` | байт-в-байт из бота |
 | `tools/nansen_trade_probe.py` | `1b2b3ddf5bd460b5` | байт-в-байт из бота |
 | `tools/record_fixture.py` | `8737110aae074076` | байт-в-байт из бота |
 | `tools/render_social_preview.py` | `ba595dc312016848` | байт-в-байт из бота |

@@ -118,6 +118,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 **Say to the bot:** `smart trades`
 **By button:** 🧠 Nansen → 🧠 Smart money trades now
+**In the mini-app:** a screen of its own — it renders this same dictionary, so the chart cannot drift from the sentence.
 
 **What you get:** who entered what and for how much, plus the token market cap and the trade's SHARE of it
 
@@ -187,6 +188,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 **Say to the bot:** `liquidation map BTC` · `liq map BTC`
 **By button:** token card → 💥 Liq. → 🗺 Liquidation map
+**In the mini-app:** a screen of its own — it renders this same dictionary, so the chart cannot drift from the sentence.
 
 **What you get:** an image: position sizes by liquidation-price level, red is longs, green is shorts, the dashed line is the current price. Plus a caption with the magnitude
 
@@ -485,6 +487,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 **Say to the bot:** `market reputation 654412` · `who holds market 654412`
 **By button:** markets list → 🎭 N
+**In the mini-app:** a screen of its own — it renders this same dictionary, so the chart cannot drift from the sentence.
 
 **What you get:** how much money sits with wallets below the win-rate threshold, a breakdown by side, and holders with win rate, PnL and market count
 
