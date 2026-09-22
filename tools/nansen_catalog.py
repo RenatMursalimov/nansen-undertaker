@@ -283,6 +283,166 @@ SCENARIOS = [
 ]
 
 
+#: АНГЛИЙСКИЕ ПЕРЕВОДЫ РЕДАКТОРСКИХ ПОЛЕЙ, КЛЮЧ = id сценария.
+#: ЗАЧЕМ ОТДЕЛЬНЫМ СЛОВАРЁМ, А НЕ ПОЛЯМИ В SCENARIOS. Каталог уезжает в публичный репозиторий
+#: конкурса, а конкурс англоязычный: judge-facing документ обязан быть на английском, и он —
+#: основной (`CATALOG.md`). Русский аналог живёт рядом (`CATALOG_ru.md`) для владельца. Держать
+#: перевод отдельной таблицей, а не дублировать каждое поле внутри SCENARIOS, — чтобы русский и
+#: английский правились в ОДНОМ месте на сценарий и не разъезжались молча. `hook` уже английский
+#: в обоих языках и здесь не повторяется. `_verify` требует, чтобы у КАЖДОГО сценария был полный
+#: перевод: пустое поле тут — та же ложь в судейском документе, что и выдуманная цена.
+_EN = {
+    'flows': {'title': '💹 Smart money inflow by window',
+              'price': 'price not named in the official list · counted on a separate line',
+              'gives': 'tickers with net inflow over the window; tapping a ticker opens the '
+                       'token card',
+              'why': 'the window total answers "how much", the first question about any token'},
+    'trends': {'title': '🔥 Smart Money inside the shared Trends screen',
+               'price': '1 credit',
+               'gives': 'tokens with positive netflow embedded into the shared Trends screen; '
+                        'a tap opens the token card',
+               'why': 'Nansen is not a separate mode but part of the daily route: trend → card '
+                      '→ holders/flows/trades'},
+    'holdings': {'title': '💼 What smart money accumulates',
+                 'price': '3 credits',
+                 'gives': 'top positions by $ with the 24h change',
+                 'why': 'flow says "what they are buying now", holdings say "what they already '
+                        'hold"'},
+    'trades': {'title': '🧠 Smart money trades over 24h + share of market cap',
+               'price': '1–5 credits',
+               'gives': 'who entered what and for how much, plus the token market cap and the '
+                        "trade's SHARE of it",
+               'why': '"$48K went into a token" says nothing until it says into what: $48K into '
+                      'a $2.1M token is 2.3% of the entire market cap and a signal, while into '
+                      'a $50B token it is noise'},
+    'perpleaders': {'title': '🏆 Top perp traders',
+                    'price': '5 credits',
+                    'gives': 'profitable perp accounts; tapping a trader opens their account',
+                    'why': 'who is making money on leverage right now'},
+    'perppos': {'title': '💥 Leveraged positions and the LIQUIDATION PRICE by token',
+                'price': '5 credits',
+                'gives': 'position size, leverage, unrealized PnL and the liquidation price for '
+                         'each account',
+                'why': 'before this endpoint we had no liquidation price at all — it was guessed '
+                       'from the entry price'},
+    'liqmap': {'title': "🗺 Liquidation map: where other people's leverage hangs",
+               'price': '5 credits (the same request as the position list)',
+               'gives': 'an image: position sizes by liquidation-price level, red is longs, '
+                        'green is shorts, the dashed line is the current price. Plus a caption '
+                        'with the magnitude',
+               'why': 'the position list answers "who is in", the map answers "at which level '
+                      'the market moves fast"; it is not a line but a distribution'},
+    'walletperps': {'title': "🩺 A wallet's perp account and room to liquidation",
+                    'price': 'price not named in the official list',
+                    'gives': 'capital, how much is collateralized, unrealized PnL, account '
+                             'health and positions',
+                    'why': 'the main question about a leveraged whale is not "what do they hold" '
+                           'but "how much room is left"'},
+    'tokencheck': {'title': '🧠 Token breakdown: flows, Nansen Score, holder labels',
+                   'price': '4 requests, about 12 credits',
+                   'gives': 'net flows by holder segment, Nansen Score, top-holder labels, top '
+                            'by PnL',
+                   'why': 'one screen answers "who is in this token" in four different ways'},
+    'wbs': {'title': '🔄 Who net-bought and who sold a token',
+            'price': '1 credit per side',
+            'gives': 'a label or address and the $ volume for each side over the period',
+            'why': 'net flow is the total; here you see WHO made it'},
+    'tinfo': {'title': '🪪 Token info sheet from Nansen',
+              'price': '1 credit',
+              'gives': 'market cap, volume, liquidity, holder count',
+              'why': 'basic metrics from the same source as everything else — no second vendor'},
+    'flowpng': {'title': '📊 Holder-segment flows AS A CHART',
+                'price': '1 credit',
+                'gives': 'bars by segment (smart money, whales, top-PnL, public figures, '
+                         'exchanges, fresh wallets); color means the SIGN of the flow, the '
+                         'source is baked into the canvas',
+                'why': 'text answers "how much", the chart answers "who against whom": smart '
+                       'money accumulating while whales dump is a half-second read on the bars'},
+    'backtest': {'title': '🧪 Backtest on onchain candles',
+                 'price': '5 credits for 89 daily candles',
+                 'gives': "a run of a simple strategy over the token's historical candles",
+                 'why': 'a meme has no exchange chart, yet you want to test an idea on its own '
+                        'history'},
+    'profile': {'title': '👤 Wallet profile: labels, PnL, related',
+                'price': '3 requests; "deeper" adds premium labels for 150 credits',
+                'gives': 'labels, PnL and win rate, related wallets',
+                'why': 'the first question about an unknown address is "who is this"; "no '
+                       'labels" does NOT mean "clean address", and the screen says so directly'},
+    'cparty': {'title': '🤝 Who a wallet trades with most',
+               'price': 'price not named in the official list',
+               'gives': 'counterparties over 30 days and volumes',
+               'why': "an address's connections say more about it than its balance"},
+    'balance': {'title': '💼 Wallet portfolio per Nansen data',
+                'price': 'price not named in the official list',
+                'gives': 'portfolio composition by $ without spam tokens',
+                'why': 'the same key instead of a separate paid balance vendor'},
+    'pmmarkets': {'title': '🎲 Trending Polymarket markets with market_id',
+                  'price': 'price not named in the official list',
+                  'gives': 'markets by volume, probability, 24h volume and a COPYABLE '
+                           'market_id; three rows of buttons under the list',
+                  'why': 'without printing the market_id three neighbouring screens existed '
+                         'only formally: there was nothing to call them with'},
+    'pmchart': {'title': '📈 Market probability chart over time',
+                'price': 'price not named in the official list',
+                'gives': 'an image: how the probability changed, the 50% line separating "more '
+                         'likely yes" from "more likely no"',
+                'why': '45% after 20% and 45% after 70% are opposite stories, and one number '
+                       'cannot tell them apart'},
+    'pmbook': {'title': '📖 Polymarket order book',
+               'price': 'price not named in the official list',
+               'gives': 'order levels by side and a depth line',
+               'why': '"45%" with an empty book and "45%" with a dense one are different '
+                      'things: the price says what people believe, the book says how much it '
+                      'costs to test that with money'},
+    'pmrep': {'title': '🎭 Who holds the market and how they guessed before',
+              'price': '6 requests (holders + lifetime history of each of the five)',
+              'gives': 'how much money sits with wallets below the win-rate threshold, a '
+                       'breakdown by side, and holders with win rate, PnL and market count',
+              'why': '"78% Yes" — a consensus of WHOM? One number looks the same when the money '
+                     'was staked by wallets with a 70% win rate and by wallets with a 35% one; '
+                     'the first is a signal, the second an invitation to stand against'},
+    'pmwallet': {'title': '🎰 Polymarket trader profile',
+                 'price': '2 requests',
+                 'gives': 'lifetime PnL, win rate, wallet age and top markets by PnL',
+                 'why': "before copying someone's bet, it helps to know how the previous ones "
+                        'ended'},
+    'pmleaders': {'title': '🏆 Top traders of a specific market',
+                  'price': 'price not named in the official list',
+                  'gives': 'who made and lost the most on this market, with the side indicated',
+                  'why': 'the winners and losers of a single market are the fastest way to see '
+                         'who trades it'},
+    'agent': {'title': '🔍 Free-form question to the Nansen agent',
+              'price': '200 credits (fast) or 750 (expert) — the MOST expensive path',
+              'gives': "the agent's answer in words, with a source attribution",
+              'why': 'the only door for questions that have no structural endpoint'},
+    'tally': {'title': '🧮 My contest tally',
+              'price': 'free, reads its own log',
+              'gives': 'how many calls and credits per person and their rank; a leaderboard '
+                       'WITHOUT names and IDs',
+              'why': 'a multi-user bot: contribution is counted while privacy is not spent'},
+    'digest': {'title': '📰 Morning digest and tweet jobs',
+               'price': 'counted separately from people: a job has no person and does not go '
+                        'into the tally',
+               'gives': 'the smart money section in the morning digest',
+               'why': 'background calls must be separated from human ones, otherwise the spend '
+                      'cannot be explained'},
+}
+
+
+def _f(sc, field, lang):
+    """Редакторское поле сценария на нужном языке. RU — из самого SCENARIOS, EN — из `_EN`.
+
+    `hook` не языковой (в обоих документах английский), поэтому берётся напрямую. Отсутствие
+    английского перевода — не «падение в русский по-тихому», а KeyError: судейский документ без
+    перевода одного экрана хуже, чем красный тест на сборке.
+    """
+    if lang not in ('en', 'ru'):
+        raise ValueError('неизвестный язык поля: %r (ожидается en/ru)' % (lang,))
+    if lang == 'en' and field != 'hook':
+        return _EN[sc['id']][field]
+    return sc[field]
+
+
 #: ЭНДПОИНТЫ, ПУТЬ К КОТОРЫМ СОБИРАЕТСЯ В РАНТАЙМЕ, - и потому их нельзя найти литералом.
 #: Проверяем ПО КУСКАМ: оба куска должны быть в исходнике. Это слабее прямого литерала, и
 #: поэтому список короткий и назван здесь явно - чтобы «не нашлось» не превратилось в
@@ -407,63 +567,133 @@ def _verify():
         if len(sc['hook']) > 260:
             bad.append('%s: зацепка для твита длиннее 260 символов (%d)'
                        % (_id, len(sc['hook'])))
+        # hook общий для обоих языков и стоит под меткой «For a tweet (EN)»/«Для твита (EN)»:
+        # он ОБЯЗАН быть английским. Кириллица здесь утекла бы в английский каталог молча.
+        import re as _re
+        if _re.search(r'[\u0400-\u04FF]', sc['hook'] or ''):
+            bad.append('%s: hook содержит кириллицу — он должен быть английским' % _id)
         for f in ('title', 'gives', 'why', 'hook', 'price'):
             if not (sc.get(f) or '').strip():
                 bad.append('%s: пустое поле %r' % (_id, f))
+        # АНГЛИЙСКИЙ ПЕРЕВОД ОБЯЗАТЕЛЕН И ПОЛНЫЙ. Английский каталог — основной judge-facing
+        # документ; сценарий без перевода одного поля уехал бы в публичный репозиторий с дырой.
+        _en = _EN.get(_id)
+        if _en is None:
+            bad.append('%s: нет английского перевода в _EN' % _id)
+        else:
+            for f in ('title', 'gives', 'why', 'price'):
+                if not (_en.get(f) or '').strip():
+                    bad.append('%s: пустое английское поле %r в _EN' % (_id, f))
+    # В _EN не должно быть лишних ключей: удалили сценарий — перевод не может остаться сиротой.
+    _orphans = sorted(set(_EN) - {s['id'] for s in SCENARIOS})
+    if _orphans:
+        bad.append('в _EN есть перевод для несуществующих сценариев: %s' % ', '.join(_orphans))
     return bad
 
 
-def _md():
-    """Собрать документ. -> str."""
+def _md(lang='en'):
+    """Собрать документ на языке lang ('en' — основной, 'ru' — аналог). -> str.
+
+    ЗАЧЕМ ДВА ЯЗЫКА. Каталог — судейский документ англоязычного конкурса, поэтому основной файл
+    `CATALOG.md` английский. Русский `CATALOG_ru.md` остаётся для владельца, по нему он и пишет.
+    Оба СОБИРАЮТСЯ одним инструментом из одних SCENARIOS: разъехаться молча им нечем.
+    """
+    if lang not in ('en', 'ru'):
+        # Тихо отдать русский на опечатке `'EN'` значило бы собрать судейский документ не на
+        # том языке и не заметить. Лучше громко упасть на сборке.
+        raise ValueError('неизвестный язык каталога: %r (ожидается en/ru)' % (lang,))
     import nansen_log as T
-    L = ['# Каталог сценариев на данных Nansen', '',
-         'Все экраны бота, которые ходят в Nansen: что сказать, что придёт, чего это стоит и '
-         'зачем это нужно.', '',
-         '**Документ СОБРАН ИНСТРУМЕНТОМ** (`tools/nansen_catalog.py`), а не написан руками. '
-         'Сборщик проверяет четыре класса утверждений: команда распознаётся общим роутером, '
-         'эндпоинт реально присутствует в сетевой горловине клиента, сцена есть в закрытом '
-         'реестре телеметрии, а подпись меню имеет кнопку/action. Это не заменяет E2E-тест '
-         'связи конкретной команды с конкретным endpoint — hero-paths отдельно проходят '
-         'живыми callback-тестами. Расходится хоть одна из этих проверяемых частей — документ '
-         'не пишется. По каталогу создаются публичные обещания, а обещать несуществующую '
-         'фичу хуже, чем не обещать ничего.', '',
-         '**Про цену.** Где официальный список Nansen называет цену эндпоинта — она в '
-         'кредитах. Где не называет — цена указана **числом запросов**. Это не уклонение: '
-         'придуманное число кредитов в документе, по которому пишут твиты, было бы ложью в '
-         'самом проверяемом месте.', '',
-         '| Сценариев | Эндпоинтов задействовано | Сцен телеметрии |', '|---|---|---|']
+    _en = (lang == 'en')
+    if _en:
+        L = ['# Nansen data scenario catalog', '',
+             'Every bot screen that talks to Nansen: what to say, what comes back, what it '
+             'costs and why it matters.', '',
+             '**This document is GENERATED BY A TOOL** (`tools/nansen_catalog.py`), not written '
+             "by hand. The generator verifies four classes of claim: the command is recognized "
+             "by the shared router, the endpoint actually exists in the client's network "
+             'throat, the scene is in the closed telemetry registry, and the menu label has a '
+             'button/action. This does not replace an E2E test linking a specific command to a '
+             'specific endpoint — hero paths pass live callback tests separately. If any of '
+             'these verifiable parts diverges, the document is not written. Public promises are '
+             'made from this catalog, and promising a feature that does not exist is worse than '
+             'promising nothing.', '',
+             '**About price.** Where the official Nansen list names an endpoint price — it is '
+             'in credits. Where it does not — the price is given **by the number of requests**. '
+             'This is not evasion: a made-up credit number in a document that tweets are '
+             'written from would be a lie in the most verifiable place.', '',
+             '**Русский аналог рядом:** [`CATALOG_ru.md`](CATALOG_ru.md).', '',
+             '| Scenarios | Endpoints used | Telemetry scenes |', '|---|---|---|']
+    else:
+        L = ['# Каталог сценариев на данных Nansen', '',
+             'Все экраны бота, которые ходят в Nansen: что сказать, что придёт, чего это стоит '
+             'и зачем это нужно.', '',
+             '**Документ СОБРАН ИНСТРУМЕНТОМ** (`tools/nansen_catalog.py`), а не написан '
+             'руками. Сборщик проверяет четыре класса утверждений: команда распознаётся общим '
+             'роутером, эндпоинт реально присутствует в сетевой горловине клиента, сцена есть '
+             'в закрытом реестре телеметрии, а подпись меню имеет кнопку/action. Это не '
+             'заменяет E2E-тест связи конкретной команды с конкретным endpoint — hero-paths '
+             'отдельно проходят живыми callback-тестами. Расходится хоть одна из этих '
+             'проверяемых частей — документ не пишется. По каталогу создаются публичные '
+             'обещания, а обещать несуществующую фичу хуже, чем не обещать ничего.', '',
+             '**Про цену.** Где официальный список Nansen называет цену эндпоинта — она в '
+             'кредитах. Где не называет — цена указана **числом запросов**. Это не уклонение: '
+             'придуманное число кредитов в документе, по которому пишут твиты, было бы ложью в '
+             'самом проверяемом месте.', '',
+             '**English original is the primary file:** [`CATALOG.md`](CATALOG.md).', '',
+             '| Сценариев | Эндпоинтов задействовано | Сцен телеметрии |', '|---|---|---|']
     _eps = sorted({e for sc in SCENARIOS for e in sc['eps']})
     _scenes = sorted({sc['scene'] for sc in SCENARIOS if sc['scene']})
     user_api = [s for s in SCENARIOS if s['eps'] and not str(s.get('scene') or '').endswith('_cron')]
     background = [s for s in SCENARIOS if str(s.get('scene') or '').endswith('_cron')]
     local = [s for s in SCENARIOS if not s['eps']]
-    L += ['| %d: %d пользовательских на Nansen + %d фоновый + %d локальный | %d | %d из %d в реестре |'
-          % (len(SCENARIOS), len(user_api), len(background), len(local), len(_eps),
-             len(_scenes), len(T.SCENES)), '']
-    L += ['## Короткая таблица', '',
-          '| Сценарий | Сказать боту | Кнопкой | Цена |', '|---|---|---|---|']
+    if _en:
+        L += ['| %d: %d user-facing on Nansen + %d background + %d local | %d | %d of %d in registry |'
+              % (len(SCENARIOS), len(user_api), len(background), len(local), len(_eps),
+                 len(_scenes), len(T.SCENES)), '']
+        L += ['## Short table', '',
+              '| Scenario | Say to the bot | By button | Price |', '|---|---|---|---|']
+    else:
+        L += ['| %d: %d пользовательских на Nansen + %d фоновый + %d локальный | %d | %d из %d в реестре |'
+              % (len(SCENARIOS), len(user_api), len(background), len(local), len(_eps),
+                 len(_scenes), len(T.SCENES)), '']
+        L += ['## Короткая таблица', '',
+              '| Сценарий | Сказать боту | Кнопкой | Цена |', '|---|---|---|---|']
     for sc in SCENARIOS:
         _c = '<br>'.join('`%s`' % c for c in sc['cmds']) or '—'
         _b = '<br>'.join(sc['btns']) or '—'
         L.append('| [%s](#%s) | %s | %s | %s |'
-                 % (sc['title'], sc['id'], _c, _b, sc['price']))
+                 % (_f(sc, 'title', lang), sc['id'], _c, _b, _f(sc, 'price', lang)))
     L += ['', '---', '']
     for sc in SCENARIOS:
-        L += ['<a name="%s"></a>' % sc['id'], '', '## %s' % sc['title'], '']
+        L += ['<a name="%s"></a>' % sc['id'], '', '## %s' % _f(sc, 'title', lang), '']
         if sc['cmds']:
-            L.append('**Сказать боту:** ' + ' · '.join('`%s`' % c for c in sc['cmds']))
+            _say = '**Say to the bot:** ' if _en else '**Сказать боту:** '
+            L.append(_say + ' · '.join('`%s`' % c for c in sc['cmds']))
         if sc['btns']:
-            L.append('**Кнопкой:** ' + ' · '.join(sc['btns']))
-        L += ['', '**Что придёт:** %s' % sc['gives'], '',
-              '**Цена:** %s' % sc['price'], '',
-              '**Зачем:** %s' % sc['why'], '']
-        L += ['**Эндпоинты:** ' + (', '.join('`%s`' % e for e in sc['eps']) or 'нет, читает '
-                                   'свой лог'), '']
+            _by = '**By button:** ' if _en else '**Кнопкой:** '
+            L.append(_by + ' · '.join(sc['btns']))
+        if _en:
+            L += ['', '**What you get:** %s' % _f(sc, 'gives', lang), '',
+                  '**Price:** %s' % _f(sc, 'price', lang), '',
+                  '**Why:** %s' % _f(sc, 'why', lang), '']
+            L += ['**Endpoints:** ' + (', '.join('`%s`' % e for e in sc['eps'])
+                                       or 'none, reads its own log'), '']
+        else:
+            L += ['', '**Что придёт:** %s' % _f(sc, 'gives', lang), '',
+                  '**Цена:** %s' % _f(sc, 'price', lang), '',
+                  '**Зачем:** %s' % _f(sc, 'why', lang), '']
+            L += ['**Эндпоинты:** ' + (', '.join('`%s`' % e for e in sc['eps'])
+                                       or 'нет, читает свой лог'), '']
         if sc['scene']:
-            L.append('**Сцена телеметрии:** `%s` — по ней считается расход этого экрана.' %
-                     sc['scene'])
+            if _en:
+                L.append("**Telemetry scene:** `%s` — this screen's spend is counted under it." %
+                         sc['scene'])
+            else:
+                L.append('**Сцена телеметрии:** `%s` — по ней считается расход этого экрана.' %
+                         sc['scene'])
             L.append('')
-        L += ['**Для твита (EN):**', '', '> %s' % sc['hook'], '', '---', '']
+        _tw = '**For a tweet (EN):**' if _en else '**Для твита (EN):**'
+        L += [_tw, '', '> %s' % sc['hook'], '', '---', '']
     # ═══ РАЗДЕЛ, БЕЗ КОТОРОГО КАТАЛОГ БЫЛ БЫ ПОЛОВИНОЙ ПРАВДЫ ═══
     # Запрос был «все сценарии, какие есть». Сценарии выше - те, до которых человек может
     # дойти. Но в клиенте есть эндпоинты БЕЗ двери, и молчать о них нельзя: читатель каталога
@@ -471,28 +701,56 @@ def _md():
     # каталог), поэтому не может отстать: подключат эндпоинт без двери - он появится здесь сам.
     _src = open(os.path.join(ROOT, 'nansen_api.py'), encoding='utf-8').read()
     _all = _endpoints_in(_src)
-    _noдверь = sorted(_all - set(_eps))
-    L += ['## Маршруты клиента без обычного пользовательского сценария', '',
-          'В каталоге выше — %d workflow, которые задействуют %d уникальных API-маршрутов. '
-          'Всего клиент содержит **%d** маршрута; ещё %d не имеют обычной пользовательской '
-          'двери (часть служебная/owner-only, часть — клиентский задел).'
-          % (len(SCENARIOS), len(_eps), len(_all), len(_noдверь)), '',
-          'Это не заявка «все работают end-to-end»: наличие клиента не равно готовому '
-          'сценарию. Список вынесен именно затем, чтобы не выдавать охват API за доступную '
-          'пользователю функциональность.', '',
-          'Список СЧИТАЕТСЯ при сборке (клиент минус каталог): новый маршрут без workflow '
-          'появится здесь автоматически.', '']
-    for e in _noдверь:
+    _no_door = sorted(_all - set(_eps))
+    if _en:
+        L += ['## Client routes with no ordinary user scenario', '',
+              'The catalog above has %d workflows that use %d unique API routes. The client '
+              'contains **%d** routes in total; another %d have no ordinary user door (some '
+              'service/owner-only, some client groundwork).'
+              % (len(SCENARIOS), len(_eps), len(_all), len(_no_door)), '',
+              'This is not a claim that all work end-to-end: having a client is not the same as '
+              'a ready scenario. The list is broken out precisely so as not to pass API '
+              'coverage off as user-available functionality.', '',
+              'The list is COMPUTED at build time (client minus catalog): a new route with no '
+              'workflow appears here automatically.', '']
+    else:
+        L += ['## Маршруты клиента без обычного пользовательского сценария', '',
+              'В каталоге выше — %d workflow, которые задействуют %d уникальных API-маршрутов. '
+              'Всего клиент содержит **%d** маршрута; ещё %d не имеют обычной пользовательской '
+              'двери (часть служебная/owner-only, часть — клиентский задел).'
+              % (len(SCENARIOS), len(_eps), len(_all), len(_no_door)), '',
+              'Это не заявка «все работают end-to-end»: наличие клиента не равно готовому '
+              'сценарию. Список вынесен именно затем, чтобы не выдавать охват API за доступную '
+              'пользователю функциональность.', '',
+              'Список СЧИТАЕТСЯ при сборке (клиент минус каталог): новый маршрут без workflow '
+              'появится здесь автоматически.', '']
+    for e in _no_door:
         L.append('* `%s`' % e)
     L += ['', '---', '']
-    L += ['## Как пересобрать', '',
-          '```bash', 'python3 tools/nansen_catalog.py --write   # в приватном репозитории',
-          'python3 tools/export_nansen_public.py --out <путь>  # и в публичную выжимку',
-          '```', '',
-          'Проверка без записи — `--check`, код возврата 1 при расхождении. Этим же ходит '
-          'закон-тест, поэтому «каталог отстал от кода» становится красным тестом, а не '
-          'неприятным открытием в момент, когда по нему уже написан твит.', '']
+    if _en:
+        L += ['## How to rebuild', '',
+              '```bash', 'python3 tools/nansen_catalog.py --write   # in the private repository',
+              'python3 tools/export_nansen_public.py --out <path>  # and into the public extract',
+              '```', '',
+              'A no-write check is `--check`, exit code 1 on a mismatch. The law test walks the '
+              'same path, so "the catalog fell behind the code" becomes a red test rather than '
+              'an unpleasant discovery at the moment a tweet has already been written from it.',
+              '']
+    else:
+        L += ['## Как пересобрать', '',
+              '```bash', 'python3 tools/nansen_catalog.py --write   # в приватном репозитории',
+              'python3 tools/export_nansen_public.py --out <путь>  # и в публичную выжимку',
+              '```', '',
+              'Проверка без записи — `--check`, код возврата 1 при расхождении. Этим же ходит '
+              'закон-тест, поэтому «каталог отстал от кода» становится красным тестом, а не '
+              'неприятным открытием в момент, когда по нему уже написан твит.', '']
     return '\n'.join(L)
+
+
+#: ДВА ВЫВОДА ОДНОГО ГЕНЕРАТОРА: основной английский и русский аналог. Оба под проверкой
+#: `--check`, поэтому «отстал один из языков» — тоже красный тест.
+_OUTPUTS = [('en', os.path.join('nansen', 'CATALOG.md')),
+            ('ru', os.path.join('nansen', 'CATALOG_ru.md'))]
 
 
 def main(argv):
@@ -502,26 +760,32 @@ def main(argv):
         for b in bad:
             print('  ' + b)
         return 1
-    txt = _md()
     if '--check' in argv:
-        p = os.path.join(ROOT, 'nansen', 'CATALOG.md')
-        if not os.path.exists(p):
-            print('CATALOG.md ещё не собран: python3 tools/nansen_catalog.py --write')
+        drift = []
+        for lang, rel in _OUTPUTS:
+            p = os.path.join(ROOT, rel)
+            if not os.path.exists(p):
+                drift.append('%s ещё не собран' % rel)
+            elif open(p, encoding='utf-8').read() != _md(lang):
+                drift.append('%s ОТСТАЛ от кода' % rel)
+        if drift:
+            for d in drift:
+                print('  ' + d)
+            print('Пересобрать: python3 tools/nansen_catalog.py --write')
             return 1
-        if open(p, encoding='utf-8').read() != txt:
-            print('CATALOG.md ОТСТАЛ от кода. Пересобрать: '
-                  'python3 tools/nansen_catalog.py --write')
-            return 1
-        print('каталог совпадает с кодом: сценариев %d' % len(SCENARIOS))
+        print('каталог совпадает с кодом: сценариев %d, языков %d'
+              % (len(SCENARIOS), len(_OUTPUTS)))
         return 0
     if '--write' in argv:
-        p = os.path.join(ROOT, 'nansen', 'CATALOG.md')
-        with open(p, 'w', encoding='utf-8') as fh:
-            fh.write(txt)
-        print('записан %s: сценариев %d, проверок пройдено %d'
-              % (p, len(SCENARIOS), sum(len(s['cmds']) + len(s['eps']) for s in SCENARIOS)))
+        for lang, rel in _OUTPUTS:
+            p = os.path.join(ROOT, rel)
+            with open(p, 'w', encoding='utf-8') as fh:
+                fh.write(_md(lang))
+            print('записан %s (%s)' % (p, lang))
+        print('сценариев %d, проверок пройдено %d'
+              % (len(SCENARIOS), sum(len(s['cmds']) + len(s['eps']) for s in SCENARIOS)))
         return 0
-    print(txt)
+    print(_md('en'))
     return 0
 
 

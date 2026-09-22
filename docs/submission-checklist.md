@@ -1,16 +1,17 @@
-# Meridian final gate — пройти сверху вниз
+# Meridian final gate — go top to bottom
 
-Дедлайн: **27 сентября 2026, 23:59 UTC**. Отправить лучше 26-го.
+Deadline: **September 27, 2026, 23:59 UTC**. Better to submit on the 26th.
 
-## 0. Eligibility — раньше всего остального
+## 0. Eligibility — before everything else
 
 - [x] Meaningful corpus completed locally: **1,050 network calls**, 0 cache hits, hard cap respected.
 - [x] Nansen Usage Analytics: **5,484 calls on 20 Sep**, 13,850 total in 30D — threshold met.
-- [ ] Сохранён ОБРЕЗАННЫЙ скрин Usage Analytics: только панель Nansen, без browser chrome/
+- [ ] Saved a CROPPED screenshot of Usage Analytics: only the Nansen panel, no browser chrome/
       bookmarks/wallet balance.
-- [x] Corpus run completed; **не запускать повторно для eligibility**, если Usage Analytics
-      подтверждает ≥1,000. Два transient failures не влияют на порог.
-- [ ] После корпуса Usage Analytics проверен снова. Локальная телеметрия не заменяет кабинет.
+- [x] Corpus run completed; **do not run again for eligibility** if Usage Analytics confirms
+      ≥1,000. Two transient failures do not affect the threshold.
+- [ ] After the corpus, Usage Analytics checked again. Local telemetry does not replace the
+      dashboard.
 
 ## 1. Hero live proof
 
@@ -20,13 +21,13 @@
   ./venv/bin/python3 tools/nansen_live_smoke.py --run --market-id 1130012
   ./venv/bin/python3 tools/nansen_live_smoke.py --run --market-id 4323345
   ```
-- [x] Основной live smoke: `LIVE PROOF: PASS`, known histories 3, provider failures 0.
-- [x] Запасной live smoke: `LIVE PROOF: PASS`, known histories 3, provider failures 0.
-- [ ] Кнопка `🎭 N` открывает тот же market_id, который был в строке списка.
-- [ ] Экран укладывается примерно в 20 секунд на холодном кэше (10с holders + 10с summaries;
-      обычно быстрее).
+- [x] Primary live smoke: `LIVE PROOF: PASS`, known histories 3, provider failures 0.
+- [x] Backup live smoke: `LIVE PROOF: PASS`, known histories 3, provider failures 0.
+- [ ] The `🎭 N` button opens the same market_id that was in the list row.
+- [ ] The screen fits in roughly 20 seconds on a cold cache (10s holders + 10s summaries;
+      usually faster).
 
-## 2. Проверяемые числа
+## 2. Verifiable numbers
 
 ```bash
 cd <BOT_DIR>
@@ -35,26 +36,26 @@ cd <BOT_DIR>
 ./venv/bin/python3 tools/nansen_daily.py --contrib
 ```
 
-- [ ] Короткая `--submission START END` и явная `--range START END` показывают одно окно.
-- [ ] «Суток с данными» названо честно; пропуски не замазаны средним.
-- [ ] Таблица сцен сходится с общим числом вызовов/кредитов — строка `сходится с итогом`.
-- [ ] `вызовов без сцены = 0`. Не ноль — исправить или объяснить до заявки.
-- [ ] `pm_reputation`, `liq_map`, `pm_chart`, `pm_orderbook` видны отдельными сценами.
-- [ ] Неизмеренные цены идут отдельной строкой и не подмешаны в measured credits.
-- [ ] CSV не содержит `u` и 0x-адресов.
-- [ ] Local network calls сверены с Usage Analytics; для eligibility ведёт Usage Analytics.
+- [ ] The short `--submission START END` and the explicit `--range START END` show the same window.
+- [ ] "Days with data" is named honestly; gaps are not smoothed over with an average.
+- [ ] The scene table reconciles with the total calls/credits — the line `reconciles with the total`.
+- [ ] `calls with no scene = 0`. Not zero — fix it or explain before the entry.
+- [ ] `pm_reputation`, `liq_map`, `pm_chart`, `pm_orderbook` are visible as separate scenes.
+- [ ] Unpriced calls go on a separate line and are not mixed into measured credits.
+- [ ] The CSV contains no `u` and no 0x addresses.
+- [ ] Local network calls reconciled with Usage Analytics; for eligibility Usage Analytics leads.
 
-## 3. Видео — строго 30–60 секунд
+## 3. Video — strictly 30–60 seconds
 
-Сценарий рядом с этим чеклистом: `DEMO_SCRIPT.md`.
+The script is next to this checklist: `DEMO_SCRIPT.md`.
 
-- [ ] Target 52 секунды, без голоса понятно.
-- [ ] Один сюжет: `A market says 78% YES. But whose conviction is it?`
+- [ ] Target 52 seconds, understandable without sound.
+- [ ] One storyline: `A market says 78% YES. But whose conviction is it?`
 - [ ] `polymarket markets` → `🎭 N` → headline → holder rows → unknown coverage → footer.
-- [ ] Live Nansen data visibly loads; не fixture и не заранее вставленная картинка.
-- [ ] В кадре нет личных адресов, участников, admin screen, ключа, служебной лички.
-- [ ] Не показывать tests, forced failure, Agent, trading, telemetry и все 25 workflow.
-- [ ] Если основной рынок не проходит — записать заново с заранее проверенным запасным.
+- [ ] Live Nansen data visibly loads; not a fixture and not a pre-inserted image.
+- [ ] No personal addresses, participants, admin screen, key, or service DMs in the frame.
+- [ ] Do not show tests, forced failure, Agent, trading, telemetry and all 25 workflows.
+- [ ] If the primary market does not pass — re-record with a pre-checked backup.
 
 ## 4. Public repo
 
@@ -68,36 +69,36 @@ python3 scrub.py
 git status --short
 ```
 
-- [ ] https://github.com/RenatMursalimov/nansen-undertaker открывается в incognito.
+- [ ] https://github.com/RenatMursalimov/nansen-undertaker opens in incognito.
 - [ ] CI green.
-- [ ] README начинается с hero question, не с no-key/tests/counts.
+- [ ] README starts with the hero question, not with no-key/tests/counts.
 - [ ] `docs/CATALOG.md`, `docs/WINNER_PLAN.md`, `docs/DEMO_SCRIPT.md`, `docs/X_THREAD.md`,
-      `docs/submission.md` есть.
-- [ ] `.env`, `nansen_tele/`, cache/schema/credits/refs/corpus/db отсутствуют.
-- [ ] `tools/telemetry_rollup.py` отсутствует (legacy reader другого формата не экспортируется).
-- [ ] `MANIFEST.md` совпадает, stale managed files удалены exporter-ом.
+      `docs/submission.md` exist.
+- [ ] `.env`, `nansen_tele/`, cache/schema/credits/refs/corpus/db are absent.
+- [ ] `tools/telemetry_rollup.py` is absent (a legacy reader of a different format is not exported).
+- [ ] `MANIFEST.md` matches, stale managed files removed by the exporter.
 
 ## 5. X thread
 
-Текст рядом с этим чеклистом: `X_THREAD.md`.
+The text is next to this checklist: `X_THREAD.md`.
 
-- [ ] Видео прикреплено к посту 1.
-- [ ] `@nansen_ai` и repo URL находятся в посте 1, не только в последнем reply.
-- [ ] Число calls взято из Usage Analytics и ≥1,000; placeholder не опубликован.
-- [ ] Hero screenshot — reputation; второй screenshot — liquidation map.
-- [ ] Thread не продаёт «53 endpoints» как hero. Hero — **who is behind this probability?**
+- [ ] Video attached to post 1.
+- [ ] `@nansen_ai` and the repo URL are in post 1, not only in the last reply.
+- [ ] The call count is taken from Usage Analytics and is ≥1,000; no placeholder published.
+- [ ] Hero screenshot — reputation; second screenshot — liquidation map.
+- [ ] The thread does not sell "53 endpoints" as the hero. The hero is **who is behind this probability?**
 
 ## 6. Official entry form
 
 - [ ] Email.
 - [ ] X post URL.
 - [ ] Public GitHub URL.
-- [ ] Отправлено 26 сентября, не в последний час 27-го.
-- [ ] Сохранён screenshot/confirmation URL.
-- [ ] В соседнем `README.md` (`docs/submission.md` в public repo) заменены `<ADD ...>` и
-      статус изменён только после подтверждения.
+- [ ] Submitted on September 26, not in the last hour of the 27th.
+- [ ] Saved the screenshot/confirmation URL.
+- [ ] In the adjacent `README.md` (`docs/submission.md` in the public repo) the `<ADD ...>`
+      placeholders are replaced and the status is changed only after confirmation.
 
 ## 7. Freeze
 
-- [ ] После записи не добавлять новые фичи.
-- [ ] Только критические fixes; после каждого — новый live smoke и проверка видео/repo links.
+- [ ] After recording, do not add new features.
+- [ ] Only critical fixes; after each — a new live smoke and a check of the video/repo links.

@@ -446,6 +446,9 @@ def t_docs_are_here_and_name_prices():
         'tools/render_social_preview.py', 'tools/nansen_endpoint_sweep.py',
         'tools/nansen_trade_probe.py', 'tools/nansen_catalog.py',
         'assets/social-preview.png',
+        # Contest docs are English-primary; the Russian analog sits next to each as *_ru.md.
+        'docs/CATALOG.md', 'docs/CATALOG_ru.md', 'docs/scenarios_ru.md',
+        'docs/WINNER_PLAN.md', 'docs/WINNER_PLAN_ru.md', 'docs/submission-checklist_ru.md',
     )
     for rel in required:
         p = os.path.join(_ROOT, rel)
@@ -453,8 +456,10 @@ def t_docs_are_here_and_name_prices():
     sc = os.path.join(_ROOT, 'docs', 'scenarios.md')
     if os.path.exists(sc):
         txt = open(sc, encoding='utf-8').read()
-        check('DOCS: prices are named', txt.count('**Цена:**') >= 6, txt.count('**Цена:**'))
-        check('DOCS: reasons are named', txt.count('**Зачем:**') >= 5, txt.count('**Зачем:**'))
+        # English is now the primary doc language for the contest; the Russian analog lives in
+        # scenarios_ru.md. Prices/reasons are named with English labels.
+        check('DOCS: prices are named', txt.count('**Price:**') >= 6, txt.count('**Price:**'))
+        check('DOCS: reasons are named', txt.count('**Why:**') >= 5, txt.count('**Why:**'))
     readme = os.path.join(_ROOT, 'README.md')
     if os.path.exists(readme):
         txt = open(readme, encoding='utf-8').read()
