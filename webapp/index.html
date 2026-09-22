@@ -30,6 +30,9 @@
     --strong:#37a169;    /* винрейт выше */
     --grey:#5b6474;      /* ИСТОРИЯ НЕ РАЗОБРАНА: не «слабые» и не «сильные» */
     --long:#e5533d; --short:#37a169;
+    --named:#58a6ff;     /* деньги с меткой Nansen внутри столбика: ТОТ ЖЕ цвет, что на
+                            картинке в чате, и НЕ цвет пунктира текущей цены - один цвет
+                            обязан означать одну величину на обоих экранах */
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
@@ -318,9 +321,22 @@ function loading(what) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   ЭКРАН 1. «ЧЬИ 90%» — состав убеждённости рынка
+   ЭКРАН 1. «ЧЬИ ЭТО ДЕНЬГИ» — состав убеждённости рынка
    ═══════════════════════════════════════════════════════════════════════════ */
 var HERO = { market: (qp('market') || qp('mk') || ''), env: null, open: -1, list: null };
+
+/* ЧЕМ НАЗЫВАТЬ ВЫБРАННЫЙ РЫНОК. Строка берётся ИЗ УЖЕ ПРИЕХАВШЕГО СЛОВАРЯ списка (сцена
+   `pm_markets`), а не сочиняется: вопрос рынка и его процент - измеренные поля, и других у
+   страницы нет. Открыли экран ссылкой с `?market=` - списка не было, вернём null, и тогда
+   заголовок не притворяется знающим, чей это рынок. */
+function heroPicked() {
+  if (!HERO.market || !HERO.list || !HERO.list.payload) return null;
+  var rows = HERO.list.payload.rows || [];
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].id) === String(HERO.market)) return rows[i];
+  }
+  return null;
+}
 
 function wrBucket(h) {
   /* ЦВЕТ = КОРЗИНА ВИНРЕЙТА, а серый = ИСТОРИЯ НЕ РАЗОБРАНА. Серый не суммируется ни в
@@ -344,7 +360,13 @@ function heroHTML(env) {
   /* ЗАГОЛОВОЧНАЯ СТРОКА - ВЕЛИЧИНА, И ОНА ПЕРВАЯ. Числа из словаря, ни одного своего. */
   h += '<p class="lead">Of <b>$' + usd(known) + '</b> examined, <b>$' + usd(weak)
      + ' (' + pct + '%)</b> sits with wallets whose win rate is below ' + thr + '%.</p>';
-  h += '<div class="dim">market <code>' + esc(env.market_id || HERO.market) + '</code></div>';
+  /* СЛУЖЕБНЫЙ НОМЕР РЫНКА ПОКАЗЫВАЕМ ТОЛЬКО ТОГДА, КОГДА НАЗВАТЬ РЫНОК БОЛЬШЕ НЕЧЕМ. Список
+     рынков прячет его нарочно (он служебный), и печатать его тут же под заголовком значило
+     бы прятать в одном месте и выставлять в другом. Пришли по ссылке без списка - номер
+     остаётся единственным опознавательным знаком, и промолчать о нём было бы хуже. */
+  if (!heroPicked()) {
+    h += '<div class="dim">market <code>' + esc(env.market_id || HERO.market) + '</code></div>';
+  }
 
   var sides = p.by_side || {}, sk = Object.keys(sides);
   if (sk.length) {
@@ -417,8 +439,19 @@ function marketsHTML() {
 
 function heroRender() {
   var el = document.getElementById('scr_hero');
-  var head = '<div class="card"><h1>A market says 90% YES. Whose conviction is it?</h1>'
-    + '<div class="dim">Price alone cannot tell a signal from a crowd. Pick a market.</div>'
+  /* ЗАГОЛОВОК НЕ НАЗЫВАЕТ ЧИСЕЛ, КОТОРЫХ НЕ МЕРИЛ. Тут стояло «A market says 90% YES»
+     НАГЛУХО - и висело над спортивным рынком, где цена 55%, а сторон вообще не YES/NO.
+     Число в заголовке читается как измерение этого экрана, поэтому процент приезжает ТОЛЬКО
+     из словаря выбранного рынка, а пока рынок не выбран - заголовок обходится без числа. */
+  var pk = heroPicked();
+  var h1 = pk ? esc(pk.q) : 'Whose conviction is behind a market price?';
+  var sub = pk
+    ? ((pk.prob === null || pk.prob === undefined)
+       ? 'The market has no price in the response — the composition of the money is below.'
+       : ('The market prices this at ' + esc(pk.prob) + '%. Whose conviction is that?'))
+    : 'Price alone cannot tell a signal from a crowd. Pick a market.';
+  var head = '<div class="card"><h1>' + h1 + '</h1>'
+    + '<div class="dim">' + sub + '</div>'
     + (HERO.market
        ? '<div class="btns"><span class="btn" id="mkback">« back to markets</span></div>'
        : '')
@@ -481,6 +514,18 @@ function liqSVG(p) {
     s += '<rect data-b="' + i + '" x="' + (x + 1).toFixed(1) + '" y="' + y.toFixed(1)
        + '" width="' + Math.max(1, bw - 2).toFixed(1) + '" height="' + hgt.toFixed(1)
        + '" fill="' + col + '" opacity="' + (LIQ.pick === i ? '1' : '0.82') + '" rx="1"/>';
+    /* ДЕНЬГИ С МЕТКОЙ NANSEN - ДОЛЕЙ ВНУТРИ СТОЛБИКА. Доля считается НЕ ТУТ: из словаря
+       приезжают обе суммы (вся корзина b[2] и её часть с меткой b[4]), страница переводит их
+       в пиксели - это формат, а не смысл. Значок «тут есть SM» рядом со столбиком сказал бы
+       только «кто-то есть», а высота полосы говорит СКОЛЬКО. `pointer-events=none`, иначе
+       полоса съедала бы тап по столбику и деталь корзины не открывалась. */
+    var nmd = Number(b[i][4] || 0);
+    if (nmd > 0 && v > 0) {
+      var nh = Math.max(1, hgt * Math.min(1, nmd / v));
+      s += '<rect x="' + (x + 1).toFixed(1) + '" y="' + (H - nh).toFixed(1)
+         + '" width="' + Math.max(1, bw - 2).toFixed(1) + '" height="' + nh.toFixed(1)
+         + '" fill="var(--named)" opacity="0.95" rx="1" pointer-events="none"/>';
+    }
   }
   /* ПУНКТИР ТЕКУЩЕЙ ЦЕНЫ. Нет цены - НЕТ И ОТМЕТКИ: выдуманная цена дала бы «осталось 3%»,
      которого никто не мерил. Карта без отметки остаётся честной картой уровней. */
@@ -514,16 +559,35 @@ function liqHTML(env) {
      + price(top[0]) + ' and $' + price(top[1]) + '.</p>';
   h += '<div class="dim">On the map: $' + usd(p.total) + ' across ' + (p.shown || 0)
      + ' position(s) · longs $' + usd(p.longs) + ' vs shorts $' + usd(p.shorts) + '</div>';
+  /* ЧЬЁ ПЛЕЧО - ВТОРОЙ ВОПРОС ПОСЛЕ «СКОЛЬКО». Имена и сумма за ними приезжают словарём
+     (`named`, `named_n`, `named_who`), страница их только печатает. Ноль сказан словом:
+     «Nansen никого тут не знает по имени» - это ответ, а не отсутствие ответа. */
+  var nmTot = Number(p.named || 0), nmWho = p.named_who || [];
+  if (nmTot > 0) {
+    var whoTxt = [];
+    for (var w = 0; w < nmWho.length; w++) whoTxt.push(esc(nmWho[w][0]));
+    h += '<div class="dim">Of that, <b>$' + usd(nmTot) + '</b> hangs on wallets Nansen has a '
+       + 'name for (' + (p.named_n || 0) + ' position(s))'
+       + (whoTxt.length ? ': ' + whoTxt.join(', ') : '') + '</div>';
+  } else {
+    h += '<div class="dim">Nansen has no label for a single wallet on this map.</div>';
+  }
   h += liqSVG(p);
   h += '<div class="legend"><span><i style="background:var(--long)"></i>longs</span>'
      + '<span><i style="background:var(--short)"></i>shorts</span>'
+     + (nmTot > 0 ? '<span><i style="background:var(--named)"></i>money on named wallets'
+                  + '</span>' : '')
      + '<span>dashed — current price</span></div>';
   h += '<div class="det' + (LIQ.pick >= 0 ? ' on' : '') + '" id="liqdet">'
      + (LIQ.pick >= 0 && p.buckets && p.buckets[LIQ.pick]
         ? ('$' + usd(p.buckets[LIQ.pick][2]) + ' between $' + price(p.buckets[LIQ.pick][0])
            + ' and $' + price(p.buckets[LIQ.pick][1])
-           + (p.buckets[LIQ.pick][3] ? ' · mostly ' + esc(p.buckets[LIQ.pick][3]) : ''))
-        : 'Tap a bar for its level and size.') + '</div>';
+           + (p.buckets[LIQ.pick][3] ? ' · mostly ' + esc(p.buckets[LIQ.pick][3]) : '')
+           + (Number(p.buckets[LIQ.pick][4] || 0) > 0
+              ? ' · $' + usd(p.buckets[LIQ.pick][4]) + ' of it named'
+                + (p.buckets[LIQ.pick][5] ? ', biggest ' + esc(p.buckets[LIQ.pick][5]) : '')
+              : ' · no labelled wallet in this bar'))
+        : 'Tap a bar for its level, size and who is named inside it.') + '</div>';
   h += '<div class="dim">These are other people\'s stop-out levels, not a forecast.</div>';
   h += footer(env) + '</div>';
   return h;

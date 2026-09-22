@@ -65,13 +65,14 @@ SCENARIOS = [
      'hook': 'Smart money net inflow by window (1h/24h/7d/30d), straight into a Telegram chat. '
              'Tap a ticker and the full token card opens.'},
     {'id': 'trends', 'title': '🔥 Smart Money в общем экране Трендов',
-     'cmds': [], 'btns': ['🔗 Ончейн → Тренды → Smart Money'],
-     'eps': ['token-screener'], 'scene': 'trends', 'menu': None,
+     'cmds': [], 'btns': ['🧠 Nansen → 🔥 Скринер: приток за 24ч'],
+     'eps': ['token-screener'], 'scene': 'trends', 'menu': 'nsn_screener',
      'price': '1 кредит',
-     'gives': 'токены с положительным netflow, встроенные в общий экран трендов; тап открывает '
+     'gives': 'токены с положительным netflow в формате общего экрана трендов; тап открывает '
               'карточку токена',
-     'why': 'Nansen не отдельный режим, а часть ежедневного маршрута: тренд → карточка → '
-            'держатели/потоки/сделки',
+     'why': 'Nansen не отдельный режим, а часть ежедневного маршрута: в хабе Трендов кнопка '
+            '«🧠 Nansen» открывает то же подменю, что в Ончейне, а этот экран — тренд → '
+            'карточка → держатели/потоки/сделки',
      'hook': 'Nansen is not a separate dashboard here. Smart-money inflow is embedded into the '
              'daily Trends screen, one tap away from the token card.'},
     {'id': 'holdings', 'title': '💼 Что копит smart money',
@@ -299,13 +300,14 @@ _EN = {
               'gives': 'tickers with net inflow over the window; tapping a ticker opens the '
                        'token card',
               'why': 'the window total answers "how much", the first question about any token'},
-    'trends': {'cmds': [], 'btns': ['🔗 Onchain → Trends → Smart Money'],
+    'trends': {'cmds': [], 'btns': ['🧠 Nansen → 🔥 Screener: 24h inflow'],
                'title': '🔥 Smart Money inside the shared Trends screen',
                'price': '1 credit',
-               'gives': 'tokens with positive netflow embedded into the shared Trends screen; '
+               'gives': 'tokens with positive netflow in the shared Trends screen format; '
                         'a tap opens the token card',
-               'why': 'Nansen is not a separate mode but part of the daily route: trend → card '
-                      '→ holders/flows/trades'},
+               'why': 'Nansen is not a separate mode but part of the daily route: the Trends '
+                      'hub button "🧠 Nansen" opens the very same submenu as Onchain does, and '
+                      'this screen is trend → card → holders/flows/trades'},
     'holdings': {'cmds': ['smart holdings'], 'btns': ['🧠 Nansen → 💼 What they hold'],
                  'title': '💼 What smart money accumulates',
                  'price': '3 credits',

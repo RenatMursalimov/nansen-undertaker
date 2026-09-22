@@ -17,7 +17,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | Scenario | Say to the bot | By button | Price |
 |---|---|---|---|
 | [💹 Smart money inflow by window](#flows) | `smart flows` | 🧠 Nansen → 💹 Smart flows (1h/24h/7d/30d) | price not named in the official list · counted on a separate line |
-| [🔥 Smart Money inside the shared Trends screen](#trends) | — | 🔗 Onchain → Trends → Smart Money | 1 credit |
+| [🔥 Smart Money inside the shared Trends screen](#trends) | — | 🧠 Nansen → 🔥 Screener: 24h inflow | 1 credit |
 | [💼 What smart money accumulates](#holdings) | `smart holdings` | 🧠 Nansen → 💼 What they hold | 3 credits |
 | [🧠 Smart money trades over 24h + share of market cap](#trades) | `smart trades` | 🧠 Nansen → 🧠 Smart money trades now | 1–5 credits |
 | [🏆 Top perp traders](#perpleaders) | `top perps` | 🧠 Nansen → 🏆 Top perp traders | 5 credits |
@@ -71,13 +71,13 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🔥 Smart Money inside the shared Trends screen
 
-**By button:** 🔗 Onchain → Trends → Smart Money
+**By button:** 🧠 Nansen → 🔥 Screener: 24h inflow
 
-**What you get:** tokens with positive netflow embedded into the shared Trends screen; a tap opens the token card
+**What you get:** tokens with positive netflow in the shared Trends screen format; a tap opens the token card
 
 **Price:** 1 credit
 
-**Why:** Nansen is not a separate mode but part of the daily route: trend → card → holders/flows/trades
+**Why:** Nansen is not a separate mode but part of the daily route: the Trends hub button "🧠 Nansen" opens the very same submenu as Onchain does, and this screen is trend → card → holders/flows/trades
 
 **Endpoints:** `token-screener`
 

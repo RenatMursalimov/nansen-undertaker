@@ -359,15 +359,25 @@ def liq_clusters(rows, mark=None):
     «между $61K и $63K висит $184M»), и картинке. Посчитай я их внутри `savefig`, текст и
     картинка разошлись бы на первой правке - тот же класс, что две копии одной логики.
 
-    -> {'buckets': [(низ, верх, сумма, сторона)], 'total', 'top', 'longs', 'shorts',
-        'no_liq', 'shown', 'mark'} либо None, если считать нечего.
+    -> {'buckets': [(низ, верх, сумма, сторона, деньги_с_меткой, главная_метка)], 'total',
+        'top', 'longs', 'shorts', 'no_liq', 'shown', 'mark', 'named', 'named_n', 'named_who'}
+    либо None, если считать нечего.
 
     `side` у корзины - ПРЕОБЛАДАЮЩАЯ сторона, а не единственная: на одном уровне могут висеть
     и лонги, и шорты, и врать про это нельзя, поэтому рядом лежат обе суммы.
+
+    МЕТКИ КОШЕЛЬКОВ СЧИТАЮТСЯ ЗДЕСЬ ЖЕ, И ЭТО ГЛАВНОЕ ДОБАВЛЕНИЕ КАРТЫ. `tgm/perp-positions`
+    отдаёт `address_label` - то, как Nansen называет кошелёк («Smart Money», имя фонда). Без
+    этого карта отвечала «сколько плеча висит», но не «чьё оно»: $300M толпы с мелкими плечами
+    и $300M одного фонда читаются одинаково, а решение по ним разное. Считаем ВЕЛИЧИНУ
+    (сколько денег в корзине у кошельков с меткой), а не флаг «метки есть»: флаг наличия не
+    равен пользе - за это в проекте уже трижды получали. Метки нет ни у кого - так и скажем
+    числом (ноль), потому что «мы посмотрели и не нашли» и «мы не смотрели» - разные ответы.
     """
     if not rows:
         return None
     pts, no_liq, sides = [], 0, {'LONG': 0.0, 'SHORT': 0.0}
+    named_who = {}
     for r in rows:
         if not isinstance(r, dict):
             continue
@@ -386,46 +396,82 @@ def liq_clusters(rows, mark=None):
             continue
         _sd = str(r.get('side') or r.get('direction') or '').upper()
         _sd = 'SHORT' if _sd.startswith('S') else ('LONG' if _sd.startswith('L') else '')
-        pts.append((liq, val, _sd))
+        # МЕТКА - ТОЛЬКО ТА, ЧТО ПРИЕХАЛА. Обрезанный адрес меткой НЕ считается (в отличие от
+        # `_who`, где он нужен как подпись строки): «0x1f90…326» не говорит, чей это кошелёк,
+        # и посчитать его в «деньги с меткой» значило бы выдать незнание за знание.
+        _lbl = str(r.get('address_label') or r.get('trader_address_label')
+                   or r.get('label') or '').strip()
+        if _lbl[:2].lower() == '0x' and len(_lbl) > 12:
+            # В ПОЛЕ МЕТКИ ПРИЕХАЛ АДРЕС - ЭТО НЕ ИМЯ. Такой «метки» не бывает по смыслу
+            # (имени у кошелька нет, площадка вернула сам адрес), и посчитать её значило бы
+            # объявить деньги «известными» ни за что. Плюс адрес не имеет права ехать в
+            # мини-апп: экран показывает только то, что прошло `_strip_private`.
+            _lbl = ''
+        _lbl = _lbl[:24]
+        pts.append((liq, val, _sd, _lbl))
+        if _lbl:
+            named_who[_lbl] = named_who.get(_lbl, 0.0) + val
         if _sd:
             sides[_sd] = sides.get(_sd, 0.0) + val
     if not pts:
         return None
+    _named_tot = sum(v for v in named_who.values())
+    _named_n = sum(1 for p in pts if p[3])
+    _who_top = sorted(named_who.items(), key=lambda kv: -kv[1])[:3]
     lo, hi = min(p[0] for p in pts), max(p[0] for p in pts)
     if hi <= lo:
         # ВСЕ ЛИКВИДАЦИИ НА ОДНОМ УРОВНЕ - корзины не нужны, и растягивать диапазон нельзя:
         # выдуманная ширина нарисовала бы распределение там, где его нет.
         _s = sum(p[1] for p in pts)
-        return {'buckets': [(lo, hi, _s, _dom_side(pts))], 'total': _s, 'top': (lo, hi, _s),
+        return {'buckets': [(lo, hi, _s, _dom_side(pts), _named_tot,
+                             _who_top[0][0] if _who_top else '')],
+                'total': _s, 'top': (lo, hi, _s),
                 'longs': sides.get('LONG', 0.0), 'shorts': sides.get('SHORT', 0.0),
-                'no_liq': no_liq, 'shown': len(pts), 'mark': _num(mark)}
+                'no_liq': no_liq, 'shown': len(pts), 'mark': _num(mark),
+                'named': _named_tot, 'named_n': _named_n, 'named_who': _who_top}
     step = (hi - lo) / float(LIQ_BUCKETS)
     acc = {}
-    for liq, val, sd in pts:
+    for liq, val, sd, lbl in pts:
         i = min(int((liq - lo) / step), LIQ_BUCKETS - 1)
-        b = acc.setdefault(i, {'sum': 0.0, 'LONG': 0.0, 'SHORT': 0.0})
+        b = acc.setdefault(i, {'sum': 0.0, 'LONG': 0.0, 'SHORT': 0.0, 'named': 0.0,
+                               'n_named': 0, 'who': {}})
         b['sum'] += val
         if sd:
             b[sd] += val
-    buckets = []
+        if lbl:
+            b['named'] += val
+            b['n_named'] += 1
+            b['who'][lbl] = b['who'].get(lbl, 0.0) + val
+    buckets, drawn_who, drawn_named_n = [], {}, 0
     for i in sorted(acc):
         b = acc[i]
         if b['sum'] < LIQ_MIN_USD:
             continue
+        for _k, _v in b['who'].items():
+            drawn_who[_k] = drawn_who.get(_k, 0.0) + _v
+        drawn_named_n += b['n_named']
         _sd = 'LONG' if b['LONG'] > b['SHORT'] else ('SHORT' if b['SHORT'] > b['LONG'] else '')
-        buckets.append((lo + i * step, lo + (i + 1) * step, b['sum'], _sd))
+        # ГЛАВНАЯ МЕТКА КОРЗИНЫ - ТА, ЗА КОТОРОЙ БОЛЬШЕ ДЕНЕГ, а не первая по порядку строк:
+        # порядок ответа Nansen нам ничего не обещает, а величина - обещает.
+        _top_lbl = max(b['who'].items(), key=lambda kv: kv[1])[0] if b['who'] else ''
+        buckets.append((lo + i * step, lo + (i + 1) * step, b['sum'], _sd, b['named'], _top_lbl))
     if not buckets:
         return None
     top = max(buckets, key=lambda x: x[2])
     return {'buckets': buckets, 'total': sum(b[2] for b in buckets),
             'top': (top[0], top[1], top[2]),
             'longs': sides.get('LONG', 0.0), 'shorts': sides.get('SHORT', 0.0),
-            'no_liq': no_liq, 'shown': len(pts), 'mark': _num(mark)}
+            'no_liq': no_liq, 'shown': len(pts), 'mark': _num(mark),
+            # СУММЫ С МЕТКАМИ СЧИТАЕМ ПО ВСЕМ ТОЧКАМ, А НЕ ПО КОРЗИНАМ: корзина ниже
+            # `LIQ_MIN_USD` в карту не попадает, и её метки тоже не попадают - иначе итог по
+            # меткам оказался бы больше, чем сумма нарисованного, и человек не смог бы сверить.
+            'named': sum(b[4] for b in buckets), 'named_n': drawn_named_n,
+            'named_who': sorted(drawn_who.items(), key=lambda kv: -kv[1])[:3]}
 
 
 def _dom_side(pts):
-    _l = sum(v for _p, v, s in pts if s == 'LONG')
-    _s = sum(v for _p, v, s in pts if s == 'SHORT')
+    _l = sum(v for _p, v, s, _lbl in pts if s == 'LONG')
+    _s = sum(v for _p, v, s, _lbl in pts if s == 'SHORT')
     return 'LONG' if _l > _s else ('SHORT' if _s > _l else '')
 
 
@@ -456,6 +502,30 @@ def liq_map_png(rows, token='', mark=None, lang='ru', out_dir=None):
               ('#2ea043' if b[3] == 'SHORT' else '#8b949e') for b in cl['buckets']]
     ax.barh(list(ys), vals, color=colors, height=0.72)
 
+    # ДЕНЬГИ С МЕТКОЙ - ПОЛОСКОЙ ВНУТРИ СТОЛБИКА, А НЕ ЗВЁЗДОЧКОЙ РЯДОМ. Значок сказал бы
+    # «тут есть кто-то с именем» (признак наличия), а вложенная полоса показывает СКОЛЬКО
+    # из этой суммы за именем (величину) - её можно сверить глазом с общей длиной столбика.
+    # Метки нет ни в одной корзине - ничего не рисуем: пустая полоса шириной ноль читалась бы
+    # как «мы не смогли», хотя мы посмотрели и не нашли (это сказано в подписи словами).
+    _named = [(b[4] if len(b) > 4 else 0.0) or 0.0 for b in cl['buckets']]
+    if any(_named):
+        # ЦВЕТ СИНИЙ, А НЕ ЗОЛОТОЙ, И ЭТО НЕ ВКУСОВЩИНА: золотым на этой же картинке нарисован
+        # ПУНКТИР ТЕКУЩЕЙ ЦЕНЫ (ниже, `axhline`). Первый прогон дал полосу и пунктир одного
+        # цвета - две разные величины стали читаться как одна, а легенда объясняла обе одним
+        # словом. Один цвет = один смысл на картинке.
+        ax.barh(list(ys), _named, color='#58a6ff', height=0.34, zorder=3)
+        _wide = max(_named) if _named else 0.0
+        for i, b in enumerate(cl['buckets']):
+            _lbl = (b[5] if len(b) > 5 else '') or ''
+            # ИМЯ ПИШЕМ ВНУТРИ ПОЛОСЫ И ОТ ЛЕВОГО КРАЯ, И ТОЛЬКО ЕСЛИ ПОЛОСА ШИРОКАЯ. Вариант
+            # «по правому краю полосы» на первом прогоне налез на золотую подпись «сейчас $X»
+            # у пунктира цены: два разных числа слиплись в одну строку. Узкой полосе имя не
+            # влезает вовсе - писать его поверх фона значит рисовать тёмным по тёмному, а имена
+            # крупнейших кошельков и так названы в подписи под картинкой.
+            if _lbl and _named[i] >= 0.22 * (_wide or 1):
+                ax.text(_named[i] * 0.02, i, _lbl[:18], va='center', ha='left',
+                        color='#0d1117', fontsize=7, fontproperties=fp, zorder=4)
+
     _labels = []
     for b in cl['buckets']:
         _labels.append('$%s' % _price((b[0] + b[1]) / 2.0))
@@ -478,7 +548,13 @@ def liq_map_png(rows, token='', mark=None, lang='ru', out_dir=None):
             _span = max(_his) - min(_los)
             _pos = ((_m - min(_los)) / _span * (len(cl['buckets']) - 1)) if _span else 0
             ax.axhline(_pos, color='#d29922', linewidth=1.2, linestyle='--', alpha=0.9)
-            ax.text(_mx * 0.98, _pos, ('сейчас $%s' if lang != 'en' else 'now $%s')
+            # ПОДПИСЬ ЦЕНЫ УЕХАЛА ЗА КОНЕЦ САМОГО ДЛИННОГО СТОЛБИКА (было `_mx * 0.98`, то
+            # есть ПОВЕРХ него). На тёмном фоне это ещё читалось, а поверх полосы «с меткой
+            # Nansen» золотое по синему слилось - и два разных числа выглядели одной строкой.
+            # Место справа есть: `ax.margins(x=0.14)` его и оставляет.
+            # И ПОДНЯТА НА ЧЕТВЕРТЬ РЯДА: на самой линии она садилась ровно туда, где стоит
+            # подпись суммы этого ряда ($11.8M) - две подписи наезжали друг на друга.
+            ax.text(_mx * 1.15, _pos + 0.25, ('сейчас $%s' if lang != 'en' else 'now $%s')
                     % _price(_m), ha='right', va='bottom', color='#d29922', fontsize=8,
                     fontproperties=fp)
 
@@ -505,6 +581,9 @@ def liq_map_png(rows, token='', mark=None, lang='ru', out_dir=None):
              color='#f85149', fontsize=8, fontproperties=fp)
     fig.text(0.075, 0.02, ('шорты' if lang != 'en' else 'shorts'), ha='left',
              color='#2ea043', fontsize=8, fontproperties=fp)
+    if any(_named):
+        fig.text(0.15, 0.02, ('с меткой Nansen' if lang != 'en' else 'named by Nansen'),
+                 ha='left', color='#58a6ff', fontsize=8, fontproperties=fp)
     fig.text(0.99, 0.02, 'Nansen', ha='right', color='#8b949e', fontsize=8, fontproperties=fp)
     fig.tight_layout()
 
@@ -532,12 +611,25 @@ def liq_caption(cl, token='', lang='ru'):
         return ''
     _lo, _hi, _sum = cl['top']
     _tot, _shown, _no = cl['total'], cl['shown'], cl['no_liq']
+    # ЧЬЁ ЭТО ПЛЕЧО - ВТОРОЙ ВОПРОС ПОСЛЕ «СКОЛЬКО», И ОТВЕТ ТОЖЕ ВЕЛИЧИНА. $300M толпы и
+    # $300M одного фонда с именем - разные карты; метка приезжает полем `address_label`.
+    # Метки не нашлось ни у кого - говорим это прямо: молчание читалось бы как «не смотрели».
+    _nmd, _nn, _who = cl.get('named') or 0.0, cl.get('named_n') or 0, cl.get('named_who') or []
+    _names = ', '.join(k for k, _v in _who)
     if lang == 'en':
         L = ['%s liquidation map. Biggest cluster: $%s between $%s and $%s.'
              % (token or 'Token', _short(_sum), _price(_lo), _price(_hi)),
              'Total on the map: $%s across %d position(s).' % (_short(_tot), _shown)]
         if cl['longs'] or cl['shorts']:
             L.append('Longs $%s vs shorts $%s.' % (_short(cl['longs']), _short(cl['shorts'])))
+        if _nmd and _names:
+            L.append('$%s of it sits on wallets Nansen has a name for (%d position(s)): %s.'
+                     % (_short(_nmd), _nn, _names))
+        elif _nmd:
+            L.append('$%s of it sits on labelled wallets (%d position(s)).'
+                     % (_short(_nmd), _nn))
+        else:
+            L.append('Nansen has no label for a single wallet on this map.')
         if _no:
             L.append('%d position(s) had no liquidation price and are NOT on the map.' % _no)
         L.append('This is where other people stop out, not a forecast. Source: Nansen.')
@@ -548,6 +640,14 @@ def liq_caption(cl, token='', lang='ru'):
         if cl['longs'] or cl['shorts']:
             L.append('Лонги $%s против шортов $%s.' % (_short(cl['longs']),
                                                        _short(cl['shorts'])))
+        if _nmd and _names:
+            L.append('Из них $%s висит на кошельках, которых Nansen знает по имени '
+                     '(%d позици(й)): %s.' % (_short(_nmd), _nn, _names))
+        elif _nmd:
+            L.append('Из них $%s висит на кошельках с меткой (%d позици(й)).'
+                     % (_short(_nmd), _nn))
+        else:
+            L.append('Ни у одного кошелька на этой карте метки Nansen нет.')
         if _no:
             # ЧЕСТНАЯ ОГОВОРКА, А НЕ МЕЛКИЙ ШРИФТ: карта по 8 позициям из 20 и карта по 20 из
             # 20 - разные карты, и человек обязан знать, какую смотрит.
