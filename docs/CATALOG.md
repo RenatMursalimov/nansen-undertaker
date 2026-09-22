@@ -418,6 +418,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 **Say to the bot:** `polymarket markets`
 **By button:** 🧠 Nansen → 🎲 Polymarket → 🎲 Trending markets
+**In the mini-app:** a screen of its own — it renders this same dictionary, so the chart cannot drift from the sentence.
 
 **What you get:** markets by volume, probability, 24h volume and a COPYABLE market_id; three rows of buttons under the list
 

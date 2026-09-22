@@ -49,7 +49,7 @@ FIXTURE_DIR = os.path.join(ROOT, 'nansen', 'fixtures')
 #: и лимитом не ограничены (ограничен только агент), но кап по кредитам за сутки обязан ЗНАТЬ
 #: цену предстоящего вопроса: пускать экран за 30, когда до капа осталось 10, значит перейти
 #: его молча. Числа консервативные - лучше отказать зря, чем перейти кап незаметно.
-SCENE_COST = {'pm_reputation': 30, 'liq_map': 5, 'smart_trades': 5}
+SCENE_COST = {'pm_markets': 5, 'pm_reputation': 30, 'liq_map': 5, 'smart_trades': 5}
 
 
 def _admins():
@@ -119,6 +119,8 @@ def _scene_ctx(scene, uid):
     открыт только после проверки по нему.
     """
     T = _T()
+    if scene == 'pm_markets':
+        return T.scene('pm_markets', uid, surface='miniapp')
     if scene == 'pm_reputation':
         return T.scene('pm_reputation', uid, surface='miniapp')
     if scene == 'liq_map':

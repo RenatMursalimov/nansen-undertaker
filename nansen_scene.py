@@ -51,7 +51,7 @@ if _OC not in sys.path:
 #: списка не обслуживается, а не «наверное сработает». Ключ = имя сцены телеметрии, поэтому
 #: расход мини-аппа складывается с расходом чата по ОДНОЙ сцене (мини-апп - новая ПОВЕРХНОСТЬ
 #: старой сцены, а не новая сцена).
-SCENES = ('pm_reputation', 'liq_map', 'smart_trades')
+SCENES = ('pm_markets', 'pm_reputation', 'liq_map', 'smart_trades')
 
 #: ПОВЕРХНОСТИ. 'chat' - ответ в Telegram-чате, 'miniapp' - экран мини-аппа.
 SURFACES = ('chat', 'miniapp')
@@ -113,6 +113,60 @@ def _credits_for(eps):
             return None
         total += int(T.est_credits(ep) or 0)
     return total
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# СЦЕНА 0. pm_markets - ВХОД В HERO. Список рынков, по которому человек ТАПАЕТ
+#
+# ЗАЧЕМ ЭТА СЦЕНА ПОЯВИЛАСЬ ОТДЕЛЬНО. Первая редакция мини-аппа просила ввести `market_id`
+# руками, и это неверно по существу: чтобы узнать id, человеку пришлось бы идти на Polymarket и
+# выискивать идентификатор - то есть экран требовал работы ВНЕ себя. Идентификатор вообще не
+# должен попадать человеку на глаза: он служебный, его дело - ездить между экранами.
+# Тот же дефект уже ловили в чате: команды «полимаркет график <id>» существовали формально,
+# пока список рынков не начал печатать id, - и лечение было такое же, списком с кнопками.
+# ═══════════════════════════════════════════════════════════════════════════════
+def pm_markets_data(lang='ru', top=12, rows=None):
+    """Трендовые рынки Polymarket с id для перехода. -> конверт.
+
+    ЧЕЛОВЕК ВИДИТ ВОПРОС И ВЕРОЯТНОСТЬ, А НЕ НОМЕР. Номер едет в словаре отдельным полем,
+    чтобы экран повесил его на тап, - ровно как кнопки «🎭 N» под списком в чате.
+    """
+    N = _n()
+    if rows is None:
+        rows = N.pm_market_screener(per_page=int(top))
+    _what = ('рынков Polymarket' if lang != 'en' else 'Polymarket markets')
+    _cr = _credits_for(('prediction-market/market-screener',))
+    if not rows:
+        return _envelope('pm_markets', None, N.fail_reason('empty'), lang, cost_requests=1,
+                         cost_credits=_cr, refusal_what=_what)
+    out, no_id = [], 0
+    for r in rows[:int(top)]:
+        if not isinstance(r, dict):
+            continue
+        _mid = N.pm_market_id(r)
+        if not _mid:
+            # РЫНОК БЕЗ ID НЕ ВЫБРАСЫВАЕТСЯ МОЛЧА: он попадёт в список без тапа, и это
+            # названо числом ниже. Тихо убрать его значило бы показать список короче, чем он
+            # есть, и человек не понял бы, почему.
+            no_id += 1
+        _pr = N._num_or_none(r.get('last_trade_price'))
+        out.append({'id': str(_mid or ''), 'q': str(r.get('question') or '?')[:120],
+                    'prob': (round(_pr * 100) if (_pr is not None and _pr <= 1) else
+                             (round(_pr) if _pr is not None else None)),
+                    'vol24': N._num_or_none(r.get('volume_24hr'))})
+    if not out:
+        return _envelope('pm_markets', None, N.fail_reason('empty'), lang, cost_requests=1,
+                         cost_credits=_cr, refusal_what=_what)
+    _cav = []
+    if no_id:
+        _cav.append(('%d market(s) came without an id: they cannot be opened by a tap'
+                     if lang == 'en' else
+                     'у %d рынк(ов) не приехал id: по тапу их не открыть') % no_id)
+    _cav.append('price is what people believe, not what is true' if lang == 'en' else
+                'цена это во что верят, а не то, что верно')
+    return _envelope('pm_markets', {'rows': out, 'no_id': no_id}, 'ok', lang,
+                     cost_requests=1, cost_credits=_cr, freshness_seconds=_tele().age(),
+                     caveats=_cav)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -279,6 +333,7 @@ def _sm_caveats(d, lang):
 # ═══════════════════════════════════════════════════════════════════════════════
 #: КАКИЕ ПАРАМЕТРЫ ЖДЁТ СЦЕНА. Нужен шлюзу, чтобы отказать по форме ДО любого вызова Nansen.
 SCENE_PARAMS = {
+    'pm_markets': (),
     'pm_reputation': ('market',),
     'liq_map': ('token',),
     'smart_trades': (),
@@ -297,6 +352,11 @@ def rendered_text(env, bot_un=None):
         return env.get('refusal')
     N, sc, lang = _n(), env.get('scene'), env.get('lang', 'ru')
     p = env.get('payload')
+    if sc == 'pm_markets':
+        # Текстовый рендер списка у бота уже есть и принимает СЫРЫЕ строки скринера. Здесь он
+        # не нужен: список в мини-аппе - это навигация, а не ответ, и подписывать её фразой
+        # бота незачем. Отдаём None честно, а не собираем текст, которого бот не пишет.
+        return None
     if sc == 'pm_reputation':
         return N.pm_reputation_block(p, env.get('market_id') or '', lang,
                                      env.get('top') or N.PM_REP_TOP)
@@ -322,7 +382,9 @@ def scene_data(scene, params=None, lang='ru', bot_un=None, with_text=True):
                 'freshness_seconds': None, 'cost_requests': 0, 'cost_credits': 0,
                 'caveats': [], 'payload': None, 'lang': 'en' if lang == 'en' else 'ru',
                 'refusal': ('Unknown screen.' if lang == 'en' else 'Неизвестный экран.')}
-    if scene == 'pm_reputation':
+    if scene == 'pm_markets':
+        env = pm_markets_data(lang, int(params.get('top') or 12))
+    elif scene == 'pm_reputation':
         env = pm_reputation_data(params.get('market'), params.get('top'), lang)
     elif scene == 'liq_map':
         env = liq_map_data(params.get('token'), params.get('mark'), lang)

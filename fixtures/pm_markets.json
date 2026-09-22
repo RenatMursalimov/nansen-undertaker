@@ -1,0 +1,41 @@
+{
+ "caveats": [
+  "1 market(s) came without an id: they cannot be opened by a tap",
+  "price is what people believe, not what is true"
+ ],
+ "cost_credits": null,
+ "cost_requests": 1,
+ "freshness_seconds": null,
+ "lang": "en",
+ "outcome": "ok",
+ "payload": {
+  "no_id": 1,
+  "rows": [
+   {
+    "id": "654412",
+    "prob": 90,
+    "q": "Will the Fed cut rates in September?",
+    "vol24": 4100000.0
+   },
+   {
+    "id": "654987",
+    "prob": 31,
+    "q": "Government shutdown before October?",
+    "vol24": 1882000.0
+   },
+   {
+    "id": "",
+    "prob": 50,
+    "q": "Market with no id in the response",
+    "vol24": 12000.0
+   }
+  ]
+ },
+ "provenance": "synthetic",
+ "recorded_at": "2026-09-22T17:58:46Z",
+ "rehearsal": true,
+ "rendered_text": null,
+ "scene": "pm_markets",
+ "source": "Nansen",
+ "surface": "miniapp"
+}

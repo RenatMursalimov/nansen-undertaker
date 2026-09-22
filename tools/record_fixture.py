@@ -87,7 +87,8 @@ def _synthetic(scene):
                                                             'scene_text_baseline.py'))
     BL = _iu.module_from_spec(_spec)
     _spec.loader.exec_module(BL)
-    _keep = (N._post_fix, N.pm_address_summary, N.perp_positions, N.sm_dex_trades, N._key)
+    _keep = (N._post_fix, N.pm_address_summary, N.perp_positions, N.sm_dex_trades, N._key,
+             N.pm_market_screener)
     try:
         N._key = lambda: 'synthetic'
         N._post_fix = lambda p, b, **k: (list(BL.PM_HOLDERS)
@@ -95,6 +96,7 @@ def _synthetic(scene):
         N.pm_address_summary = lambda a, **k: BL.PM_SUMMARIES.get(a)
         N.perp_positions = lambda t, n=50: list(BL.PERP_ROWS)
         N.sm_dex_trades = lambda chains=None, per_page=15: list(BL.SM_TRADE_ROWS)
+        N.pm_market_screener = lambda query='', per_page=12: list(BL.PM_MARKETS)
         req = {'sc': scene, 'lg': 'en'}
         if scene == 'pm_reputation':
             req['mk'] = '654412'
@@ -103,7 +105,7 @@ def _synthetic(scene):
         env = G.handle(req, uid=0, lang='en')
     finally:
         (N._post_fix, N.pm_address_summary, N.perp_positions,
-         N.sm_dex_trades, N._key) = _keep
+         N.sm_dex_trades, N._key, N.pm_market_screener) = _keep
     env['recorded_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
     env['rehearsal'] = True
     env['provenance'] = 'synthetic'

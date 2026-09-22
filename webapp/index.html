@@ -74,6 +74,12 @@
   .btn.on{border-color:#4a86ff;color:#fff}
   input.mk{width:100%;padding:9px 10px;border-radius:9px;border:1px solid var(--line);
            background:#11141a;color:var(--ink);font-size:14px}
+  /* РЯД РЫНКА: вопрос крупно, вероятность и объём мелко. Идентификатора в разметке для глаз
+     нет вовсе - он лежит в data-атрибуте и нужен только тапу. */
+  .mkrow{padding:9px 2px;border-bottom:1px solid #1d2230;cursor:pointer}
+  .mkrow:last-child{border-bottom:0}
+  .mkq{font-size:14px;line-height:1.3}
+  .mkmeta{font-size:11.5px;color:var(--dim);margin-top:2px}
   .warn{background:#2a1c14;border:1px solid #5a3a22;color:#ffd7ad;border-radius:10px;
         padding:9px 11px;font-size:12.5px;margin:10px 0}
   .bad{background:#2a1618;border:1px solid #5c2a2e;color:#ffc9cd}
@@ -314,7 +320,7 @@ function loading(what) {
 /* ═══════════════════════════════════════════════════════════════════════════
    ЭКРАН 1. «ЧЬИ 90%» — состав убеждённости рынка
    ═══════════════════════════════════════════════════════════════════════════ */
-var HERO = { market: (qp('market') || qp('mk') || ''), env: null, open: -1 };
+var HERO = { market: (qp('market') || qp('mk') || ''), env: null, open: -1, list: null };
 
 function wrBucket(h) {
   /* ЦВЕТ = КОРЗИНА ВИНРЕЙТА, а серый = ИСТОРИЯ НЕ РАЗОБРАНА. Серый не суммируется ни в
@@ -387,24 +393,55 @@ function heroHTML(env) {
   return h;
 }
 
+/* СПИСОК РЫНКОВ - ЭТО И ЕСТЬ ВХОД. Идентификатор рынка человеку показывать незачем: он
+   служебный, и требовать его значило бы отправить человека искать номер на стороне Polymarket,
+   то есть заставить работать ВНЕ экрана. Здесь он ездит в `data-mk` и нигде не виден. */
+function marketsHTML() {
+  if (!HERO.list) return loading('Loading trending markets…');
+  if (HERO.list.outcome !== 'ok' || !HERO.list.payload) return refuse(HERO.list);
+  var rows = HERO.list.payload.rows || [];
+  var h = '<div class="card"><div class="dim">Tap a market — I will show whose money is '
+        + 'behind its price.</div>';
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var dis = r.id ? '' : ' style="opacity:.45"';
+    h += '<div class="mkrow"' + dis + (r.id ? ' data-mk="' + esc(r.id) + '"' : '') + '>'
+       + '<div class="mkq">' + esc(r.q) + '</div>'
+       + '<div class="mkmeta">' + (r.prob === null ? '?' : (r.prob + '%'))
+       + ' · vol24 $' + usd(r.vol24)
+       + (r.id ? '' : ' · <i>no id: cannot open</i>') + '</div></div>';
+  }
+  h += footer(HERO.list) + '</div>';
+  return h;
+}
+
 function heroRender() {
   var el = document.getElementById('scr_hero');
   var head = '<div class="card"><h1>A market says 90% YES. Whose conviction is it?</h1>'
-    + '<div class="dim">Market id — from the bot\'s <code>polymarket markets</code> list.</div>'
-    + '<div style="margin-top:8px"><input class="mk" id="mkin" placeholder="market id, e.g. 654412" value="'
-    + esc(HERO.market) + '"></div>'
-    + '<div class="btns"><span class="btn" id="mkgo">Show who holds it</span></div></div>';
-  el.innerHTML = head + heroHTML(HERO.env);
-  var go = document.getElementById('mkgo');
-  if (go) {
-    go.onclick = function () {
-      var v = (document.getElementById('mkin').value || '').trim();
-      if (!v) return;
-      HERO.market = v; HERO.env = null; HERO.open = -1; heroRender();
-      askScene({ sc: 'pm_reputation', mk: v, lg: 'en' }, function (env) {
-        HERO.env = env; showReh(env); heroRender();
-      });
+    + '<div class="dim">Price alone cannot tell a signal from a crowd. Pick a market.</div>'
+    + (HERO.market
+       ? '<div class="btns"><span class="btn" id="mkback">« back to markets</span></div>'
+       : '')
+    + '</div>';
+  // НИ ОДНОГО «Asking Nansen…» БЕЗ ЗАПРОСА. Раньше пустой экран показывал строку загрузки,
+  // хотя ничего не спрашивал: человек ждал ответа, которого никто не просил.
+  el.innerHTML = head + (HERO.market ? heroHTML(HERO.env) : marketsHTML());
+  var bk = document.getElementById('mkback');
+  if (bk) {
+    bk.onclick = function () {
+      HERO.market = ''; HERO.env = null; HERO.open = -1; heroRender();
     };
+  }
+  var mk = el.querySelectorAll('.mkrow[data-mk]');
+  for (var j = 0; j < mk.length; j++) {
+    mk[j].onclick = (function (id) {
+      return function () {
+        HERO.market = id; HERO.env = null; HERO.open = -1; heroRender();
+        askScene({ sc: 'pm_reputation', mk: id, lg: 'en' }, function (env) {
+          HERO.env = env; showReh(env); heroRender();
+        });
+      };
+    })(mk[j].getAttribute('data-mk'));
   }
   var rows = el.querySelectorAll('.row[data-h]');
   for (var i = 0; i < rows.length; i++) {
@@ -609,8 +646,13 @@ for (var i = 0; i < TABS.length; i++) {
 
 heroRender();
 if (HERO.market) {
+  // Рынок пришёл параметром (переход из чата) - открываем сразу, список не нужен.
   askScene({ sc: 'pm_reputation', mk: HERO.market, lg: 'en' }, function (env) {
     HERO.env = env; showReh(env); heroRender();
+  });
+} else {
+  askScene({ sc: 'pm_markets', lg: 'en' }, function (env) {
+    HERO.list = env; showReh(env); heroRender();
   });
 }
 if (REHEARSAL) {

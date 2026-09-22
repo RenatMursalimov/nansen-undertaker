@@ -77,6 +77,18 @@ PERP_ROWS = [
 ]
 PERP_MARK = 67250.0
 
+#: Строки скринера рынков: вход в hero. Форма настоящая (поля сняты живой пробой 20.09),
+#: числа вымышленные. Третий рынок НАРОЧНО без id - экран обязан назвать это числом, а не
+#: тихо укоротить список.
+PM_MARKETS = [
+    {'question': 'Will the Fed cut rates in September?', 'last_trade_price': 0.90,
+     'volume_24hr': 4100000.0, 'id': '654412'},
+    {'question': 'Government shutdown before October?', 'last_trade_price': 0.31,
+     'volume_24hr': 1882000.0, 'id': '654987'},
+    {'question': 'Market with no id in the response', 'last_trade_price': 0.5,
+     'volume_24hr': 12000.0},
+]
+
 SM_TRADE_ROWS = [
     {'address_label': 'Smart Trader 1', 'token_bought_symbol': 'AAA', 'chain': 'base',
      'token_bought_address': '0x2222000000000000000000000000000000000022',

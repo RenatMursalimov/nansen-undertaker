@@ -27,21 +27,41 @@ it) and harmful when it says “I do not know your field” (it throws the quest
 discovering a field *name*, repair must be off — the raw refusal is the answer. The `ra` group was
 therefore removed from `FIX_DEFAULT`.
 
-So the open question is exactly one: **what is the token field called?** Until it is answered there
-can be no screen — “posts by token” that cannot select a token is not a screen. The probe now
-measures that instead of guessing it: one candidate name per request, repair off, so the platform
-answers either “unknown field” (the name is wrong — a fact) or `200` with rows (the name is right).
-A control case re-sends the already-rejected `token_address`, and a baseline case sends no token
-filter at all — because if the unfiltered query is empty too, then “empty” means “no coverage on our
-plan”, and iterating over names is pointless. Without that baseline we would mistake missing coverage
-for a wrong schema.
+### Probe 3 answered the name, and the answer closes the branch
 
-```bash
-./venv/bin/python3 tools/nansen_probe.py --only ra          # plan, zero calls
-./venv/bin/python3 tools/nansen_probe.py --run --only ra     # 7 read-only requests
-```
+Seven requests, one candidate field name each, repair off. The platform answered precisely:
 
-Credits spent so far: 5 of ~58,300 remaining. The decision stands as branch 3 until a name answers.
+| field sent | answer |
+|---|---|
+| `token_address` (control) | `422` — “Field 'token_address' is not recognized” |
+| `token_addresses` | `422` — not recognized |
+| `tokens` | `422` — not recognized |
+| `token` | `422` — not recognized |
+| `address` | `422` — not recognized |
+| **`token_symbol`** | **`200`, 10 rows** |
+| no token filter (baseline) | `200`, `data: []` |
+
+So the schema is now known: `ra-agent/posts-by-token` takes **`token_symbol`** (a ticker, not an
+address) plus the `date` window. The control case behaved as predicted, and the baseline explains what
+“empty” means here — without a ticker the endpoint returns nothing, so the earlier empty answers were
+our missing question, not missing coverage.
+
+**And the response fields settle Part C: `likes, text, timestamp, tweet_id, username, views`.
+There is no language field.**
+
+Branch 1 was defined by that field: posts *with their language* next to the money flow, as a hybrid
+with our Chinese slice. The language does not exist in the response, so branch 1 as specified cannot
+be built. Nothing here was a guess and nothing was wasted: the endpoint is now documented, the schema
+is known, and the cost of learning it was **12 credits of ~58,300**.
+
+**Decision: still branch 3 — no fourth screen before the deadline.** Not because the endpoint is dead
+(it is alive and cheap), but because the screen that was planned needs a field the platform does not
+return, and inventing a substitute — guessing language from the text, or shipping a narrative feed
+with no link to the Chinese slice — would be a different screen than the one reasoned about, designed
+in the last hours before a recording. Three screens that hold up beat four with one improvised.
+
+What is left behind is a fact, not a shrug: the schema is written down here, so connecting
+`ra-agent/posts-by-token` later is a client function plus a formatter, not another round of probing.
 
 ## Why branch 3 was the right call even before the probe
 

@@ -196,7 +196,7 @@ SCENARIOS = [
      'why': 'тот же ключ вместо отдельного платного вендора по балансам',
      'hook': 'Wallet portfolio from the same API key - one vendor fewer in the stack.'},
     # ── POLYMARKET ────────────────────────────────────────────────────────────
-    {'id': 'pmmarkets', 'title': '🎲 Трендовые рынки Polymarket с market_id',
+    {'id': 'pmmarkets', 'app': True, 'title': '🎲 Трендовые рынки Polymarket с market_id',
      'cmds': ['полимаркет рынки', 'polymarket markets'], 'btns': ['🧠 Nansen → 🎲 Polymarket → 🎲 Трендовые рынки'],
      'eps': ['prediction-market/market-screener'], 'scene': 'pm_markets',
      'menu': 'pm_markets', 'price': 'цена не названа в официальном списке',
