@@ -22,7 +22,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [🧠 Smart money trades over 24h + share of market cap](#trades) | `smart trades` | 🧠 Nansen → 🧠 Smart money trades now | 1–5 credits |
 | [🏆 Top perp traders](#perpleaders) | `top perps` | 🧠 Nansen → 🏆 Top perp traders | 5 credits |
 | [💥 Leveraged positions and the LIQUIDATION PRICE by token](#perppos) | `perp positions BTC`<br>`liquidations BTC` | token card (e.g. BTC) → 💥 Liq. | 5 credits |
-| [🗺 Liquidation map: where other people's leverage hangs](#liqmap) | `liq map BTC` | token card → 💥 Liq. → 🗺 Liquidation map | 5 credits (the same request as the position list) |
+| [🗺 Liquidation map: where other people's leverage hangs](#liqmap) | `liquidation map BTC`<br>`liq map BTC` | token card → 💥 Liq. → 🗺 Liquidation map | 5 credits (the same request as the position list) |
 | [🩺 A wallet's perp account and room to liquidation](#walletperps) | `nansen perp 0x…` | 🧠 Nansen → 🩺 Wallet perp account | price not named in the official list |
 | [🧠 Token breakdown: flows, Nansen Score, holder labels](#tokencheck) | `passport 0x… deep` | token/meme card → 🧠 | 4 requests, about 12 credits |
 | [🔄 Who net-bought and who sold a token](#wbs) | `who bought 0x… 7`<br>`who bought sold 0x…` | token card → 🧠 → 🔄 Who bought and sold | 1 credit per side |
@@ -185,7 +185,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🗺 Liquidation map: where other people's leverage hangs
 
-**Say to the bot:** `liq map BTC`
+**Say to the bot:** `liquidation map BTC` · `liq map BTC`
 **By button:** token card → 💥 Liq. → 🗺 Liquidation map
 
 **What you get:** an image: position sizes by liquidation-price level, red is longs, green is shorts, the dashed line is the current price. Plus a caption with the magnitude
