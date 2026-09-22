@@ -333,7 +333,7 @@ _EN = {
                          'each account',
                 'why': 'before this endpoint we had no liquidation price at all — it was guessed '
                        'from the entry price'},
-    'liqmap': {'cmds': ['liq map BTC'],
+    'liqmap': {'cmds': ['liquidation map BTC', 'liq map BTC'],
                'btns': ['token card → 💥 Liq. → 🗺 Liquidation map'],
                'title': "🗺 Liquidation map: where other people's leverage hangs",
                'price': '5 credits (the same request as the position list)',
