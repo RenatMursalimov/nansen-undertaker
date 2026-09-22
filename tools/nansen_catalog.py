@@ -81,7 +81,7 @@ SCENARIOS = [
      'gives': 'топ позиций по $ с изменением за сутки',
      'why': 'поток говорит «что берут сейчас», холдинги - «что уже держат»',
      'hook': 'What smart money already holds, not just what they bought today.'},
-    {'id': 'trades', 'title': '🧠 Сделки smart money за сутки + доля от капитализации',
+    {'id': 'trades', 'app': True, 'title': '🧠 Сделки smart money за сутки + доля от капитализации',
      'cmds': ['смарт сделки'], 'btns': ['🧠 Nansen → 🧠 Сделки smart money сейчас'],
      'eps': ['smart-money/dex-trades'], 'scene': 'smart_trades', 'menu': 'nsn_trades',
      'price': '1–5 кредитов',
@@ -107,7 +107,7 @@ SCENARIOS = [
      'why': 'до этого эндпоинта цены ликвидации у нас не было вовсе - про неё догадывались '
             'по цене входа',
      'hook': 'Leveraged positions with the one number nobody shows: the liquidation price.'},
-    {'id': 'liqmap', 'title': '🗺 Карта ликвидаций: где висит чужое плечо',
+    {'id': 'liqmap', 'app': True, 'title': '🗺 Карта ликвидаций: где висит чужое плечо',
      'cmds': ['карта ликвидаций BTC', 'ликвид карта BTC'],
      'btns': ['карточка токена → 💥 Ликвид. → 🗺 Карта ликвидаций'],
      'eps': ['tgm/perp-positions'], 'scene': 'liq_map', 'menu': 'nsn_liqmap',
@@ -196,7 +196,7 @@ SCENARIOS = [
      'why': 'тот же ключ вместо отдельного платного вендора по балансам',
      'hook': 'Wallet portfolio from the same API key - one vendor fewer in the stack.'},
     # ── POLYMARKET ────────────────────────────────────────────────────────────
-    {'id': 'pmmarkets', 'title': '🎲 Трендовые рынки Polymarket с market_id',
+    {'id': 'pmmarkets', 'app': True, 'title': '🎲 Трендовые рынки Polymarket с market_id',
      'cmds': ['полимаркет рынки', 'polymarket markets'], 'btns': ['🧠 Nansen → 🎲 Polymarket → 🎲 Трендовые рынки'],
      'eps': ['prediction-market/market-screener'], 'scene': 'pm_markets',
      'menu': 'pm_markets', 'price': 'цена не названа в официальном списке',
@@ -225,7 +225,7 @@ SCENARIOS = [
             'верят, стакан - сколько стоит это проверить деньгами',
      'hook': 'Price says what people believe. The order book says what it costs to test that '
              'belief with money.'},
-    {'id': 'pmrep', 'title': '🎭 Кто держит рынок и как угадывал раньше',
+    {'id': 'pmrep', 'app': True, 'title': '🎭 Кто держит рынок и как угадывал раньше',
      'cmds': ['репутация рынка 654412', 'кто держит рынок 654412',
               'market reputation 654412', 'who holds market 654412'],
      'btns': ['список рынков → 🎭 N'],
@@ -638,6 +638,28 @@ def _verify():
                 if len(_en['btns']) != len(sc['btns']):
                     bad.append('%s: число английских кнопок (%d) != русских (%d)'
                                % (_id, len(_en['btns']), len(sc['btns'])))
+    # ПОМЕТКА «ЕСТЬ ЭКРАН В МИНИ-АППЕ» ПРОВЕРЯЕТСЯ ПО КОДУ, А НЕ НА СЛОВО. Сцена, объявленная
+    # в каталоге как экран мини-аппа, обязана быть в закрытом списке `nansen_scene.SCENES` -
+    # иначе каталог обещает экран, которого шлюз не обслуживает. И наоборот: сцена, которую
+    # шлюз обслуживает, обязана быть помечена, иначе документ скрывает половину поверхностей.
+    try:
+        import nansen_scene as _NS
+        _app_ids = {s['id'] for s in SCENARIOS if s.get('app')}
+        _by_scene = {s['scene']: s['id'] for s in SCENARIOS if s.get('scene')}
+        for _scene in _NS.SCENES:
+            _sid = _by_scene.get(_scene)
+            if _sid is None:
+                bad.append('сцену %r обслуживает мини-апп, но её нет в каталоге' % _scene)
+            elif _sid not in _app_ids:
+                bad.append('сцена %r есть в мини-аппе, а в каталоге не помечена app=True'
+                           % _scene)
+        for _sid in _app_ids:
+            _sc2 = next(s for s in SCENARIOS if s['id'] == _sid)
+            if _sc2.get('scene') not in _NS.SCENES:
+                bad.append('%s помечен app=True, но шлюз мини-аппа его не обслуживает' % _sid)
+    except ImportError as e:                       # noqa: BLE001
+        bad.append('nansen_scene не импортируется (%s) - пометки мини-аппа не проверить'
+                   % str(e)[:60])
     # В _EN не должно быть лишних ключей: удалили сценарий — перевод не может остаться сиротой.
     _orphans = sorted(set(_EN) - {s['id'] for s in SCENARIOS})
     if _orphans:
@@ -728,6 +750,14 @@ def _md(lang='en'):
         if _btns:
             _by = '**By button:** ' if _en else '**Кнопкой:** '
             L.append(_by + ' · '.join(_btns))
+        if sc.get('app'):
+            # МИНИ-АПП - НОВАЯ ПОВЕРХНОСТЬ СТАРОЙ СЦЕНЫ, и каталог обязан это показать, иначе
+            # читатель решит, что экранов на телефоне нет вовсе. Сцена телеметрии та же (ниже),
+            # поэтому расход по ней складывается из обеих поверхностей.
+            L.append('**In the mini-app:** a screen of its own — it renders this same '
+                     'dictionary, so the chart cannot drift from the sentence.' if _en else
+                     '**В мини-аппе:** свой экран — рисует ЭТОТ ЖЕ словарь, поэтому график не '
+                     'может разойтись с фразой бота.')
         if _en:
             L += ['', '**What you get:** %s' % _f(sc, 'gives', lang), '',
                   '**Price:** %s' % _f(sc, 'price', lang), '',

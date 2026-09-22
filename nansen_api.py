@@ -2581,69 +2581,116 @@ def wallet_perp_block(d, address, lang='ru'):
     return with_source('\n'.join(L), lang)
 
 
-def sm_trades_block(rows, bot_un=None, lang='ru', top=12):
-    """Сделки smart money за последние сутки. -> str | None.
+#: ДОЛЯ ОТ КАПИТАЛИЗАЦИИ НИЖЕ ЭТОГО ПОРОГА НЕ ПОКАЗЫВАЕТСЯ. Порог живёт ЗДЕСЬ, в слое данных,
+#: а не в двух рендерах: «0.04% капы» не решение, а шум, но если порог продублировать в тексте
+#: бота и в мини-аппе, они разойдутся на первой правке - тот самый класс бага, от которого
+#: Закон 0. Оба потребителя читают готовый флаг `pct_shown`.
+MCAP_PCT_MIN = 0.1
 
-    ОТЛИЧИЕ ОТ NETFLOW, И ОНО СУЩЕСТВЕННОЕ: netflow это итог за окно («набрали на 231К»), а
-    здесь отдельные сделки - видно, КТО и во ЧТО зашёл, а не только сумма."""
+
+def sm_trades_data(rows, top=12):
+    """ЧИСЛА сцены smart_trades: кто, во что, на сколько и какая это доля капитализации.
+    -> dict | None.
+
+    -> {'rows': [{'i', 'who', 'sym', 'addr', 'chain', 'usd', 'mcap', 'mcap_num',
+                  'pct_of_mcap', 'pct_shown', 'age_days'}],
+        'shown': int, 'with_val': int, 'first_row': dict|None}
+
+    ЗАЧЕМ ОТДЕЛЬНО ОТ ТЕКСТА (Закон 0): тот же словарь рисует мини-апп. Второй форматтер
+    означал бы второй источник правды, а на предсказательных числах расхождение между «что
+    сказал бот» и «что нарисовал экран» жюри увидит раньше нас.
+
+    НУМЕРАЦИЯ `i` СЧИТАЕТСЯ ПО ИСХОДНОМУ СПИСКУ, а не по отфильтрованному: не-dict строка
+    съедает номер, как и раньше. Это не косметика - номер в строке человек сопоставляет с
+    порядком в ответе площадки.
+    """
     if not rows:
         return None
-    L = [('🧠 <b>Сделки smart money за сутки</b>' if lang != 'en'
-          else '🧠 <b>Smart money trades, 24h</b>')]
-    _shown, _with_val, _first_row = 0, 0, None
+    out, shown, with_val, first_row = [], 0, 0, None
     for i, r in enumerate(rows[:top], 1):
         if not isinstance(r, dict):
             continue
         _shape('sm-dex-trades', r)
-        if _first_row is None:
-            _first_row = r
-        sym = _first(r, ('token_bought_symbol', 'token_symbol', 'symbol')) or '?'
-        addr = (_first(r, ('token_bought_address', 'token_address')) or '').strip()
-        # ИМЯ ДЕНЕЖНОГО ПОЛЯ - `trade_value_usd`, СНЯТО ЖИВОЙ ПРОБОЙ 19.09. Раньше здесь
-        # стояли три имени, угаданных по соседним эндпоинтам, ни одно не совпало, и человек
-        # видел прочерк во всех двенадцати строках. Поиск по соглашению (`*_usd`) оставлен
-        # вторым этажом: он и нашёл бы это поле, но названное имя не требует перебора и не
-        # может однажды выбрать не то поле.
+        if first_row is None:
+            first_row = r
         val, _vf = _usd_any(r, ('trade_value_usd', 'value_usd', 'volume_usd', 'amount_usd'))
-        who = _who(r)
-        ch = _first(r, ('chain',)) or ''
-        _sym = '<b>%s</b>' % sym
-        if bot_un and addr:
-            _sym = '<a href="https://t.me/%s?start=tok_%s"><b>%s</b></a>' % (bot_un, addr, sym)
-        _shown += 1
+        shown += 1
         if val not in (None, ''):
-            _with_val += 1
+            with_val += 1
         # ═══ КАПИТАЛИЗАЦИЯ И ВОЗРАСТ ТОКЕНА ПРИЕЗЖАЮТ В ЭТОМ ЖЕ ОТВЕТЕ - БЕСПЛАТНО ═══
-        # Проба показала, что `smart-money/dex-trades` отдаёт `token_bought_market_cap` и
-        # `token_bought_age_days` вместе со сделкой. Мы их не читали, и зря: «$48K зашли в
-        # токен» - это ни о чём, пока не сказано, во ЧТО именно. $48K в токен на $2.1M - это
-        # 2.3% всей капитализации и настоящий сигнал; те же $48K в токен на $50B - шум.
-        # Ровно закон «признак наличия ≠ признак пользы»: раньше строка сообщала ФАКТ покупки,
-        # теперь - ВЕЛИЧИНУ относительно размера токена. Дополнительных запросов ноль.
+        # Проба 19.09 показала, что `smart-money/dex-trades` отдаёт `token_bought_market_cap`
+        # и `token_bought_age_days` вместе со сделкой. «$48K зашли в токен» - ни о чём, пока
+        # не сказано, во ЧТО: $48K в токен на $2.1M это 2.3% всей капитализации и сигнал, а в
+        # токен на $50B - шум. Ровно закон «признак наличия ≠ признак пользы».
         _mc = _first(r, ('token_bought_market_cap', 'market_cap'))
-        _age = _first(r, ('token_bought_age_days', 'age_days'))
-        _tail = []
-        if _mc not in (None, ''):
+        _mcn = _num_or_none(_mc)
+        _pct = None
+        if _mcn not in (None, 0) and val not in (None, '') and _mcn > 0:
             try:
-                _tail.append(('капа $%s' if lang != 'en' else 'mcap $%s') % _usd(_mc))
-                if val not in (None, '') and float(_mc) > 0:
-                    _pct = 100.0 * float(val) / float(_mc)
-                    if _pct >= 0.1:
-                        _tail.append(('%.1f%% капы' if lang != 'en' else '%.1f%% of mcap')
-                                     % _pct)
+                _pct = 100.0 * float(val) / _mcn
             except (TypeError, ValueError):
-                pass
+                _pct = None
+        _agen = None
+        _age = _first(r, ('token_bought_age_days', 'age_days'))
         if _age not in (None, ''):
             try:
-                _tail.append(('%dд' if lang != 'en' else '%dd') % int(float(_age)))
+                _agen = int(float(_age))
+            except (TypeError, ValueError):
+                _agen = None
+        out.append({'i': i, 'who': _who(r),
+                    'sym': _first(r, ('token_bought_symbol', 'token_symbol', 'symbol')) or '?',
+                    'addr': (_first(r, ('token_bought_address', 'token_address')) or '').strip(),
+                    'chain': _first(r, ('chain',)) or '', 'usd': val,
+                    'mcap': _mc, 'mcap_num': _mcn, 'pct_of_mcap': _pct,
+                    'pct_shown': bool(_pct is not None and _pct >= MCAP_PCT_MIN),
+                    'age_days': _agen})
+    if not out:
+        return None
+    return {'rows': out, 'shown': shown, 'with_val': with_val, 'first_row': first_row}
+
+
+def sm_trades_block(rows, bot_un=None, lang='ru', top=12):
+    """Сделки smart money за последние сутки. -> str | None.
+
+    ОТЛИЧИЕ ОТ NETFLOW, И ОНО СУЩЕСТВЕННОЕ: netflow это итог за окно («набрали на 231К»), а
+    здесь отдельные сделки - видно, КТО и во ЧТО зашёл, а не только сумма.
+
+    РЕНДЕР СЛОВАРЯ, А НЕ СЧЁТ (Закон 0). Все числа считает `sm_trades_data`; здесь только
+    слова и разметка. Мини-апп читает ТОТ ЖЕ словарь, поэтому порог «доля от капитализации
+    меньше 0.1% не показывается» физически не может разойтись между чатом и картинкой."""
+    # ПРИНИМАЕМ И СЫРЫЕ СТРОКИ, И ГОТОВЫЙ СЛОВАРЬ. Бот зовёт со строками площадки, мини-апп -
+    # с уже посчитанным словарём (`nansen_scene`). Обратная сборка строк из словаря была бы
+    # round-trip: числа пересчитались бы второй раз, и это ровно та щель, куда заползает
+    # расхождение. Одна дверь, два входа (закон №40).
+    d = (rows if (isinstance(rows, dict) and 'rows' in rows) else sm_trades_data(rows, top))
+    if not d or not d['rows']:
+        return None
+    L = [('🧠 <b>Сделки smart money за сутки</b>' if lang != 'en'
+          else '🧠 <b>Smart money trades, 24h</b>')]
+    for it in d['rows']:
+        _sym = '<b>%s</b>' % it['sym']
+        if bot_un and it['addr']:
+            _sym = ('<a href="https://t.me/%s?start=tok_%s"><b>%s</b></a>'
+                    % (bot_un, it['addr'], it['sym']))
+        _tail = []
+        if it['mcap'] not in (None, ''):
+            try:
+                _tail.append(('капа $%s' if lang != 'en' else 'mcap $%s') % _usd(it['mcap']))
+                if it['pct_shown']:
+                    _tail.append(('%.1f%% капы' if lang != 'en' else '%.1f%% of mcap')
+                                 % it['pct_of_mcap'])
             except (TypeError, ValueError):
                 pass
+        if it['age_days'] is not None:
+            _tail.append(('%dд' if lang != 'en' else '%dd') % it['age_days'])
         L.append('%d. %s %s%s · $%s%s'
-                 % (i, who, _sym, (' [%s]' % ch) if ch else '',
-                    _usd(val) if val not in (None, '') else '?',
+                 % (it['i'], it['who'], _sym, (' [%s]' % it['chain']) if it['chain'] else '',
+                    _usd(it['usd']) if it['usd'] not in (None, '') else '?',
                     (' · ' + ' · '.join(_tail)) if _tail else ''))
-    if len(L) == 1:
-        return None
+    # `first_row` ЧИТАЕТСЯ ЧЕРЕЗ .get НАРОЧНО: шлюз мини-аппа вычищает его из словаря перед
+    # отправкой в браузер (сырая строка площадки наружу не едет), и словарь после вычистки
+    # обязан остаться рендерируемым. Нет строки - нет и диагностики схемы, но экран цел.
+    _shown, _with_val, _first_row = d['shown'], d['with_val'], d.get('first_row')
     # ПРОЧЕРК В КАЖДОЙ СТРОКЕ - НЕ ОТВЕТ. Если суммы не нашлось НИ У ОДНОЙ строки, это не
     # свойство сделок, а расхождение схемы, и оно называется вслух вместе с именами полей,
     # которые площадка правда прислала. Иначе человек читает «$?» как «объём неизвестен

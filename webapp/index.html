@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Nansen Undertaker</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<!--
+  miniapp_nansen — ТРИ ЭКРАНА NANSEN НА ТЕЛЕФОНЕ.
+
+  ЗАКОН 0: ЭТА СТРАНИЦА НИЧЕГО НЕ СЧИТАЕТ. Все числа приезжают готовым словарём сцены от
+  бота (`nansen_scene` -> `nansen_gate`), и под каждым графиком показывается `rendered_text` -
+  РОВНО та фраза, которую человек увидел бы в чате. Посчитай страница хоть один процент сама,
+  и на первой правке бот сказал бы 58%, а картинка нарисовала 61%; расхождение молчаливое, и
+  увидел бы его судья, а не мы.
+
+  ЧЕГО ЗДЕСЬ НЕТ НАРОЧНО:
+    * библиотек графиков. SVG строится руками, потому что три экрана - это прямоугольники и
+      подписи, а любая библиотека тянет вес и свою модель данных;
+    * ключа Nansen и адресов площадки. Страница знает только адрес почтового ящика;
+    * полных адресов кошельков. Шлюз их вычищает (`_strip_private`), и экран показывает то же,
+      что бот: метку или обрезанный адрес;
+    * своих порогов. Порог винрейта и порог «доли от капитализации» приезжают числом.
+-->
+<style>
+  :root{
+    --bg:#0f1115; --card:#171a21; --line:#252a34; --ink:#e8eaee; --dim:#9aa3b2;
+    --weak:#e5533d;      /* винрейт ниже порога — «деньги тех, кто чаще ошибался» */
+    --mid:#d8a23a;       /* середина */
+    --strong:#37a169;    /* винрейт выше */
+    --grey:#5b6474;      /* ИСТОРИЯ НЕ РАЗОБРАНА: не «слабые» и не «сильные» */
+    --long:#e5533d; --short:#37a169;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       padding:0 0 28px;-webkit-text-size-adjust:100%}
+  .wrap{padding:12px 12px 0}
+  .tabs{display:flex;gap:6px;position:sticky;top:0;background:var(--bg);padding:10px 12px;
+        z-index:5;border-bottom:1px solid var(--line)}
+  .tab{flex:1;padding:9px 6px;border:1px solid var(--line);border-radius:10px;
+       background:var(--card);color:var(--dim);text-align:center;font-size:13px;cursor:pointer}
+  .tab.on{color:var(--ink);border-color:#3d4457;background:#1e2230}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+        padding:12px;margin:10px 0}
+  h1{font-size:17px;margin:2px 0 8px}
+  .lead{font-size:16px;line-height:1.35;margin:0 0 6px}
+  .lead b{color:#fff}
+  .dim{color:var(--dim);font-size:12.5px}
+  .row{display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer}
+  .row .nm{flex:0 0 42%;font-size:12.5px;white-space:nowrap;overflow:hidden;
+           text-overflow:ellipsis}
+  .row .barwrap{flex:1;height:18px;background:#11141a;border-radius:4px;overflow:hidden}
+  .row .bar{height:100%}
+  .row .val{flex:0 0 66px;text-align:right;font-size:12px;color:var(--dim)}
+  .det{display:none;padding:6px 0 8px 8px;border-left:2px solid var(--line);
+       margin:0 0 8px 6px;font-size:12.5px;color:var(--dim)}
+  .det.on{display:block}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 2px;font-size:11.5px;
+          color:var(--dim)}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;
+            margin-right:4px;vertical-align:-1px}
+  .sides{display:flex;gap:8px;margin:8px 0}
+  .side{flex:1;background:#11141a;border-radius:8px;padding:7px 9px;font-size:12.5px}
+  .foot{border-top:1px solid var(--line);margin-top:10px;padding-top:8px;
+        font-size:11.5px;color:var(--dim)}
+  .cav{margin:6px 0 0;padding-left:16px}
+  .cav li{margin:2px 0}
+  .said{white-space:pre-wrap;font-size:12px;color:#b9c1cf;background:#11141a;
+        border-radius:8px;padding:9px;margin-top:8px;max-height:210px;overflow:auto}
+  .btns{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 2px}
+  .btn{padding:8px 12px;border:1px solid var(--line);border-radius:9px;background:#1b1f28;
+       color:var(--ink);font-size:13px;cursor:pointer}
+  .btn.on{border-color:#4a86ff;color:#fff}
+  input.mk{width:100%;padding:9px 10px;border-radius:9px;border:1px solid var(--line);
+           background:#11141a;color:var(--ink);font-size:14px}
+  /* РЯД РЫНКА: вопрос крупно, вероятность и объём мелко. Идентификатора в разметке для глаз
+     нет вовсе - он лежит в data-атрибуте и нужен только тапу. */
+  .mkrow{padding:9px 2px;border-bottom:1px solid #1d2230;cursor:pointer}
+  .mkrow:last-child{border-bottom:0}
+  .mkq{font-size:14px;line-height:1.3}
+  .mkmeta{font-size:11.5px;color:var(--dim);margin-top:2px}
+  .warn{background:#2a1c14;border:1px solid #5a3a22;color:#ffd7ad;border-radius:10px;
+        padding:9px 11px;font-size:12.5px;margin:10px 0}
+  .bad{background:#2a1618;border:1px solid #5c2a2e;color:#ffc9cd}
+  /* ПЛАШКА РЕПЕТИЦИИ НЕСВОДИМА: она рисуется по полю ИЗ ОТВЕТА шлюза, а не по флагу
+     страницы, и спрятать её нельзя, не правя код. В финальной записи репетиция запрещена,
+     поэтому плашка в кадре означает «дубль переснять». */
+  .reh{position:sticky;top:52px;z-index:6;background:#3a2a06;border:1px solid #8a6a10;
+       color:#ffe9a8;border-radius:10px;padding:8px 11px;margin:8px 12px;font-size:12.5px;
+       font-weight:600;text-align:center}
+  table.feed{width:100%;border-collapse:collapse;font-size:11.5px}
+  table.feed td{padding:4px 3px;border-bottom:1px solid #1d2230;white-space:nowrap}
+  table.feed td.ep{white-space:normal;color:#b9c1cf}
+  .pill{display:inline-block;padding:1px 6px;border-radius:20px;font-size:10.5px}
+  .p-ok{background:#16341f;color:#8fe0a8} .p-cache{background:#2a2a14;color:#e4e08f}
+  .p-bad{background:#33191c;color:#ffb3ba}
+  .tot{display:flex;gap:8px;margin:2px 0 10px}
+  .tot div{flex:1;background:#11141a;border-radius:8px;padding:7px;text-align:center}
+  .tot b{display:block;font-size:17px;color:#fff}
+  svg{display:block;width:100%;height:auto;overflow:visible}
+</style>
+</head>
+<body>
+
+<div class="tabs">
+  <div class="tab on" id="t_hero">🎭 Whose&nbsp;%</div>
+  <div class="tab" id="t_liq">🗺 Liquidations</div>
+  <div class="tab" id="t_feed">📡 Live&nbsp;calls</div>
+</div>
+
+<div id="rehbar"></div>
+
+<div class="wrap">
+  <div id="scr_hero"></div>
+  <div id="scr_liq" style="display:none"></div>
+  <div id="scr_feed" style="display:none"></div>
+</div>
+
+<script>
+(function () {
+'use strict';
+var TG = window.Telegram && window.Telegram.WebApp;
+try { if (TG) { TG.ready(); TG.expand(); } } catch (e) {}
+
+function qp(k) {
+  try {
+    var m = new RegExp('[?&]' + k + '=([^&]*)').exec(location.search);
+    return m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : '';
+  } catch (e) { return ''; }
+}
+
+var VERSION = '{{VERSION}}';
+
+/* АДРЕС ЯЩИКА: параметр ?api выигрывает у вшитого. Так одна и та же страница работает и с
+   прода, и со стенда - ровно как в Медиаплеере, и по той же причине. */
+var API_BASE = (function () {
+  var p = (qp('api') || '').trim();
+  if (p.indexOf('https://') === 0) return p.replace(/\/+$/, '');
+  var baked = '{{API}}';
+  return baked.indexOf('{{') === 0 ? '' : baked.replace(/\/+$/, '');
+})();
+
+var REHEARSAL = (qp('rehearsal') === '1' || qp('reh') === '1');
+
+/* ЧЕГО НЕ ХВАТАЕТ ДЛЯ ЖИВОГО ЭКРАНА. Две причины - два действия, и сводить их в один
+   bool значит отправить человека чинить не то (разбор в Медиаплеере стоил полдня). */
+function offWhy() {
+  try {
+    if (!API_BASE) return 'noapi';
+    if (!(TG && TG.initData)) return 'nosign';
+    return '';
+  } catch (e) { return 'nosign'; }
+}
+
+var SIG_STEPS = [500, 700, 900, 1200, 1600, 2000];
+var SIG_TRIES = 45;
+
+function sigPost(body) {
+  /* ОТКАЗ НЕСЁТ ФАКТЫ, А НЕ НАСТРОЕНИЕ: куда шли, чем ответили, что сказали. Иначе
+     «не получилось» одинаково выглядит у блокировки CORS и у мёртвой сети. */
+  body = body || {};
+  body.kind = 'nsn';
+  return fetch(API_BASE + '/signal', {
+    method: 'POST',
+    headers: { 'X-Init-Data': (TG && TG.initData) || '', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (j) {
+      j = j || {};
+      if (!r.ok && !j.error) { j.error = 'http' + r.status; }
+      j.__http = r.status;
+      return j;
+    });
+  }).catch(function (e) {
+    return { error: 'net', __net: String((e && e.message) || e).slice(0, 60) };
+  });
+}
+
+function sigPoll(id, n, done, fail) {
+  if (n > SIG_TRIES) { fail('slow'); return; }
+  setTimeout(function () {
+    fetch(API_BASE + '/result?id=' + encodeURIComponent(id),
+          { headers: { 'X-Init-Data': (TG && TG.initData) || '' } })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.state === 'done') { done(j.res || {}); return; }
+        if (j && j.state === 'gone') { fail('gone'); return; }
+        sigPoll(id, n + 1, done, fail);
+      })
+      .catch(function () { sigPoll(id, n + 1, done, fail); });
+  }, SIG_STEPS[Math.min(n, SIG_STEPS.length - 1)]);
+}
+
+/* ЛОКАЛЬНАЯ ФИКСТУРА: РЕПЕТИЦИЯ БЕЗ ЯЩИКА, БЕЗ КЛЮЧА И БЕЗ TELEGRAM.
+   ЗАЧЕМ ЭТА ВЕТКА. Судье на чистой машине нужно увидеть экран за минуту: `git clone`,
+   статический сервер, открыть. Ни ключа Nansen, ни подписи Telegram у него нет и быть не
+   должно. Поэтому при `?rehearsal=1` сначала пробуем ФАЙЛ рядом со страницей, и только если
+   его нет - идём в ящик с флагом репетиции (этот путь нужен Рену на телефоне).
+   Пометка `rehearsal` приезжает В САМОМ ФАЙЛЕ, поэтому плашка рисуется и здесь: локальный
+   просмотр не имеет права выглядеть живым прогоном. */
+function localFixture(scene, done) {
+  fetch('fixtures/' + encodeURIComponent(scene) + '.json', { cache: 'no-store' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (j) { done(j || null); })
+    .catch(function () { done(null); });
+}
+
+/* ОДНА ДВЕРЬ К СЦЕНЕ: попросить и дождаться. Ответ - конверт сцены как есть. */
+function askScene(fields, done) {
+  if (REHEARSAL && fields.sc && fields.sc !== 'feed') {
+    localFixture(fields.sc, function (env) {
+      if (env) { done(env); return; }
+      askLive(fields, done);        /* файла нет - пробуем ящик с флагом репетиции */
+    });
+    return;
+  }
+  askLive(fields, done);
+}
+
+function askLive(fields, done) {
+  var why = offWhy();
+  if (why) {
+    done({ outcome: 'nokey', refusal: why === 'nosign'
+           ? 'Open this screen from Telegram: the signature is missing.'
+           : 'The screen has no gateway address yet. Reopen it from a fresh bot link.' });
+    return;
+  }
+  if (REHEARSAL) { fields.rh = 1; }
+  sigPost(fields).then(function (j) {
+    if (!j || j.error || !j.id) {
+      var host = '';
+      try { host = new URL(API_BASE).host; } catch (e) { host = API_BASE || '?'; }
+      done({ outcome: 'http', refusal: 'Request did not go out [' + host
+             + ((j && j.__http) ? ' ' + j.__http : '')
+             + ((j && j.__net) ? ' ' + j.__net : '') + ']' });
+      return;
+    }
+    sigPoll(j.id, 0, done, function (why2) {
+      done({ outcome: 'timeout', refusal: why2 === 'slow'
+             ? 'The bot is still counting. Try again in a moment.'
+             : 'The answer was already taken. Tap again.' });
+    });
+  });
+}
+
+/* ── формат чисел. ЕДИНСТВЕННАЯ АРИФМЕТИКА НА СТРАНИЦЕ - ЭТО ФОРМАТ, А НЕ СМЫСЛ ── */
+function usd(v) {
+  if (v === null || v === undefined || v === '') return '?';
+  var n = Number(v);
+  if (!isFinite(n)) return '?';
+  var a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (a >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (a >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return n.toFixed(0);
+}
+function price(v) {
+  var n = Number(v);
+  if (!isFinite(n)) return '?';
+  if (Math.abs(n) >= 1000) return usd(n);
+  return n.toFixed(2);
+}
+function esc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+/* ФРАЗА БОТА ПОКАЗЫВАЕТСЯ ТЕКСТОМ, А НЕ РАЗМЕТКОЙ: теги Telegram (<b>, <code>, <i>)
+   снимаем, содержимое оставляем. Вставлять чужую разметку в DOM незачем. */
+function plain(s) {
+  return String(s || '').replace(/<[^>]*>/g, '');
+}
+function ago(sec) {
+  if (sec === null || sec === undefined) return 'freshness not measured';
+  var n = Math.round(Number(sec));
+  if (!isFinite(n)) return 'freshness not measured';
+  if (n < 60) return n + 's ago';
+  if (n < 3600) return Math.round(n / 60) + 'm ago';
+  return Math.round(n / 3600) + 'h ago';
+}
+
+/* ПОДВАЛ ЭКРАНА: источник, свежесть, цена, оговорки. ОБЯЗАТЕЛЕН НА КАЖДОМ ЭКРАНЕ - цифра
+   без источника и возраста выглядит как наше собственное знание неизвестной давности. */
+function footer(env) {
+  var cost = (env.cost_credits === null || env.cost_credits === undefined)
+    ? ((env.cost_requests || 0) + ' request' + ((env.cost_requests === 1) ? '' : 's'))
+    : ((env.cost_credits) + ' credits · ' + (env.cost_requests || 0) + ' requests');
+  var h = '<div class="foot">Source: ' + esc(env.source || 'Nansen') + ' · '
+        + esc(ago(env.freshness_seconds)) + ' · ' + esc(cost);
+  if (env.cost_credits === null || env.cost_credits === undefined) {
+    h += '<br><span class="dim">Credit price is not published for these endpoints, so the '
+       + 'cost is named in requests.</span>';
+  }
+  var cav = env.caveats || [];
+  if (cav.length) {
+    h += '<ul class="cav">';
+    for (var i = 0; i < cav.length; i++) h += '<li>' + esc(cav[i]) + '</li>';
+    h += '</ul>';
+  }
+  if (env.rendered_text) {
+    h += '<div class="dim" style="margin-top:8px">What the bot says in chat, verbatim:</div>'
+       + '<div class="said">' + esc(plain(env.rendered_text)) + '</div>';
+  }
+  return h + '</div>';
+}
+
+function refuse(env) {
+  /* СОСТОЯНИЕ, А НЕ ПУСТОЙ ГРАФИК. Шесть нулевых столбиков выглядят как измерение и врут
+     сильнее, чем отсутствие картинки, поэтому при отказе рисуется ПРИЧИНА. */
+  return '<div class="card"><div class="warn bad"><b>' + esc(env.outcome || 'error')
+       + '</b><br>' + esc(plain(env.refusal || 'No reason given.')) + '</div>'
+       + '<div class="dim">This is a state, not an empty chart: a blank graph would look '
+       + 'like a measurement.</div></div>';
+}
+
+function loading(what) {
+  return '<div class="card"><div class="dim">' + esc(what) + '</div></div>';
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ЭКРАН 1. «ЧЬИ 90%» — состав убеждённости рынка
+   ═══════════════════════════════════════════════════════════════════════════ */
+var HERO = { market: (qp('market') || qp('mk') || ''), env: null, open: -1, list: null };
+
+function wrBucket(h) {
+  /* ЦВЕТ = КОРЗИНА ВИНРЕЙТА, а серый = ИСТОРИЯ НЕ РАЗОБРАНА. Серый не суммируется ни в
+     одну сторону, и легенда это говорит словами: приписать кошельку винрейт, которого мы
+     не знаем, значит подогнать вывод. Порог приезжает числом из словаря. */
+  if (h.wr === null || h.wr === undefined) return 'grey';
+  var thr = (HERO.env && HERO.env.threshold_weak_wr) || 40;
+  if (Number(h.wr) < thr) return 'weak';
+  if (Number(h.wr) < 60) return 'mid';
+  return 'strong';
+}
+
+function heroHTML(env) {
+  if (!env) return loading('Asking Nansen…');
+  if (env.outcome !== 'ok' || !env.payload) return refuse(env);
+  var p = env.payload, thr = env.threshold_weak_wr || 40;
+  var weak = Number(p.weak_usd || 0), strong = Number(p.strong_usd || 0);
+  var known = weak + strong;
+  var pct = known ? Math.round(100 * weak / known) : 0;
+  var h = '<div class="card">';
+  /* ЗАГОЛОВОЧНАЯ СТРОКА - ВЕЛИЧИНА, И ОНА ПЕРВАЯ. Числа из словаря, ни одного своего. */
+  h += '<p class="lead">Of <b>$' + usd(known) + '</b> examined, <b>$' + usd(weak)
+     + ' (' + pct + '%)</b> sits with wallets whose win rate is below ' + thr + '%.</p>';
+  h += '<div class="dim">market <code>' + esc(env.market_id || HERO.market) + '</code></div>';
+
+  var sides = p.by_side || {}, sk = Object.keys(sides);
+  if (sk.length) {
+    h += '<div class="sides">';
+    for (var s = 0; s < Math.min(sk.length, 3); s++) {
+      h += '<div class="side"><b>' + esc(sk[s]) + '</b><br>$' + usd(sides[sk[s]]) + '</div>';
+    }
+    h += '</div>';
+  }
+
+  var hs = (p.holders || []).slice(0, env.top || 5);
+  var max = 0, i;
+  for (i = 0; i < hs.length; i++) max = Math.max(max, Number(hs[i].usd || 0));
+  h += '<div class="dim" style="margin-top:6px">Holders (' + hs.length + ' of '
+     + (p.holders || []).length + ' examined) — area is money, colour is win rate:</div>';
+  for (i = 0; i < hs.length; i++) {
+    var x = hs[i], b = wrBucket(x);
+    var w = max ? Math.max(3, Math.round(100 * Number(x.usd || 0) / max)) : 3;
+    h += '<div class="row" data-h="' + i + '">'
+       + '<div class="nm">' + esc(x.who || '?') + ' <span class="dim">['
+       + esc(x.side || '?') + ']</span></div>'
+       + '<div class="barwrap"><div class="bar" style="width:' + w + '%;background:var(--'
+       + b + ')"></div></div>'
+       + '<div class="val">$' + usd(x.usd) + '</div></div>';
+    h += '<div class="det' + (HERO.open === i ? ' on' : '') + '" id="det' + i + '">'
+       + (x.wr === null || x.wr === undefined
+          ? 'History not examined — this money is counted on NEITHER side.'
+          : ('win rate ' + Math.round(x.wr) + '%'))
+       + (x.pnl !== null && x.pnl !== undefined ? ' · PnL $' + usd(x.pnl) : '')
+       + (x.markets ? ' · ' + x.markets + ' markets' : '')
+       + (x.entry !== null && x.entry !== undefined && x.px !== null && x.px !== undefined
+          ? ' · entry ' + Math.round(x.entry * 100) + '¢ → ' + Math.round(x.px * 100) + '¢'
+          : '')
+       + (x.status && x.status !== 'ok' ? ' · ' + esc(x.status) : '')
+       + '</div>';
+  }
+  h += '<div class="legend">'
+     + '<span><i style="background:var(--weak)"></i>below ' + thr + '%</span>'
+     + '<span><i style="background:var(--mid)"></i>' + thr + '–60%</span>'
+     + '<span><i style="background:var(--strong)"></i>above 60%</span>'
+     + '<span><i style="background:var(--grey)"></i>history not examined — counted on '
+     + 'NEITHER side</span></div>';
+  h += '<div class="dim" style="margin-top:6px">This is the composition of conviction, '
+     + 'not a prediction and not advice.</div>';
+  h += footer(env) + '</div>';
+  return h;
+}
+
+/* СПИСОК РЫНКОВ - ЭТО И ЕСТЬ ВХОД. Идентификатор рынка человеку показывать незачем: он
+   служебный, и требовать его значило бы отправить человека искать номер на стороне Polymarket,
+   то есть заставить работать ВНЕ экрана. Здесь он ездит в `data-mk` и нигде не виден. */
+function marketsHTML() {
+  if (!HERO.list) return loading('Loading trending markets…');
+  if (HERO.list.outcome !== 'ok' || !HERO.list.payload) return refuse(HERO.list);
+  var rows = HERO.list.payload.rows || [];
+  var h = '<div class="card"><div class="dim">Tap a market — I will show whose money is '
+        + 'behind its price.</div>';
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var dis = r.id ? '' : ' style="opacity:.45"';
+    h += '<div class="mkrow"' + dis + (r.id ? ' data-mk="' + esc(r.id) + '"' : '') + '>'
+       + '<div class="mkq">' + esc(r.q) + '</div>'
+       + '<div class="mkmeta">' + (r.prob === null ? '?' : (r.prob + '%'))
+       + ' · vol24 $' + usd(r.vol24)
+       + (r.id ? '' : ' · <i>no id: cannot open</i>') + '</div></div>';
+  }
+  h += footer(HERO.list) + '</div>';
+  return h;
+}
+
+function heroRender() {
+  var el = document.getElementById('scr_hero');
+  var head = '<div class="card"><h1>A market says 90% YES. Whose conviction is it?</h1>'
+    + '<div class="dim">Price alone cannot tell a signal from a crowd. Pick a market.</div>'
+    + (HERO.market
+       ? '<div class="btns"><span class="btn" id="mkback">« back to markets</span></div>'
+       : '')
+    + '</div>';
+  // НИ ОДНОГО «Asking Nansen…» БЕЗ ЗАПРОСА. Раньше пустой экран показывал строку загрузки,
+  // хотя ничего не спрашивал: человек ждал ответа, которого никто не просил.
+  el.innerHTML = head + (HERO.market ? heroHTML(HERO.env) : marketsHTML());
+  var bk = document.getElementById('mkback');
+  if (bk) {
+    bk.onclick = function () {
+      HERO.market = ''; HERO.env = null; HERO.open = -1; heroRender();
+    };
+  }
+  var mk = el.querySelectorAll('.mkrow[data-mk]');
+  for (var j = 0; j < mk.length; j++) {
+    mk[j].onclick = (function (id) {
+      return function () {
+        HERO.market = id; HERO.env = null; HERO.open = -1; heroRender();
+        askScene({ sc: 'pm_reputation', mk: id, lg: 'en' }, function (env) {
+          HERO.env = env; showReh(env); heroRender();
+        });
+      };
+    })(mk[j].getAttribute('data-mk'));
+  }
+  var rows = el.querySelectorAll('.row[data-h]');
+  for (var i = 0; i < rows.length; i++) {
+    rows[i].onclick = (function (n) {
+      return function () {
+        HERO.open = (HERO.open === n ? -1 : n);
+        var d = document.getElementById('det' + n);
+        var all = el.querySelectorAll('.det');
+        for (var k = 0; k < all.length; k++) { all[k].className = 'det'; }
+        if (d && HERO.open === n) d.className = 'det on';
+      };
+    })(i);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ЭКРАН 2. КАРТА ЛИКВИДАЦИЙ — где висит чужое плечо
+   ═══════════════════════════════════════════════════════════════════════════ */
+var LIQ = { token: (qp('token') || 'BTC').toUpperCase(), env: null, pick: -1 };
+var LIQ_TOKENS = ['BTC', 'ETH', 'SOL', 'HYPE'];
+
+function liqSVG(p) {
+  var b = p.buckets || [];
+  if (!b.length) return '';
+  var W = 320, H = 150, pad = 22, n = b.length;
+  var max = 0, i;
+  for (i = 0; i < n; i++) max = Math.max(max, Number(b[i][2] || 0));
+  var bw = (W - pad * 2) / n;
+  var lo = Number(b[0][0]), hi = Number(b[n - 1][1]);
+  var s = '<svg viewBox="0 0 ' + W + ' ' + (H + 18) + '" role="img">';
+  for (i = 0; i < n; i++) {
+    var v = Number(b[i][2] || 0);
+    var hgt = max ? Math.max(2, (H - pad) * v / max) : 2;
+    var x = pad + i * bw, y = H - hgt;
+    var side = String(b[i][3] || '');
+    var col = side === 'SHORT' ? 'var(--short)' : (side === 'LONG' ? 'var(--long)' : '#6b7280');
+    s += '<rect data-b="' + i + '" x="' + (x + 1).toFixed(1) + '" y="' + y.toFixed(1)
+       + '" width="' + Math.max(1, bw - 2).toFixed(1) + '" height="' + hgt.toFixed(1)
+       + '" fill="' + col + '" opacity="' + (LIQ.pick === i ? '1' : '0.82') + '" rx="1"/>';
+  }
+  /* ПУНКТИР ТЕКУЩЕЙ ЦЕНЫ. Нет цены - НЕТ И ОТМЕТКИ: выдуманная цена дала бы «осталось 3%»,
+     которого никто не мерил. Карта без отметки остаётся честной картой уровней. */
+  var mark = p.mark;
+  if (mark !== null && mark !== undefined && hi > lo) {
+    var mx = pad + (W - pad * 2) * (Number(mark) - lo) / (hi - lo);
+    if (mx >= pad && mx <= W - pad) {
+      s += '<line x1="' + mx.toFixed(1) + '" y1="4" x2="' + mx.toFixed(1) + '" y2="' + H
+         + '" stroke="#e8eaee" stroke-width="1" stroke-dasharray="3 3"/>'
+         + '<text x="' + Math.min(W - 40, mx + 3).toFixed(1)
+         + '" y="12" fill="#e8eaee" font-size="9">now $' + esc(price(mark)) + '</text>';
+    }
+  }
+  s += '<line x1="' + pad + '" y1="' + H + '" x2="' + (W - pad) + '" y2="' + H
+     + '" stroke="#252a34"/>';
+  s += '<text x="' + pad + '" y="' + (H + 13) + '" fill="#9aa3b2" font-size="9">$'
+     + esc(price(lo)) + '</text>';
+  s += '<text x="' + (W - pad) + '" y="' + (H + 13)
+     + '" text-anchor="end" fill="#9aa3b2" font-size="9">$' + esc(price(hi)) + '</text>';
+  s += '</svg>';
+  return s;
+}
+
+function liqHTML(env) {
+  if (!env) return loading('Asking Nansen…');
+  if (env.outcome !== 'ok' || !env.payload) return refuse(env);
+  var p = env.payload;
+  var h = '<div class="card">';
+  var top = p.top || [];
+  h += '<p class="lead">Biggest cluster: <b>$' + usd(top[2]) + '</b> between $'
+     + price(top[0]) + ' and $' + price(top[1]) + '.</p>';
+  h += '<div class="dim">On the map: $' + usd(p.total) + ' across ' + (p.shown || 0)
+     + ' position(s) · longs $' + usd(p.longs) + ' vs shorts $' + usd(p.shorts) + '</div>';
+  h += liqSVG(p);
+  h += '<div class="legend"><span><i style="background:var(--long)"></i>longs</span>'
+     + '<span><i style="background:var(--short)"></i>shorts</span>'
+     + '<span>dashed — current price</span></div>';
+  h += '<div class="det' + (LIQ.pick >= 0 ? ' on' : '') + '" id="liqdet">'
+     + (LIQ.pick >= 0 && p.buckets && p.buckets[LIQ.pick]
+        ? ('$' + usd(p.buckets[LIQ.pick][2]) + ' between $' + price(p.buckets[LIQ.pick][0])
+           + ' and $' + price(p.buckets[LIQ.pick][1])
+           + (p.buckets[LIQ.pick][3] ? ' · mostly ' + esc(p.buckets[LIQ.pick][3]) : ''))
+        : 'Tap a bar for its level and size.') + '</div>';
+  h += '<div class="dim">These are other people\'s stop-out levels, not a forecast.</div>';
+  h += footer(env) + '</div>';
+  return h;
+}
+
+function liqRender() {
+  var el = document.getElementById('scr_liq');
+  var h = '<div class="card"><h1>Where other people\'s leverage hangs</h1>'
+        + '<div class="dim">Capital grouped by liquidation price.</div><div class="btns">';
+  for (var i = 0; i < LIQ_TOKENS.length; i++) {
+    h += '<span class="btn' + (LIQ_TOKENS[i] === LIQ.token ? ' on' : '') + '" data-tk="'
+       + LIQ_TOKENS[i] + '">' + LIQ_TOKENS[i] + '</span>';
+  }
+  h += '</div></div>';
+  el.innerHTML = h + liqHTML(LIQ.env);
+  var bs = el.querySelectorAll('.btn[data-tk]');
+  for (i = 0; i < bs.length; i++) {
+    bs[i].onclick = (function (tk) {
+      return function () { LIQ.token = tk; LIQ.env = null; LIQ.pick = -1; liqLoad(); };
+    })(bs[i].getAttribute('data-tk'));
+  }
+  var rects = el.querySelectorAll('rect[data-b]');
+  for (i = 0; i < rects.length; i++) {
+    rects[i].onclick = (function (n) {
+      return function () { LIQ.pick = (LIQ.pick === n ? -1 : n); liqRender(); };
+    })(Number(rects[i].getAttribute('data-b')));
+  }
+}
+
+function liqLoad() {
+  liqRender();
+  askScene({ sc: 'liq_map', tk: LIQ.token, lg: 'en' }, function (env) {
+    LIQ.env = env; showReh(env); liqRender();
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ЭКРАН 3. ПОТОК ВЫЗОВОВ — доказательство живости
+   ═══════════════════════════════════════════════════════════════════════════ */
+var FEED = { env: null, timer: null };
+
+function feedHTML(f) {
+  if (!f) return loading('Reading telemetry…');
+  if (f.outcome && f.outcome !== 'ok' && !f.rows) return refuse(f);
+  var t = f.totals || {}, rows = (f.rows || []).slice().reverse();
+  var h = '<div class="card"><div class="tot">'
+    + '<div><b>' + (t.calls || 0) + '</b><span class="dim">calls today</span></div>'
+    + '<div><b>' + (t.credits || 0) + '</b><span class="dim">credits</span></div>'
+    + '<div><b>' + (t.cache_share || 0) + '%</b><span class="dim">from cache</span></div>'
+    + '</div>';
+  h += '<table class="feed"><tbody>';
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var cls = r.cache ? 'p-cache' : (r.out === 'ok' ? 'p-ok' : 'p-bad');
+    var lab = r.cache ? 'cache' : r.out;
+    var d = new Date((r.ts || 0) * 1000);
+    var hh = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2)
+           + ':' + ('0' + d.getSeconds()).slice(-2);
+    h += '<tr><td class="dim">' + hh + '</td><td class="ep">' + esc(r.ep) + '</td>'
+       + '<td><span class="pill ' + cls + '">' + esc(lab) + '</span></td>'
+       + '<td class="dim">' + (r.ms || 0) + 'ms</td>'
+       + '<td class="dim">' + (r.cr || 0) + 'cr</td>'
+       + '<td class="dim">' + esc(r.surface || '') + '</td></tr>';
+  }
+  h += '</tbody></table>';
+  if (!rows.length) {
+    h += '<div class="dim">No calls recorded yet today. Open another screen and they will '
+       + 'appear here within a second.</div>';
+  }
+  h += '<div class="foot">One row per network call, written by the bot\'s telemetry. '
+     + 'People are not identifiable here: the log stores a daily hash, and it never leaves '
+     + 'the server.</div></div>';
+  return h;
+}
+
+function feedRender() { document.getElementById('scr_feed').innerHTML = feedHTML(FEED.env); }
+
+function feedLoad() {
+  if (REHEARSAL) {
+    /* В РЕПЕТИЦИИ ПОТОК ВЫЗОВОВ ВЫКЛЮЧЕН НАРОЧНО: он и есть доказательство живости, а
+       записанные строки доказывали бы обратное. */
+    document.getElementById('scr_feed').innerHTML =
+      '<div class="card"><div class="warn">Live call feed is disabled in rehearsal mode: '
+      + 'recorded rows would be the opposite of a liveness proof.</div></div>';
+    return;
+  }
+  askScene({ sc: 'feed', n: 40 }, function (f) { FEED.env = f; feedRender(); });
+}
+
+/* ПЛАШКА РЕПЕТИЦИИ РИСУЕТСЯ ПО ОТВЕТУ ШЛЮЗА, а не по параметру страницы: спрятать её,
+   не правя код, нельзя, и потому дубль с плашкой видно сразу. */
+function showReh(env) {
+  var bar = document.getElementById('rehbar');
+  if (env && env.rehearsal) {
+    bar.innerHTML = '<div class="reh">REHEARSAL · recorded '
+      + esc(env.recorded_at || 'unknown') + ' · not live data</div>';
+  }
+}
+
+/* ── табы ── */
+var TABS = [['t_hero', 'scr_hero'], ['t_liq', 'scr_liq'], ['t_feed', 'scr_feed']];
+function show(which) {
+  for (var i = 0; i < TABS.length; i++) {
+    var on = (TABS[i][0] === which);
+    document.getElementById(TABS[i][0]).className = 'tab' + (on ? ' on' : '');
+    document.getElementById(TABS[i][1]).style.display = on ? '' : 'none';
+  }
+  if (FEED.timer) { clearInterval(FEED.timer); FEED.timer = null; }
+  if (which === 't_feed' && !REHEARSAL) {
+    feedLoad();
+    FEED.timer = setInterval(feedLoad, 1000);   /* раз в секунду, как просит ТЗ */
+  }
+  if (which === 't_liq' && !LIQ.env) liqLoad();
+}
+for (var i = 0; i < TABS.length; i++) {
+  document.getElementById(TABS[i][0]).onclick = (function (w) {
+    return function () { show(w); };
+  })(TABS[i][0]);
+}
+
+heroRender();
+if (HERO.market) {
+  // Рынок пришёл параметром (переход из чата) - открываем сразу, список не нужен.
+  askScene({ sc: 'pm_reputation', mk: HERO.market, lg: 'en' }, function (env) {
+    HERO.env = env; showReh(env); heroRender();
+  });
+} else {
+  askScene({ sc: 'pm_markets', lg: 'en' }, function (env) {
+    HERO.list = env; showReh(env); heroRender();
+  });
+}
+if (REHEARSAL) {
+  document.getElementById('rehbar').innerHTML =
+    '<div class="reh">REHEARSAL MODE REQUESTED · answers come from recorded fixtures</div>';
+}
+})();
+</script>
+</body>
+</html>

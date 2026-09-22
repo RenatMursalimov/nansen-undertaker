@@ -214,18 +214,28 @@ _SEV = {'ok': 0, 'empty': 1, 'unsupported': 2, 'http': 3, 'badreq': 4, 'timeout'
         'ratelimit': 6, 'nocredits': 7, 'nokey': 8}
 
 
-def _new_box(scene_name=None, uid=None):
+def _new_box(scene_name=None, uid=None, surface=None):
     # `fails` - ЧТО ИМЕННО НЕ ПРИЕХАЛО, парами (эндпоинт, код). Одного `outcomes` мало:
     # блок из трёх запросов, где два упали 422, а третий ответил, СОБИРАЕТСЯ и выглядит
     # целым. Худший исход не «пусто», а «непустой блок без двух третей данных»: человек не
     # узнаёт, что метки и PnL не приезжали вовсе. Поймано живым прогоном 14.09 на профиле
     # кошелька.
     return {'scene': scene_name, 'uid': uid, 'outcomes': [], 'age': None,
-            'http': 0, 'cache_only': True, 'fails': [], 'calls': 0}
+            'http': 0, 'cache_only': True, 'fails': [], 'calls': 0,
+            'surface': surface if surface in _SURFACES else DEFAULT_SURFACE}
+
+
+#: ПОВЕРХНОСТИ: где человек увидел экран. Мини-апп - НОВАЯ ПОВЕРХНОСТЬ СТАРОЙ СЦЕНЫ, а не
+#: новая сцена: заведи ему отдельные имена сцен, и расход по сценам перестанет складываться -
+#: «репутация рынка» оказалась бы в двух строках сводки, и ни одна не отвечала бы на вопрос
+#: «сколько всего стоил этот экран». Поэтому сцена одна, а поверхность - отдельная колонка.
+SURFACES = ('chat', 'miniapp', 'cron')
+_SURFACES = frozenset(SURFACES)
+DEFAULT_SURFACE = 'chat'
 
 
 @contextlib.contextmanager
-def scene(name, uid=None):
+def scene(name, uid=None, surface=DEFAULT_SURFACE):
     """Пометить участок кода сценарием (и человеком, если он есть). Контекстный менеджер.
 
     Имя ставит ВЫЗЫВАЮЩИЙ, а не аргумент клиента: клиент не знает и не должен знать, каким
@@ -236,11 +246,17 @@ def scene(name, uid=None):
 
     Сцену НЕ УГАДЫВАЕМ: чужое имя и отсутствие имени дают `scene=?` и отдельную строку
     «БЕЗ СЦЕНЫ» в суточной сводке.
+
+    `surface` - ГДЕ человек это увидел: 'chat' (по умолчанию, ответ в Telegram), 'miniapp'
+    (экран мини-аппа), 'cron' (фоновая джоба). Чужое значение молча падает в 'chat': поверхность
+    это разрез отчёта, и ломать запись строки из-за опечатки в нём нельзя.
     """
     nm = name if name in _SCENES else None
     if name and nm is None:
         print('[nansen_log] сцена %r не в реестре -> scene=?' % (name,))
-    box = _new_box(nm, uid)
+    if surface not in _SURFACES:
+        print('[nansen_log] поверхность %r не в реестре -> %s' % (surface, DEFAULT_SURFACE))
+    box = _new_box(nm, uid, surface)
     tok = _BOX.set(box)
     prev = getattr(_TL, 'box', None)
     _TL.box = box
@@ -252,6 +268,18 @@ def scene(name, uid=None):
             _BOX.reset(tok)
         except ValueError:
             pass                      # сброс в другом контексте (to_thread) — не беда
+
+
+def surface():
+    """Поверхность текущей сцены: где человек увидит результат. -> str.
+
+    Отдельной функцией, потому что читают её двое (`record` и `note_quota`), и «взять из
+    коробки, а если её нет - по умолчанию» - правило, которому положено жить в одном месте.
+    """
+    try:
+        return (box() or {}).get('surface') or DEFAULT_SURFACE
+    except Exception:
+        return DEFAULT_SURFACE
 
 
 def box():
@@ -503,7 +531,10 @@ def record(ep, ms=0, http=0, ok=False, empty=False, cache=False, rem=None, used=
            'cache': 1 if cache else 0,
            'out': _outcome_slug(cache, http, ok, empty, cls),
            'rem': rem, 'used': used, 'd': d,
-           'est': est, 'cr': credits, 'u': u, 'rep': rep}
+           'est': est, 'cr': credits, 'u': u, 'rep': rep,
+           # ПОВЕРХНОСТЬ БЕРЁТСЯ ИЗ КОРОБКИ, А НЕ ИЗ АРГУМЕНТА: её знает тот, кто открыл
+           # сцену (чат/мини-апп/крон), а не клиент на дне стека.
+           'srf': b.get('surface') or DEFAULT_SURFACE}
     _write(day, row)
     _ledger(day, ts, uid, row, sig)
     _track_cost(ep, credits, uid, cache)
@@ -560,15 +591,19 @@ def note_quota(scene_name, uid, ep='-'):
     row = {'ts': ts, 'scene': scene_name if scene_name in _SCENES else '?', 'ep': ep,
            'ms': 0, 'http': 0, 'ok': 0, 'empty': 0, 'cache': 0, 'out': 'quota_user',
            'rem': None, 'used': None, 'd': None, 'est': 0, 'cr': 0,
-           'u': u, 'rep': _bump_rep(u, day)}
+           'u': u, 'rep': _bump_rep(u, day), 'srf': surface()}
     _write(day, row)
     return row
 
 
 def _fmt(row):
     out = []
+    # ПОРЯДОК КЛЮЧЕЙ ЗАФИКСИРОВАН, А `srf` ДОПИСАН В КОНЕЦ. Разбор идёт по `k=v`, поэтому
+    # новая колонка в конце не ломает чтение старых файлов: у строк до этой правки её просто
+    # нет, и читатель подставит значение по умолчанию. Вставь её в середину - и старые файлы
+    # пришлось бы читать вторым способом.
     for k in ('ts', 'scene', 'ep', 'ms', 'http', 'ok', 'empty', 'cache', 'out', 'rem', 'used',
-              'd', 'est', 'cr', 'u', 'rep'):
+              'd', 'est', 'cr', 'u', 'rep', 'srf'):
         v = row.get(k)
         out.append('%s=%s' % (k, '' if v is None else v))
     return ' '.join(out)

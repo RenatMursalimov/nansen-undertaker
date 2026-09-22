@@ -1,0 +1,64 @@
+{
+ "caveats": [
+  "1 position(s) had no liquidation price and are NOT on the map",
+  "these are where other people stop out, not a forecast"
+ ],
+ "cost_credits": null,
+ "cost_requests": 1,
+ "freshness_seconds": null,
+ "lang": "en",
+ "outcome": "ok",
+ "payload": {
+  "buckets": [
+   [
+    59900.0,
+    60942.857142857145,
+    900000.0,
+    "LONG"
+   ],
+   [
+    60942.857142857145,
+    61985.71428571428,
+    10700000.0,
+    "LONG"
+   ],
+   [
+    61985.71428571428,
+    63028.57142857143,
+    11800000.0,
+    "LONG"
+   ],
+   [
+    70328.57142857143,
+    71371.42857142858,
+    5200000.0,
+    "SHORT"
+   ],
+   [
+    73457.14285714286,
+    74500.0,
+    3000000.0,
+    "SHORT"
+   ]
+  ],
+  "longs": 23400000.0,
+  "mark": 86682.0,
+  "no_liq": 1,
+  "shorts": 8200000.0,
+  "shown": 5,
+  "top": [
+   61985.71428571428,
+   63028.57142857143,
+   11800000.0
+  ],
+  "total": 31600000.0
+ },
+ "provenance": "synthetic",
+ "recorded_at": "2026-09-22T17:58:47Z",
+ "rehearsal": true,
+ "rendered_text": "BTC liquidation map. Biggest cluster: $11.8M between $62.0K and $63.0K. Total on the map: $31.6M across 5 position(s). Longs $23.4M vs shorts $8.2M. 1 position(s) had no liquidation price and are NOT on the map. This is where other people stop out, not a forecast. Source: Nansen.",
+ "scene": "liq_map",
+ "source": "Nansen",
+ "surface": "miniapp",
+ "token": "BTC"
+}
