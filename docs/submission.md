@@ -83,8 +83,9 @@ screen run in parallel with a 10-second timeout and preserve each failure class.
   - 1 local contribution-tally workflow that reads the integration's own ledger.
 - **29 unique API routes** drive those documented workflows; remaining routes are explicitly
   listed as client-only/owner-only rather than presented as shipped user scenarios.
-- **26 telemetry scenes**, including separate evidence for market list, chart, orderbook, holder
-  reputation, wallet profile, market leaders and liquidation map.
+- **28 telemetry scenes**, including separate evidence for market list, chart, orderbook, holder
+  reputation, wallet profile, market leaders, liquidation map, fresh endpoint sweeps and isolated
+  human-gated trade diagnostics.
 
 Counts are generated from code. Do not copy old counts from commit messages.
 

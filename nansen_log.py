@@ -95,6 +95,8 @@ SCENES = (
     'wallet_perps',            # «нансен перпы 0x…» (здоровье счёта, запас до ликвидации)
     'digest_cron',             # утренний дайджест
     'tweet_cron',              # твит-джобы
+    'endpoint_sweep',          # fresh server sweep: all safe client routes, no person
+    'trade_probe',             # isolated human-gated quote/prepare/status diagnostics
     'admin_backfill',          # бэкфилл истории потоков (владелец)
     'chart',                   # свечи для графика/бэктеста
     'trends',                  # секция smart money в Трендах
@@ -351,31 +353,49 @@ def cache_only():
 # запроса бот не знал об остатке ничего и показывал владельцу пустоту.
 # ═══════════════════════════════════════════════════════════════════════════
 def credits_read():
-    """Что мы знаем об остатке. -> dict {remaining, used, ts} (пустые значения = None)."""
+    """Persisted credit snapshot, including invalidity that must survive restart."""
+    pending = CREDITS_FILE + '.pending'
+    # A process may have died while writing the next snapshot. Trusting the previous number as
+    # fresh would fail open; the mere pending marker makes the balance invalid until a later
+    # successful atomic replace removes it.
+    if os.path.exists(pending):
+        return {'remaining': None, 'used': None, 'ts': 0, 'invalid': True}
     try:
         with open(CREDITS_FILE, encoding='utf-8') as f:
             d = json.loads(f.read().strip() or '{}')
         if isinstance(d, dict):
             return {'remaining': d.get('remaining'), 'used': d.get('used'),
-                    'ts': d.get('ts') or 0}
-    except Exception:
+                    'ts': d.get('ts') or 0, 'invalid': bool(d.get('invalid'))}
+    except FileNotFoundError:
         pass
-    return {'remaining': None, 'used': None, 'ts': 0}
+    except Exception:
+        # A legacy/torn target file is unknown credit state, never a clean empty snapshot.
+        return {'remaining': None, 'used': None, 'ts': 0, 'invalid': True}
+    return {'remaining': None, 'used': None, 'ts': 0, 'invalid': False}
 
 
-def credits_write(remaining=None, used=None):
-    """Запомнить остаток НА ДИСКЕ. Вызывается из `_note_credits`, стоит один write."""
+def credits_write(remaining=None, used=None, invalid=False):
+    """Persist a credit snapshot atomically; a torn pending write remains fail-closed."""
     d = credits_read()
-    if remaining is not None:
+    if invalid:
+        d['remaining'] = None
+        d['invalid'] = True
+    elif remaining is not None:
         d['remaining'] = remaining
+        d['invalid'] = False
     if used is not None:
         d['used'] = used
     d['ts'] = int(time.time())
+    pending = CREDITS_FILE + '.pending'
     try:
-        with open(CREDITS_FILE, 'w', encoding='utf-8') as f:
+        with open(pending, 'w', encoding='utf-8') as f:
             json.dump(d, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(pending, CREDITS_FILE)
     except Exception as e:
-        print('[nansen_log] остаток не записался: %s' % str(e)[:120])
+        # Do not delete pending: its presence is the restart-safe invalidity marker.
+        print('[nansen_log] остаток не записался атомарно: %s' % str(e)[:120])
     return d
 
 

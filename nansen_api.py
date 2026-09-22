@@ -70,7 +70,7 @@ except Exception as _tele_err:                                   # pragma: no co
             return ''
 
         def credits_read(self):
-            return {'remaining': None, 'used': None, 'ts': 0}
+            return {'remaining': None, 'used': None, 'ts': 0, 'invalid': False}
 
         def credits_write(self, *a, **kw):
             return None
@@ -344,7 +344,7 @@ def smart_money_netflow(chains=None, timeframe="24h", only_smart_money=True, per
 # Остаток кредитов приходит В ЗАГОЛОВКАХ ЛЮБОГО ответа, поэтому отдельный запрос за ним
 # не нужен. Раньше credits_left() дёргал agent/fast со словом «hi» — то есть проверка
 # баланса стоила ~200 кредитов и сама же его уменьшала.
-_CREDITS = {'remaining': None, 'used': None, 'ts': 0}
+_CREDITS = {'remaining': None, 'used': None, 'ts': 0, 'invalid': False}
 _CREDITS_LOCK = threading.RLock()
 
 
@@ -363,34 +363,52 @@ def _note_credits(hdr):
         return
     with _CREDITS_LOCK:
         try:
-            _CREDITS['remaining'] = int(float(rem))
+            _rv = int(str(rem).strip())
+            if _rv < 0:
+                raise ValueError('negative remaining credits')
+            _CREDITS['remaining'] = _rv
+            _CREDITS['invalid'] = False
         except (TypeError, ValueError):
-            _CREDITS['remaining'] = rem
+            # Decimal/negative/garbage is not an approximate balance. Keep it invalid so a
+            # budgeted sweep fails closed instead of truncating e.g. 42.5 to 42.
+            _CREDITS['remaining'] = None
+            _CREDITS['invalid'] = True
         used = low.get('x-nansen-credits-used')
         if used is not None:
             try:
-                _CREDITS['used'] = int(float(used))
+                _uv = int(str(used).strip())
+                _CREDITS['used'] = _uv if _uv >= 0 else None
             except (TypeError, ValueError):
-                _CREDITS['used'] = used
+                _CREDITS['used'] = None
         _CREDITS['ts'] = time.time()
         # Один snapshot под lock: параллельные responses не смешивают remaining одного с
         # used другого и не пишут полусобранный JSON.
-        _tele.credits_write(_CREDITS['remaining'], _CREDITS['used'])
+        _tele.credits_write(_CREDITS['remaining'], _CREDITS['used'],
+                            invalid=bool(_CREDITS.get('invalid')))
 
 
 def credits_left(force=False):
     """Остаток кредитов. -> int | str | None. По умолчанию БЕСПЛАТНО, из заголовков
     последнего ответа. force=True — сделать самый дешёвый реальный запрос, если мы ещё
     ни одного ответа не видели."""
+    if _CREDITS.get('invalid'):
+        return None
     if _CREDITS['remaining'] is not None:
         return _CREDITS['remaining']
     # ХОЛОДНЫЙ СТАРТ: читаем то, что запомнили ДО рестарта, и говорим, насколько оно старое
     # (звать площадку ради этого не надо — заголовок приезжает с любым ответом).
     _saved = _tele.credits_read() or {}
+    if _saved.get('invalid'):
+        _CREDITS['remaining'] = None
+        _CREDITS['used'] = _saved.get('used')
+        _CREDITS['ts'] = _saved.get('ts') or 0
+        _CREDITS['invalid'] = True
+        return None
     if _saved.get('remaining') is not None:
         _CREDITS['remaining'] = _saved.get('remaining')
         _CREDITS['used'] = _saved.get('used')
         _CREDITS['ts'] = _saved.get('ts') or 0
+        _CREDITS['invalid'] = False
         return _CREDITS['remaining']
     if not force or not _key():
         return None
@@ -990,8 +1008,12 @@ def _log_body(body):
     """
     private_keys = {'address', 'wallet_address', 'user_address', 'owner_address',
                     'to_wallet_address', 'from_address'}
+    opaque_keys = {'quote', 'signed_transaction', 'swapTxData', 'swap_tx_data',
+                   'transaction', 'raw_transaction'}
 
     def walk(v, key=''):
+        if key in opaque_keys:
+            return '<redacted opaque trade payload>'
         if key in private_keys and isinstance(v, str):
             return (v[:6] + '…' + v[-4:]) if len(v) > 12 else '<redacted>'
         if isinstance(v, dict):
@@ -1023,16 +1045,18 @@ def _http_post(base, path, body, timeout, tag):
             # ровно то, что надо поправить в теле («Field 'side' is not recognized»).
             # Печать в лог помогает ЧЕЛОВЕКУ через сутки, `_post_fix` чинит СЕЙЧАС - и без
             # этой строки чинить ему нечем.
-            _LAST_ERR.update({'path': path, 'text': r.text[:600]})
+            _shown_error = ('<trade provider error redacted>'
+                            if str(tag).strip() == 'trade' else r.text[:220])
+            _LAST_ERR.update({'path': path, 'text': _shown_error})
             # ТЕЛО ЗАПРОСА В ЛОГ, КОГДА ВИНОВАТ ЗАПРОС. При 400/422 отвечать нечем, кроме
             # «мы отправили не то», и без самого тела это неисправимо: схема у части
             # эндпоинтов живым ключом не снята, и догадка стоит ещё один круг. Ключа в теле
             # нет (он в заголовке), адресов кошельков людей тоже - только контракт/аргументы.
             if _cls == 'badreq':
                 print("[nansen%s] %s HTTP %s ОТВЕРГ НАШ ЗАПРОС: %s | тело: %s"
-                      % (tag, path, http, r.text[:220], _log_body(body)))
+                      % (tag, path, http, _shown_error, _log_body(body)))
             else:
-                print("[nansen%s] %s HTTP %s: %s" % (tag, path, http, r.text[:180]))
+                print("[nansen%s] %s HTTP %s: %s" % (tag, path, http, _shown_error[:180]))
             _tele.note(_cls, http, path)
         else:
             j = r.json()
@@ -2308,7 +2332,10 @@ def trade_quote(chain, from_token, to_token, amount_units, wallet, to_chain=None
         http = r.status_code
         _note_credits(r.headers)
         if http != 200:
-            print('[nansen trade] quote HTTP %s: %s | %s' % (http, r.text[:200], params))
+            # Trade providers may echo wallet/quote values in their error body. The status is
+            # diagnostic enough here; raw text is not worth leaking a wallet or route payload.
+            print('[nansen trade] quote HTTP %s: <provider error redacted> | %s' %
+                  (http, _log_body(params)))
             _tele.note(_classify(http), http, 'trade/quote')
         else:
             j = r.json()

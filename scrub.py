@@ -61,9 +61,10 @@ SKIP_EXT = {'.png', '.jpg', '.jpeg', '.gif', '.pdf', '.db', '.pyc', '.ttf', '.zi
 # одновременно не игнорировал файлы из-за inline-комментариев. Две защиты были зелёными, а
 # runtime state мог попасть в git.
 RUNTIME_NAMES = {
-    'nansen_tele', 'nansen_credits.json', 'nansen_schema.json', 'nansen_asks.json',
+    'nansen_tele', 'nansen_credits.json', 'nansen_credits.json.pending',
+    'nansen_schema.json', 'nansen_asks.json',
     'nansen_cache.json', 'nansen_pm_refs.json', 'nansen_meridian_corpus.jsonl',
-    'nansen_local.db',
+    'nansen_endpoint_sweep_state.json', 'nansen_local.db',
 }
 
 

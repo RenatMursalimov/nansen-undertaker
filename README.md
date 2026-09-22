@@ -27,7 +27,7 @@ Nansen data drives the conclusion, not just the UI.
 
 Built for the **Nansen Meridian Buildathon**.
 
-**53 Nansen API routes** · **25 documented workflows** · **26 named telemetry scenes** ·
+**53 Nansen API routes** · **25 documented workflows** · **28 named telemetry scenes** ·
 **8 distinct failure states**
 
 - [`docs/proofs/LIVE_HERO_2026-09-20.md`](docs/proofs/LIVE_HERO_2026-09-20.md) — sanitized live hero proof: 4 calls, 3 known histories, 0 failures.
@@ -37,6 +37,7 @@ Built for the **Nansen Meridian Buildathon**.
 - Exact sandbox deploy + recording runbook: [`docs/RECORDING_RUNBOOK.md`](docs/RECORDING_RUNBOOK.md)
 - Social preview / demo title card: [`assets/social-preview.png`](assets/social-preview.png)
 - Full generated workflow catalog: [`docs/CATALOG.md`](docs/CATALOG.md)
+- All-53-route server sweep and 12×/day schedule: [`docs/ENDPOINT_SWEEP.md`](docs/ENDPOINT_SWEEP.md)
 - Silent 52-second demo plan: [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md)
 - Ready X thread: [`docs/X_THREAD.md`](docs/X_THREAD.md)
 - Submission draft and eligibility gate: [`docs/submission.md`](docs/submission.md)
@@ -53,7 +54,13 @@ pip install -r requirements.txt
 cp .env.example .env                 # put NANSEN_API_KEY in this local ignored file
 python3 tools/nansen_live_smoke.py    # PLAN: zero calls
 python3 tools/nansen_live_smoke.py --run
+python3 tools/nansen_endpoint_sweep.py --profile complete  # PLAN: all safe routes, zero calls
 ```
+
+For sustained endpoint health and usage, the fresh sweep covers every client route or names why it
+cannot be scheduled. See [`docs/ENDPOINT_SWEEP.md`](docs/ENDPOINT_SWEEP.md) for exact one-route,
+complete, Agent, trading and 12-runs-per-day commands. It bypasses response cache, enforces daily
+wire/credit caps and never schedules transaction preparation or execution.
 
 The live smoke test is read-only and capped by design: one active market, its holders and up to
 three wallet histories. Success ends with:
@@ -201,11 +208,14 @@ output and one-line X hook.
 | `cli.py` | terminal access to the same production formatters |
 | `tools/nansen_live_smoke.py` | smallest reproducible live proof; explicit `--run` |
 | `tools/nansen_meridian_corpus.py` | resumable 7-day Smart Money corpus with a hard call cap |
+| `tools/nansen_endpoint_sweep.py` | fresh all-route registry, budgets and safe 12×/day profiles |
+| `tools/nansen_trade_probe.py` | human-gated quote/prepare/status; execute blocked by design |
 | `tools/nansen_probe.py` | live schema probe; zero calls without `--run` |
 | `tools/nansen_daily.py` | one authoritative telemetry reader and submission export |
 | `tools/render_social_preview.py` | reproducibly renders the 1280×640 GitHub/demo card |
 | `assets/social-preview.png` | generated GitHub social preview and 0–3s demo title card |
 | `docs/PROJECT_STATUS.md` | current eligibility, evidence and remaining external steps |
+| `docs/ENDPOINT_SWEEP.md` | all 53 routes, exact server commands, budgets and cron schedule |
 | `docs/RECORDING_RUNBOOK.md` | exact sandbox deploy, live UX check and 52-second recording flow |
 | `docs/wiki/` | version-controlled source for the short GitHub Wiki navigation layer |
 | `tests/test_public.py` | offline proof with the network boundary substituted |

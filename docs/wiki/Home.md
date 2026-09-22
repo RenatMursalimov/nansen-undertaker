@@ -17,6 +17,7 @@ counted on neither side; provider failures are named separately.
 - ✅ primary and backup live hero proofs passed
 - ✅ 1,000-call requirement exceeded: Nansen dashboard showed 5,484 calls on Sep 20
 - ✅ public repository and CI
+- ✅ all 53 client routes declared in a fresh server sweep with hard daily budgets
 - ⏳ final 30–60 second video
 - ⏳ X thread and official submission form
 
@@ -27,6 +28,7 @@ counted on neither side; provider failures are named separately.
 - [[Demo and Recording|Demo]]
 - [[Architecture]]
 - [Full workflow catalog](https://github.com/RenatMursalimov/nansen-undertaker/blob/main/docs/CATALOG.md)
+- [All-route server sweep](https://github.com/RenatMursalimov/nansen-undertaker/blob/main/docs/ENDPOINT_SWEEP.md)
 - [Public repository](https://github.com/RenatMursalimov/nansen-undertaker)
 
 ## Hero evidence
