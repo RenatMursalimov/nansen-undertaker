@@ -19,7 +19,7 @@
 | `docs/DEMO_SCRIPT.md` | `1aeb7dffe6ba17d8` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/ENDPOINT_SWEEP.md` | `fa80b03dff7c33fb` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/JUDGE.md` | `0bd885a0306f92ab` | из бота, приватные пути/сервисы заменены (см. ниже) |
-| `docs/MINIAPP_DECISIONS.md` | `d290fbacde864b64` | из бота, приватные пути/сервисы заменены (см. ниже) |
+| `docs/MINIAPP_DECISIONS.md` | `6f2a807488df1047` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/PROJECT_STATUS.md` | `861c91e0221b8415` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/RECORDING_RUNBOOK.md` | `f897c1d05a2244e0` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/WINNER_PLAN.md` | `550ee87c643f30b9` | из бота, приватные пути/сервисы заменены (см. ниже) |
@@ -58,7 +58,7 @@
 | `tools/nansen_endpoint_sweep.py` | `6301136b4a7aa6c9` | байт-в-байт из бота |
 | `tools/nansen_live_smoke.py` | `923f06a1adebef3d` | байт-в-байт из бота |
 | `tools/nansen_meridian_corpus.py` | `4a604e9a98ceb0d8` | байт-в-байт из бота |
-| `tools/nansen_probe.py` | `c31fca75b5864179` | байт-в-байт из бота |
+| `tools/nansen_probe.py` | `f3d394c28b454e48` | байт-в-байт из бота |
 | `tools/nansen_trade_probe.py` | `1b2b3ddf5bd460b5` | байт-в-байт из бота |
 | `tools/record_fixture.py` | `8737110aae074076` | байт-в-байт из бота |
 | `tools/render_social_preview.py` | `ba595dc312016848` | байт-в-байт из бота |

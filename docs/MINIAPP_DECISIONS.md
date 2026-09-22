@@ -1,6 +1,49 @@
 # Mini-app: the decisions, including the one to not ship a screen
 
-## Part C: the fourth screen is NOT added. Branch 3.
+## Part C: the fourth screen is NOT added. Branch 3 — now by measurement.
+
+**Two live probes on 2026-09-22 settled it, and the record is a fact rather than a shortage of
+hours.**
+
+Probe 1 — `422`, not `404`, with a machine-readable instruction:
+
+```
+Required field 'body -> date' is missing.
+Expected format: {"from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}
+```
+
+So the path exists and the body is parsed. Probe 2 sent the window and learned the decisive part:
+the platform **does not know the fields `chain` and `token_address`**. Repair-by-the-provider's-words
+removed both and the request returned `200 {"data": []}`.
+
+**That 200 is the trap, and it is worth naming.** Repair strips fields the platform rejects — which
+here meant stripping the very fields that carry the question *“which token?”*. What came back was a
+syntactically valid query with no meaning, and its empty answer reads like *“there are no posts”*
+when the truth is *“we never asked properly”*. This is the project's own ban on “emptiness passed off
+as a measurement”, arriving from an unexpected direction: the repair mechanism itself.
+
+General rule extracted: **repair is right when the platform says “a field is missing” (we can supply
+it) and harmful when it says “I do not know your field” (it throws the question away).** For
+discovering a field *name*, repair must be off — the raw refusal is the answer. The `ra` group was
+therefore removed from `FIX_DEFAULT`.
+
+So the open question is exactly one: **what is the token field called?** Until it is answered there
+can be no screen — “posts by token” that cannot select a token is not a screen. The probe now
+measures that instead of guessing it: one candidate name per request, repair off, so the platform
+answers either “unknown field” (the name is wrong — a fact) or `200` with rows (the name is right).
+A control case re-sends the already-rejected `token_address`, and a baseline case sends no token
+filter at all — because if the unfiltered query is empty too, then “empty” means “no coverage on our
+plan”, and iterating over names is pointless. Without that baseline we would mistake missing coverage
+for a wrong schema.
+
+```bash
+./venv/bin/python3 tools/nansen_probe.py --only ra          # plan, zero calls
+./venv/bin/python3 tools/nansen_probe.py --run --only ra     # 7 read-only requests
+```
+
+Credits spent so far: 5 of ~58,300 remaining. The decision stands as branch 3 until a name answers.
+
+## Why branch 3 was the right call even before the probe
 
 The plan allowed three branches for one extra scene, to be chosen **by the result of a probe**:
 
