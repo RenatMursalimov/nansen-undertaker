@@ -14,35 +14,61 @@
     59900.0,
     60942.857142857145,
     900000.0,
-    "LONG"
+    "LONG",
+    900000.0,
+    "Trader D"
    ],
    [
     60942.857142857145,
     61985.71428571428,
     10700000.0,
-    "LONG"
+    "LONG",
+    10700000.0,
+    "Smart Money"
    ],
    [
     61985.71428571428,
     63028.57142857143,
     11800000.0,
-    "LONG"
+    "LONG",
+    11800000.0,
+    "Whale B"
    ],
    [
     70328.57142857143,
     71371.42857142858,
     5200000.0,
-    "SHORT"
+    "SHORT",
+    0.0,
+    ""
    ],
    [
     73457.14285714286,
     74500.0,
     3000000.0,
-    "SHORT"
+    "SHORT",
+    3000000.0,
+    "Fund C"
    ]
   ],
   "longs": 23400000.0,
-  "mark": 86682.0,
+  "mark": 86372.0,
+  "named": 26400000.0,
+  "named_n": 4,
+  "named_who": [
+   [
+    "Whale B",
+    11800000.0
+   ],
+   [
+    "Smart Money",
+    10700000.0
+   ],
+   [
+    "Fund C",
+    3000000.0
+   ]
+  ],
   "no_liq": 1,
   "shorts": 8200000.0,
   "shown": 5,
@@ -54,9 +80,9 @@
   "total": 31600000.0
  },
  "provenance": "synthetic",
- "recorded_at": "2026-09-22T17:58:47Z",
+ "recorded_at": "2026-09-22T20:39:29Z",
  "rehearsal": true,
- "rendered_text": "BTC liquidation map. Biggest cluster: $11.8M between $62.0K and $63.0K. Total on the map: $31.6M across 5 position(s). Longs $23.4M vs shorts $8.2M. 1 position(s) had no liquidation price and are NOT on the map. This is where other people stop out, not a forecast. Source: Nansen.",
+ "rendered_text": "BTC liquidation map. Biggest cluster: $11.8M between $62.0K and $63.0K. Total on the map: $31.6M across 5 position(s). Longs $23.4M vs shorts $8.2M. $26.4M of it sits on wallets Nansen has a name for (4 position(s)): Whale B, Smart Money, Fund C. 1 position(s) had no liquidation price and are NOT on the map. This is where other people stop out, not a forecast. Source: Nansen.",
  "scene": "liq_map",
  "source": "Nansen",
  "surface": "miniapp",

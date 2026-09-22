@@ -283,6 +283,14 @@ def _liq_caveats(cl, lang):
     if cl.get('mark') is None:
         out.append('current price did not load: the map has no "you are here" marker' if en else
                    'текущая цена не взялась: на карте нет отметки «мы здесь»')
+    # МЕТКИ КОШЕЛЬКОВ НАЗЫВАЕМ ЧИСЛОМ В ОБЕ СТОРОНЫ. Ноль здесь - тоже ответ: «Nansen не знает
+    # по имени никого из этой карты» и «мы не спрашивали про имена» человек прочтёт одинаково,
+    # если промолчать, а это разные утверждения.
+    if not (cl.get('named') or 0):
+        out.append('no wallet on this map has a Nansen label: the named-money bar is absent '
+                   'because there is none, not because it was not asked for' if en else
+                   'ни у одного кошелька на карте нет метки Nansen: полосы «деньги с меткой» '
+                   'нет потому, что их нет, а не потому, что мы не спросили')
     out.append('these are where other people stop out, not a forecast' if en else
                'это уровни чужих стопов, а не прогноз')
     return out
