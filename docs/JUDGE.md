@@ -8,14 +8,21 @@ python3 -m http.server 8080
 # open http://127.0.0.1:8080/webapp/index.html?rehearsal=1
 ```
 
-Measured on a clean machine: the page and all three fixtures are served in **18 ms**; the whole
+Measured on a clean machine: the page and all fixtures are served in **18 ms**; the whole
 sequence is dominated by `git clone`. What you should see, top to bottom:
 
 1. a yellow **REHEARSAL** banner naming the recording timestamp — the data is recorded, not live;
 2. the hero screen: *“Of $1.94M examined, $1.30M (67%) sits with wallets whose win rate is below
    40%.”*, one bar per holder (area is money, colour is the win-rate bucket), and **two grey bars**
    whose money is counted on neither side;
-3. under every screen: source, freshness, cost in requests, the caveats, and the **exact sentence
+3. tab **🎯 Sharp money** — the same four heated markets side by side: how much money sits with
+   wallets that were right before (win rate at or above 60%) against the money of those that were
+   not (below 40%), ordered by sharp **dollars**, because 90% of $300 is not a signal. A tap on a
+   row opens that market in the hero — there is exactly one market breakdown on the page;
+4. tab **🗺 Liquidations** → **⚔️ compare all four** — BTC/ETH/SOL/HYPE ordered by how *close* the
+   price is to the densest liquidation cluster, not by how big it is. A token whose price did not
+   load goes last and says so: last place is not "safer";
+5. under every screen: source, freshness, cost in requests, the caveats, and the **exact sentence
    the bot would say in chat**.
 
 `?rehearsal=1` reads `fixtures/*.json`. Those files carry `"provenance": "synthetic"`: the shape is

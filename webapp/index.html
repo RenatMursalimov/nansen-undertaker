@@ -108,6 +108,7 @@
 
 <div class="tabs">
   <div class="tab on" id="t_hero">🎭 Whose&nbsp;%</div>
+  <div class="tab" id="t_sharp">🎯 Sharp&nbsp;money</div>
   <div class="tab" id="t_liq">🗺 Liquidations</div>
   <div class="tab" id="t_feed">📡 Live&nbsp;calls</div>
 </div>
@@ -116,6 +117,7 @@
 
 <div class="wrap">
   <div id="scr_hero"></div>
+  <div id="scr_sharp" style="display:none"></div>
   <div id="scr_liq" style="display:none"></div>
   <div id="scr_feed" style="display:none"></div>
 </div>
@@ -323,17 +325,30 @@ function loading(what) {
 /* ═══════════════════════════════════════════════════════════════════════════
    ЭКРАН 1. «ЧЬИ ЭТО ДЕНЬГИ» — состав убеждённости рынка
    ═══════════════════════════════════════════════════════════════════════════ */
-var HERO = { market: (qp('market') || qp('mk') || ''), env: null, open: -1, list: null };
+var HERO = { market: (qp('market') || qp('mk') || ''), env: null, open: -1, list: null,
+             pick: null };
 
 /* ЧЕМ НАЗЫВАТЬ ВЫБРАННЫЙ РЫНОК. Строка берётся ИЗ УЖЕ ПРИЕХАВШЕГО СЛОВАРЯ списка (сцена
    `pm_markets`), а не сочиняется: вопрос рынка и его процент - измеренные поля, и других у
    страницы нет. Открыли экран ссылкой с `?market=` - списка не было, вернём null, и тогда
    заголовок не притворяется знающим, чей это рынок. */
 function heroPicked() {
-  if (!HERO.market || !HERO.list || !HERO.list.payload) return null;
-  var rows = HERO.list.payload.rows || [];
+  if (!HERO.market) return null;
+  /* ВЫБРАННАЯ СТРОКА ЗАПОМИНАЕТСЯ ПРИ ТАПЕ, и это не кэш ради скорости: в hero можно прийти
+     не только из списка рынков, но и с экрана острых денег, где своего списка у hero нет.
+     Без этой памяти заголовок терял бы вопрос рынка ровно на втором пути входа. */
+  if (HERO.pick && String(HERO.pick.id) === String(HERO.market)) return HERO.pick;
+  return heroRowById(HERO.list, HERO.market);
+}
+
+/* Строка рынка по id В ЛЮБОМ конверте, у которого есть `payload.rows` (список рынков или
+   экран острых денег): оба несут одни и те же поля `id/q/prob`, потому что оба собраны из
+   одного словаря скринера. Один резолвер на два входа - чтобы заголовок hero не зависел от
+   того, откуда пришли. */
+function heroRowById(env, id) {
+  var rows = (env && env.payload && env.payload.rows) || [];
   for (var i = 0; i < rows.length; i++) {
-    if (String(rows[i].id) === String(HERO.market)) return rows[i];
+    if (String(rows[i].id) === String(id)) return rows[i];
   }
   return null;
 }
@@ -344,8 +359,12 @@ function wrBucket(h) {
      не знаем, значит подогнать вывод. Порог приезжает числом из словаря. */
   if (h.wr === null || h.wr === undefined) return 'grey';
   var thr = (HERO.env && HERO.env.threshold_weak_wr) || 40;
+  /* ВЕРХНИЙ ПОРОГ ТОЖЕ ИЗ СЛОВАРЯ. Здесь стояло зашитое 60: страница красила столбик зелёным
+     по числу, которого бот не знал ни в одном тексте - то есть у экрана и у бота было по
+     своему определению «сильного» кошелька. Теперь оба читают `PM_SHARP_WR`. */
+  var thrUp = (HERO.env && HERO.env.threshold_strong_wr) || 60;
   if (Number(h.wr) < thr) return 'weak';
-  if (Number(h.wr) < 60) return 'mid';
+  if (Number(h.wr) < thrUp) return 'mid';
   return 'strong';
 }
 
@@ -403,10 +422,11 @@ function heroHTML(env) {
        + (x.status && x.status !== 'ok' ? ' · ' + esc(x.status) : '')
        + '</div>';
   }
+  var thrUp2 = env.threshold_strong_wr || 60;
   h += '<div class="legend">'
      + '<span><i style="background:var(--weak)"></i>below ' + thr + '%</span>'
-     + '<span><i style="background:var(--mid)"></i>' + thr + '–60%</span>'
-     + '<span><i style="background:var(--strong)"></i>above 60%</span>'
+     + '<span><i style="background:var(--mid)"></i>' + thr + '–' + thrUp2 + '%</span>'
+     + '<span><i style="background:var(--strong)"></i>above ' + thrUp2 + '%</span>'
      + '<span><i style="background:var(--grey)"></i>history not examined — counted on '
      + 'NEITHER side</span></div>';
   h += '<div class="dim" style="margin-top:6px">This is the composition of conviction, '
@@ -469,7 +489,9 @@ function heroRender() {
   for (var j = 0; j < mk.length; j++) {
     mk[j].onclick = (function (id) {
       return function () {
-        HERO.market = id; HERO.env = null; HERO.open = -1; heroRender();
+        HERO.market = id; HERO.env = null; HERO.open = -1;
+        HERO.pick = heroRowById(HERO.list, id);
+        heroRender();
         askScene({ sc: 'pm_reputation', mk: id, lg: 'en' }, function (env) {
           HERO.env = env; showReh(env); heroRender();
         });
@@ -491,10 +513,105 @@ function heroRender() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   ЭКРАН 1Б. ОСТРЫЕ ДЕНЬГИ — какой из разогретых рынков держат те, кто угадывал
+
+   ЭКРАН СРАВНЕНИЯ, А НЕ РАЗБОРА. Hero отвечает «чьи деньги в ЭТОМ рынке», а выбирают между
+   рынками: из десяти разогретых нужен тот, где против тебя стоят не случайные люди. Тап по
+   строке открывает тот же hero - второго разбора рынка на странице нет и быть не должно.
+   ═══════════════════════════════════════════════════════════════════════════ */
+var SHARP = { env: null, busy: false };
+
+function sharpHTML(env) {
+  if (!env) return loading('Comparing markets — this screen costs a dozen requests…');
+  if (env.outcome !== 'ok' || !env.payload) return refuse(env);
+  var p = env.payload, rows = p.rows || [];
+  var h = '<div class="card">';
+  h += '<div class="dim">Sharp = wallets whose lifetime win rate is at or above '
+     + esc(p.wr_sharp) + '%, weak = below ' + esc(p.wr_weak) + '%. Both thresholds come from '
+     + 'the bot, not from this page. Tap a market to see who holds it.</div>';
+  /* МАСШТАБ ОДИН НА ВСЕ СТРОКИ: у каждой свой - и рынок с $300K выглядел бы как рынок с $3M.
+     Это ровно то сравнение, ради которого экран существует. */
+  var max = 0, i;
+  for (i = 0; i < rows.length; i++) {
+    max = Math.max(max, Number(rows[i].sharp || 0), Number(rows[i].weak || 0));
+  }
+  for (i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var dis = r.id ? '' : ' style="opacity:.45"';
+    h += '<div class="mkrow"' + dis + (r.id ? ' data-mk="' + esc(r.id) + '"' : '') + '>'
+       + '<div class="mkq">' + esc(r.q) + '</div>';
+    if (r.status !== 'ok') {
+      h += '<div class="mkmeta"><i>holders were not delivered for this market</i></div></div>';
+      continue;
+    }
+    var sw = max ? Math.max(2, Math.round(100 * Number(r.sharp || 0) / max)) : 2;
+    var ww = max ? Math.max(2, Math.round(100 * Number(r.weak || 0) / max)) : 2;
+    var ex = Number(r.examined || 0);
+    var pct = ex ? Math.round(100 * Number(r.sharp || 0) / ex) : 0;
+    h += '<div class="mkmeta">' + (r.prob === null || r.prob === undefined
+                                   ? '?' : (esc(r.prob) + '%'))
+       + ' · sharp <b>$' + usd(r.sharp) + '</b> (' + pct + '% of $' + usd(ex)
+       + ' examined) vs weak $' + usd(r.weak) + '</div>'
+       + '<div class="barwrap"><div class="bar" style="width:' + sw
+       + '%;background:var(--strong)"></div></div>'
+       + '<div class="barwrap"><div class="bar" style="width:' + ww
+       + '%;background:var(--weak)"></div></div>';
+    if (r.who) h += '<div class="mkmeta">biggest sharp holder: ' + esc(r.who) + '</div>';
+    if (r.unknown_n) {
+      h += '<div class="mkmeta">' + esc(r.unknown_n) + ' holder(s) here have no measurable '
+         + 'win rate — on NEITHER side</div>';
+    }
+    h += '</div>';
+  }
+  h += '<div class="legend"><span><i style="background:var(--strong)"></i>sharp money</span>'
+     + '<span><i style="background:var(--weak)"></i>weak money</span></div>';
+  h += footer(env) + '</div>';
+  return h;
+}
+
+function sharpRender() {
+  var el = document.getElementById('scr_sharp');
+  el.innerHTML = '<div class="card"><h1>Which heated market do the winners hold?</h1>'
+    + '<div class="dim">Price says what people believe. This says who believes it.</div>'
+    + '</div>' + sharpHTML(SHARP.env);
+  var mk = el.querySelectorAll('.mkrow[data-mk]');
+  for (var j = 0; j < mk.length; j++) {
+    mk[j].onclick = (function (id) {
+      /* ТАП ВЕДЁТ В HERO, А НЕ В СВОЙ РАЗБОР: разбор рынка на странице ОДИН. */
+      return function () {
+        HERO.market = id; HERO.env = null; HERO.open = -1;
+        HERO.pick = heroRowById(SHARP.env, id);
+        show('t_hero'); heroRender();
+        askScene({ sc: 'pm_reputation', mk: id, lg: 'en' }, function (env) {
+          HERO.env = env; showReh(env); heroRender();
+        });
+      };
+    })(mk[j].getAttribute('data-mk'));
+  }
+}
+
+function sharpLoad() {
+  SHARP.busy = true;
+  sharpRender();
+  askScene({ sc: 'sharp_markets', lg: 'en' }, function (env) {
+    SHARP.env = env; SHARP.busy = false; showReh(env); sharpRender();
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    ЭКРАН 2. КАРТА ЛИКВИДАЦИЙ — где висит чужое плечо
    ═══════════════════════════════════════════════════════════════════════════ */
 var LIQ = { token: (qp('token') || 'BTC').toUpperCase(), env: null, pick: -1 };
 var LIQ_TOKENS = ['BTC', 'ETH', 'SOL', 'HYPE'];
+var BOARD = { on: false, env: null, busy: false };
+
+function boardLoad() {
+  BOARD.busy = true;
+  liqRender();
+  askScene({ sc: 'perp_risk', lg: 'en' }, function (env) {
+    BOARD.env = env; BOARD.busy = false; showReh(env); liqRender();
+  });
+}
 
 function liqSVG(p) {
   var b = p.buckets || [];
@@ -519,11 +636,19 @@ function liqSVG(p) {
        в пиксели - это формат, а не смысл. Значок «тут есть SM» рядом со столбиком сказал бы
        только «кто-то есть», а высота полосы говорит СКОЛЬКО. `pointer-events=none`, иначе
        полоса съедала бы тап по столбику и деталь корзины не открывалась. */
+    /* ПОЛОСА «С МЕТКОЙ» - УЗКАЯ, ПО ЦЕНТРУ СТОЛБИКА, А НЕ НА ВСЮ ЕГО ШИРИНУ.
+       ЖИВОЙ ПРОМАХ (скриншот Ren, HYPE): у Nansen метка есть У ВСЕХ 45 позиций, синяя полоса
+       заняла 100% каждого столбика - и карта стала ОДНОЦВЕТНОЙ. Лонги и шорты, то есть главный
+       смысл этой карты, пропали с экрана, а легенда продолжала обещать красный и зелёный.
+       Класс ошибки: дополнительная величина затёрла основную. Узкая полоса по центру оставляет
+       сторону видимой по краям при любой доле, включая 100%. */
     var nmd = Number(b[i][4] || 0);
     if (nmd > 0 && v > 0) {
       var nh = Math.max(1, hgt * Math.min(1, nmd / v));
-      s += '<rect x="' + (x + 1).toFixed(1) + '" y="' + (H - nh).toFixed(1)
-         + '" width="' + Math.max(1, bw - 2).toFixed(1) + '" height="' + nh.toFixed(1)
+      var nw = Math.max(1.5, (bw - 2) * 0.42);
+      var nx = x + 1 + ((bw - 2) - nw) / 2;
+      s += '<rect x="' + nx.toFixed(1) + '" y="' + (H - nh).toFixed(1)
+         + '" width="' + nw.toFixed(1) + '" height="' + nh.toFixed(1)
          + '" fill="var(--named)" opacity="0.95" rx="1" pointer-events="none"/>';
     }
   }
@@ -593,16 +718,106 @@ function liqHTML(env) {
   return h;
 }
 
+/* БОРД РИСКА: ЧЕТЫРЕ ТОКЕНА РЯДОМ, порядок - по расстоянию от цены до плотного скопления.
+   Отдельной кнопкой, а не сам собой: экран стоит по запросу на токен, и открывать его на
+   каждый вход в таб значило бы платить за перелистывание. Тап по строке открывает карту. */
+function boardHTML(env) {
+  if (!env) return loading('Comparing four tokens…');
+  if (env.outcome !== 'ok' || !env.payload) return refuse(env);
+  var rows = (env.payload.rows) || [];
+  var h = '<div class="card"><div class="dim">Order is by distance from the current price to '
+        + 'the densest cluster, not by its size: $300M three per cent away and $300M forty '
+        + 'per cent away are different situations. Tap a row for its map.</div>';
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    h += '<div class="mkrow" data-btk="' + esc(r.tok) + '"><div class="mkq">' + esc(r.tok);
+    if (r.status !== 'ok') {
+      h += ' — <i>' + (r.status === 'norows' ? 'no open positions came back'
+                                             : 'positions carry no liquidation price')
+         + '</i></div></div>';
+      continue;
+    }
+    if (r.gap_pct === null || r.gap_pct === undefined) {
+      h += ' — <b>distance not measured</b>: no current price';
+    } else {
+      h += ' — <b>' + Math.abs(Number(r.gap_pct)).toFixed(1) + '% '
+         + (Number(r.gap_pct) < 0 ? 'below' : 'above') + '</b> the price';
+    }
+    h += '</div><div class="mkmeta">$' + usd(r.top_usd) + ' in the densest cluster'
+       + (r.top_side ? ' (' + (r.top_side === 'LONG' ? 'longs' : 'shorts') + ')' : '')
+       + ' · on the map $' + usd(r.total) + ' across ' + (r.shown || 0) + ' position(s)'
+       + ' · longs $' + usd(r.longs) + ' vs shorts $' + usd(r.shorts)
+       + (Number(r.named || 0) > 0 ? ' · $' + usd(r.named) + ' on named wallets' : '')
+       + '</div></div>';
+  }
+  h += footer(env) + '</div>';
+  return h;
+}
+
+/* КАКИЕ ТИКЕРЫ ПОКАЗЫВАТЬ КНОПКАМИ. Список приезжает В КОНВЕРТЕ (`known_tokens`) - это топ по
+   суточному объёму Hyperliquid, то есть ИЗМЕРЕННЫЙ порядок, а не наш. Зашитая четвёрка осталась
+   ровно на один случай: площадка молчит, и кнопок тогда нет вовсе - экран без единого тикера
+   выглядел бы поломанным. Выбранный тикер держим в списке всегда: человек ввёл свой, он ушёл из
+   топа - кнопка не имеет права исчезнуть у него из-под пальца. */
+function liqTokens() {
+  var known = (LIQ.env && LIQ.env.known_tokens) || [];
+  var list = known.length ? known.slice(0) : LIQ_TOKENS.slice(0);
+  var has = false, i;
+  for (i = 0; i < list.length; i++) { if (list[i] === LIQ.token) has = true; }
+  if (LIQ.token && !has) list.unshift(LIQ.token);
+  return list;
+}
+
 function liqRender() {
   var el = document.getElementById('scr_liq');
   var h = '<div class="card"><h1>Where other people\'s leverage hangs</h1>'
-        + '<div class="dim">Capital grouped by liquidation price.</div><div class="btns">';
-  for (var i = 0; i < LIQ_TOKENS.length; i++) {
-    h += '<span class="btn' + (LIQ_TOKENS[i] === LIQ.token ? ' on' : '') + '" data-tk="'
-       + LIQ_TOKENS[i] + '">' + LIQ_TOKENS[i] + '</span>';
+        + '<div class="dim">Capital grouped by liquidation price. The tickers below are the '
+        + 'most traded perps by 24h volume — measured, not a list we keep by hand. Any other '
+        + 'ticker works too: type it.</div><div class="btns">';
+  var toks = liqTokens();
+  for (var i = 0; i < toks.length; i++) {
+    h += '<span class="btn' + (toks[i] === LIQ.token ? ' on' : '') + '" data-tk="'
+       + esc(toks[i]) + '">' + esc(toks[i]) + '</span>';
   }
-  h += '</div></div>';
-  el.innerHTML = h + liqHTML(LIQ.env);
+  h += '<span class="btn' + (BOARD.on ? ' on' : '') + '" id="bdbtn">⚔️ compare top four</span>';
+  h += '</div>';
+  /* СВОЙ ТИКЕР ВВОДОМ. Это НЕ то же, что ручной ввод market_id, который мы из hero убрали:
+     там номер был служебным и человек искал бы его вне экрана, а тикер он и так знает. */
+  h += '<div class="btns" style="margin-top:6px">'
+     + '<input id="tkin" placeholder="any ticker, e.g. ZEC" maxlength="12" '
+     + 'style="background:var(--bg);color:var(--ink);border:1px solid var(--line);'
+     + 'border-radius:8px;padding:6px 8px;width:140px;font:inherit">'
+     + '<span class="btn" id="tkgo">show map</span></div>';
+  h += '</div>';
+  el.innerHTML = h + (BOARD.on ? boardHTML(BOARD.env) : '') + liqHTML(LIQ.env);
+  var bd = document.getElementById('bdbtn');
+  if (bd) {
+    bd.onclick = function () {
+      BOARD.on = !BOARD.on;
+      liqRender();
+      if (BOARD.on && !BOARD.env && !BOARD.busy) boardLoad();
+    };
+  }
+  var brs = el.querySelectorAll('.mkrow[data-btk]');
+  for (i = 0; i < brs.length; i++) {
+    brs[i].onclick = (function (tk) {
+      return function () { LIQ.token = tk; LIQ.env = null; LIQ.pick = -1; liqLoad(); };
+    })(brs[i].getAttribute('data-btk'));
+  }
+  var tkin = document.getElementById('tkin');
+  var tkgo = document.getElementById('tkgo');
+  if (tkin && tkgo) {
+    var _go = function () {
+      /* ЧИСТИМ ТОЛЬКО ФОРМУ ВВОДА: в верхний регистр и без мусора. Проверять СУЩЕСТВОВАНИЕ
+         тикера страница не имеет права - это знание площадки, и незнакомый тикер обязан
+         вернуться ОТКАЗОМ шлюза («позиций не отдали»), а не нашим догадочным «нет такого». */
+      var v = (tkin.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
+      if (!v) return;
+      LIQ.token = v; LIQ.env = null; LIQ.pick = -1; liqLoad();
+    };
+    tkgo.onclick = _go;
+    tkin.onkeydown = function (e) { if (e && e.keyCode === 13) _go(); };
+  }
   var bs = el.querySelectorAll('.btn[data-tk]');
   for (i = 0; i < bs.length; i++) {
     bs[i].onclick = (function (tk) {
@@ -688,7 +903,8 @@ function showReh(env) {
 }
 
 /* ── табы ── */
-var TABS = [['t_hero', 'scr_hero'], ['t_liq', 'scr_liq'], ['t_feed', 'scr_feed']];
+var TABS = [['t_hero', 'scr_hero'], ['t_sharp', 'scr_sharp'],
+            ['t_liq', 'scr_liq'], ['t_feed', 'scr_feed']];
 function show(which) {
   for (var i = 0; i < TABS.length; i++) {
     var on = (TABS[i][0] === which);
@@ -701,6 +917,9 @@ function show(which) {
     FEED.timer = setInterval(feedLoad, 1000);   /* раз в секунду, как просит ТЗ */
   }
   if (which === 't_liq' && !LIQ.env) liqLoad();
+  /* СРАВНЕНИЕ РЫНКОВ САМО НЕ ЗАПУСКАЕТСЯ ПОВТОРНО: экран стоит 13-17 запросов, и обновлять
+     его на каждое переключение таба значило бы жечь кредиты за перелистывание. */
+  if (which === 't_sharp' && !SHARP.env && !SHARP.busy) sharpLoad();
 }
 for (var i = 0; i < TABS.length; i++) {
   document.getElementById(TABS[i][0]).onclick = (function (w) {

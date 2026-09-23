@@ -1,0 +1,57 @@
+{
+ "caveats": [
+  "1 market(s) came without an id: there is nothing to look their holders up by",
+  "a win rate is measured on 3 holder(s) per market, not on the whole market",
+  "past win rate does not promise the future: this is the composition of the money, not a forecast or advice"
+ ],
+ "cost_credits": null,
+ "cost_requests": 9,
+ "freshness_seconds": null,
+ "lang": "en",
+ "outcome": "ok",
+ "payload": {
+  "age_sec": null,
+  "calls": 9,
+  "holders": 3,
+  "markets": 2,
+  "no_id": 1,
+  "rows": [
+   {
+    "examined": 1935000.0,
+    "id": "654412",
+    "prob": 90,
+    "q": "Will the Fed cut rates in September?",
+    "sharp": 630000.0,
+    "status": "ok",
+    "unknown_n": 0,
+    "vol24": 4100000.0,
+    "weak": 1305000.0,
+    "who": "0xbbbb…0002"
+   },
+   {
+    "examined": 1935000.0,
+    "id": "654987",
+    "prob": 31,
+    "q": "Government shutdown before October?",
+    "sharp": 630000.0,
+    "status": "ok",
+    "unknown_n": 0,
+    "vol24": 1882000.0,
+    "weak": 1305000.0,
+    "who": "0xbbbb…0002"
+   }
+  ],
+  "skipped": 0,
+  "wr_sharp": 60.0,
+  "wr_weak": 40.0
+ },
+ "provenance": "synthetic",
+ "recorded_at": "2026-09-22T23:02:53Z",
+ "rehearsal": true,
+ "rendered_text": "🎯 <b>Where the money on Polymarket is sharp</b>\nSharp = wallets with a lifetime win rate at or above 60%, weak = below 40%. Both thresholds are ours, and that is why they are printed.\n\n<b>1. Will the Fed cut rates in September? — 90%</b>\n   sharp <b>$630.0K</b> (33% of $1.94M examined) vs weak $1.30M\n   biggest sharp holder: 0xbbbb…0002\n<b>2. Government shutdown before October? — 31%</b>\n   sharp <b>$630.0K</b> (33% of $1.94M examined) vs weak $1.30M\n   biggest sharp holder: 0xbbbb…0002\n\n<i>Compared 2 market(s), 3 holder(s) each; 1 market(s) came without an id and cannot be compared at all. Requests spent: 9.</i>\n<i>Past win rate does not promise the future: this is the composition of the money, not a forecast or advice.</i>\n\n<i>📡 Source: Nansen, freshness not measured</i>",
+ "scene": "sharp_markets",
+ "source": "Nansen",
+ "surface": "miniapp",
+ "threshold_sharp_wr": 60.0,
+ "threshold_weak_wr": 40.0
+}

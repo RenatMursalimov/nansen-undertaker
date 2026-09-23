@@ -1276,6 +1276,18 @@ def _usd(x):
     return f"{x:.0f}"
 
 
+def _esc(s):
+    """Чужой текст внутрь HTML-сообщения. -> str.
+
+    ВОПРОСЫ РЫНКОВ ПРИХОДЯТ ОТ ПЛОЩАДКИ, и в них попадаются `&` и кавычки-уголки. Telegram с
+    `parse_mode=HTML` на такой строке отвергает сообщение ЦЕЛИКОМ - то есть экран не приходит
+    вовсе, и выглядит это как «бот сломался», а не как «в вопросе амперсанд». Новые блоки
+    вопросы экранируют; старые - нет, и это долг, а не решение (отмечено в PR).
+    """
+    return (str(s if s is not None else '')
+            .replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+
+
 def flow_intelligence_line(chain, token_address, lang='ru'):
     """Строка для карточки токена: нетто-потоки 24ч по сегментам. -> str | None.
     lang: 'en' даёт англоязычную строку."""
@@ -2971,6 +2983,17 @@ PM_REP_TOP = 5
 #: винрейт, ниже которого деньги считаются «деньгами тех, кто чаще ошибался». 40% - не
 #: истина, а ПОРОГ ДЛЯ АРИФМЕТИКИ, и он назван в тексте, чтобы человек мог не согласиться.
 PM_WEAK_WR = 40.0
+#: винрейт, от которого деньги считаются ОСТРЫМИ. Порог жил ТОЛЬКО в мини-аппе (цвет столбика
+#: «выше 60%») и ни в одном тексте бота - то есть страница знала число, которого бот не знал.
+#: Ровно та щель, из-за которой картинка и слова расходятся молча; теперь он здесь, один на
+#: оба экрана, и его печатают оба.
+PM_SHARP_WR = 60.0
+#: сколько рынков сравнивает скринер острых денег и сколько держателей разбирает в каждом.
+#: Четыре и три - НЕ «чтобы дешевле»: цена экрана линейна по обоим числам (1 + N + N×H
+#: запросов), а пятый рынок и четвёртый держатель вывод уже не меняют. Обрезка НАЗЫВАЕТСЯ в
+#: оговорках: «сравнили 4 из 12» и «сравнили всё» - разные утверждения.
+SHARP_MARKETS_N = 4
+SHARP_HOLDERS = 3
 
 
 def pm_holder_side(row):
@@ -3255,6 +3278,152 @@ def pm_reputation_block(rep, market_id='', lang='ru', top=PM_REP_TOP):
               'money, not a forecast or advice. Requests spent on this screen: %d.</i>')
              % rep.get('calls', 0))
     return with_source('\n'.join(L), lang, age_sec=rep.get('age_sec'))
+
+
+def sharp_markets(n_markets=SHARP_MARKETS_N, holders=SHARP_HOLDERS, rows=None, reps=None):
+    """ГДЕ НА POLYMARKET ДЕНЬГИ ОСТРЫЕ: трендовые рынки, сравнённые по составу держателей.
+
+    -> {'rows': [...], 'markets', 'holders', 'calls', 'age_sec', 'no_id', 'skipped',
+        'wr_sharp', 'wr_weak'} либо None, если скринер не отдал рынков.
+
+    ЗАЧЕМ ЭКРАН. Экран репутации отвечает «чьи деньги в ЭТОМ рынке», но решение принимают
+    между рынками: из десяти разогретых надо выбрать тот, где против тебя стоят не случайные
+    люди. Один рынок такого ответа не даёт - нужно сравнение, а сравнение никто не собирает
+    руками, потому что это 1 + N + N×H запросов.
+
+    ВЕДЁМ ДОЛЛАРАМИ, А НЕ ДОЛЕЙ. 90% острых денег от $300 и 40% от $2M - это «ничего» и
+    «много»; сортировка по доле подняла бы наверх пустой рынок с одним удачливым кошельком.
+    Поэтому порядок - по ОСТРЫМ ДОЛЛАРАМ, а доля печатается рядом как контекст.
+
+    ЧТО НЕ СЧИТАЕТСЯ ОСТРЫМ: деньги кошельков, у которых винрейта НЕТ. Их не приписываем ни к
+    острым, ни к слабым и называем числом - приписать кошельку винрейт, которого мы не знаем,
+    значит подогнать вывод (то же правило, что в `pm_reputation`).
+
+    `rows`/`reps` - для тестов и репетиции: позволяют передать готовые ответы и не ходить в сеть.
+    """
+    _n_m, _h = max(1, int(n_markets)), max(1, int(holders))
+    # СКРИНЕР ПРОСИМ С ЗАПАСОМ: рынки без id открыть нельзя (их id просто не приехал), и без
+    # запаса экран молча стал бы короче запрошенного.
+    scr = rows if rows is not None else pm_market_screener(per_page=_n_m * 3)
+    if not scr:
+        return None
+    calls = 1
+    cand, no_id = [], 0
+    for r in scr:
+        if not isinstance(r, dict):
+            continue
+        _mid = pm_market_id(r)
+        if not _mid:
+            no_id += 1
+            continue
+        _pr = _num_or_none(r.get('last_trade_price'))
+        cand.append({'id': str(_mid), 'q': str(r.get('question') or '?')[:120],
+                     'prob': (round(_pr * 100) if (_pr is not None and _pr <= 1) else
+                              (round(_pr) if _pr is not None else None)),
+                     'vol24': _num_or_none(r.get('volume_24hr'))})
+    if not cand:
+        return None
+    _skipped = max(0, len(cand) - _n_m)
+    out, ages = [], []
+    for c in cand[:_n_m]:
+        rep = (reps or {}).get(c['id']) if reps is not None else pm_reputation(c['id'], _h)
+        if reps is None:
+            calls += 1 + _h
+        if not isinstance(rep, dict) or not rep.get('holders'):
+            # РЫНОК БЕЗ ДЕРЖАТЕЛЕЙ НЕ ВЫБРАСЫВАЕТСЯ МОЛЧА: он остаётся в списке со словом
+            # «держателей не отдали». Выбросить его значило бы показать сравнение короче, чем
+            # оно есть, и человек не понял бы, почему рынков четыре, а строк три.
+            out.append(dict(c, sharp=None, weak=None, examined=None, unknown_n=None,
+                            who='', status='nodata'))
+            continue
+        if rep.get('age_sec') is not None:
+            ages.append(float(rep['age_sec']))
+        _sharp = _weak = _exam = 0.0
+        _unknown, _who, _who_usd = 0, '', 0.0
+        for h in (rep.get('holders') or [])[:_h]:
+            _usd_h = h.get('usd') or 0.0
+            _wr = h.get('wr')
+            if _wr is None:
+                _unknown += 1
+                continue
+            _exam += _usd_h
+            if _wr >= PM_SHARP_WR:
+                _sharp += _usd_h
+                if _usd_h > _who_usd:
+                    _who, _who_usd = (h.get('who') or ''), _usd_h
+            elif _wr < PM_WEAK_WR:
+                _weak += _usd_h
+        out.append(dict(c, sharp=_sharp, weak=_weak, examined=_exam, unknown_n=_unknown,
+                        who=_who, status='ok'))
+    # ПОРЯДОК - ПО ОСТРЫМ ДОЛЛАРАМ. Рынки без данных уезжают в конец: строка «держателей не
+    # отдали» вверху сравнения занимала бы место ответа, не будучи ответом.
+    out.sort(key=lambda x: (x['sharp'] is None, -(x['sharp'] or 0)))
+    return {'rows': out, 'markets': len(out), 'holders': _h, 'calls': calls,
+            'age_sec': max(ages) if ages else None, 'no_id': no_id, 'skipped': _skipped,
+            'wr_sharp': PM_SHARP_WR, 'wr_weak': PM_WEAK_WR}
+
+
+def sharp_markets_block(d, lang='ru'):
+    """Скринер острых денег - текстом для чата. -> str | None.
+
+    ГЛАВНАЯ СТРОКА КАЖДОГО РЫНКА - ДВЕ ВЕЛИЧИНЫ РЯДОМ: острые деньги против слабых. Одна
+    величина без другой не решение: «$1.2M острых» звучит весомо, пока не увидишь, что слабых
+    там $8M.
+    """
+    if not isinstance(d, dict) or not d.get('rows'):
+        return None
+    en = (lang == 'en')
+    L = [('🎯 <b>Where the money on Polymarket is sharp</b>' if en
+          else '🎯 <b>Где на Polymarket деньги острые</b>')]
+    L.append(('Sharp = wallets with a lifetime win rate at or above %.0f%%, weak = below '
+              '%.0f%%. Both thresholds are ours, and that is why they are printed.' if en else
+              'Острые - кошельки с лайфтайм-винрейтом от %.0f%%, слабые - ниже %.0f%%. Оба '
+              'порога наши, поэтому они и напечатаны.')
+             % (d.get('wr_sharp') or PM_SHARP_WR, d.get('wr_weak') or PM_WEAK_WR))
+    L.append('')
+    for i, r in enumerate(d['rows'], 1):
+        _head = '%d. %s' % (i, _esc(r.get('q') or '?'))
+        if r.get('prob') is not None:
+            _head += (' — %s%%' % r['prob'])
+        L.append('<b>%s</b>' % _head)
+        if r.get('status') != 'ok':
+            L.append('   ' + ('holders were not delivered for this market' if en
+                              else 'держателей по этому рынку не отдали'))
+            continue
+        _sh, _wk = r.get('sharp') or 0.0, r.get('weak') or 0.0
+        _ex = r.get('examined') or 0.0
+        _pct = (100.0 * _sh / _ex) if _ex else 0.0
+        L.append('   ' + (('sharp <b>$%s</b> (%.0f%% of $%s examined) vs weak $%s'
+                           if en else
+                           'острые <b>$%s</b> (%.0f%% от разобранных $%s) против слабых $%s')
+                          % (_usd(_sh), _pct, _usd(_ex), _usd(_wk))))
+        if r.get('who'):
+            L.append('   ' + (('biggest sharp holder: %s' if en
+                               else 'крупнейший острый держатель: %s') % _esc(r['who'])))
+        if r.get('unknown_n'):
+            L.append('   ' + (('%d holder(s) here have no measurable win rate - their money '
+                               'is on NEITHER side' if en else
+                               'у %d держател(ей) тут нет измеримого винрейта - их деньги НЕ '
+                               'на одной из сторон') % int(r['unknown_n'])))
+    L.append('')
+    # ОБРЕЗКУ НАЗЫВАЕМ ТОЛЬКО КОГДА ОНА ЕСТЬ. «ещё 0 рынков не сравнивали» - шум, который
+    # читается как оговорка и обесценивает соседние настоящие оговорки.
+    _tail = (('Compared %d market(s), %d holder(s) each' if en
+              else 'Сравнено %d рынк(ов) по %d держател(ям)')
+             % (d.get('markets') or 0, d.get('holders') or 0))
+    if d.get('skipped'):
+        _tail += (('; %d more trending market(s) were not compared' if en
+                   else '; ещё %d разогретых рынков не сравнивали') % int(d['skipped']))
+    if d.get('no_id'):
+        _tail += (('; %d market(s) came without an id and cannot be compared at all' if en
+                   else '; у %d рынк(ов) не приехал id - их сравнить нечем') % int(d['no_id']))
+    _tail += (('. Requests spent: %d.' if en else '. Запросов: %d.') % (d.get('calls') or 0))
+    L.append('<i>%s</i>' % _tail)
+    L.append(('<i>Past win rate does not promise the future: this is the composition of the '
+              'money, not a forecast or advice.</i>' if en else
+              '<i>Винрейт в прошлом не обещает будущего: это состав денег, а не прогноз и не '
+              'совет.</i>'))
+    return with_source('\n'.join(L), lang, age_sec=d.get('age_sec'))
 
 
 def pm_wallet_block(address, lang='ru'):

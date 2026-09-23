@@ -49,7 +49,11 @@ FIXTURE_DIR = os.path.join(ROOT, 'nansen', 'fixtures')
 #: и лимитом не ограничены (ограничен только агент), но кап по кредитам за сутки обязан ЗНАТЬ
 #: цену предстоящего вопроса: пускать экран за 30, когда до капа осталось 10, значит перейти
 #: его молча. Числа консервативные - лучше отказать зря, чем перейти кап незаметно.
-SCENE_COST = {'pm_markets': 5, 'pm_reputation': 30, 'liq_map': 5, 'smart_trades': 5}
+#: Сравнительные экраны дороже одиночных РОВНО потому, что сравнивают: `sharp_markets` это
+#: 1 + N + N×H запросов (при 4 рынках по 3 держателя - 17), `perp_risk` - по запросу на токен.
+#: Числа консервативные вверх: недопустить дорогой экран у края капа дешевле, чем перейти кап.
+SCENE_COST = {'pm_markets': 5, 'pm_reputation': 30, 'liq_map': 5, 'smart_trades': 5,
+              'sharp_markets': 120, 'perp_risk': 20}
 
 
 def _admins():
@@ -125,6 +129,10 @@ def _scene_ctx(scene, uid):
         return T.scene('pm_reputation', uid, surface='miniapp')
     if scene == 'liq_map':
         return T.scene('liq_map', uid, surface='miniapp')
+    if scene == 'sharp_markets':
+        return T.scene('sharp_markets', uid, surface='miniapp')
+    if scene == 'perp_risk':
+        return T.scene('perp_risk', uid, surface='miniapp')
     return T.scene('smart_trades', uid, surface='miniapp')
 
 
@@ -249,8 +257,24 @@ def handle(req, uid, lang='ru', bot_un=None):
 
     # ── 4. СЦЕНА ТЕЛЕМЕТРИИ: ТА ЖЕ СЦЕНА, ДРУГАЯ ПОВЕРХНОСТЬ.
     with _scene_ctx(scene, uid):
-        if scene == 'liq_map':
-            params['mark'] = _mark_price(params['token'])
+        if scene in ('liq_map', 'perp_risk'):
+            # ОДИН ЗАПРОС К HYPERLIQUID НА ОБА ЭКРАНА: `metaAndAssetCtxs` возвращает ВСЕ коины
+            # сразу, и прежний цикл «по цене на токен» тянул один и тот же ответ четыре раза.
+            _uni = _hl_universe()
+            if scene == 'liq_map':
+                params['mark'] = (_uni.get(params['token']) or {}).get('mark') or None
+                # СПИСОК ТИКЕРОВ ЕДЕТ ВМЕСТЕ С КАРТОЙ, И ЭТО ОТВЕТ НА ЖИВОЙ ВОПРОС: «почему
+                # карты только по четырём?». Четыре были ЗАШИТЫ в страницу, то есть список
+                # устаревал молча. Теперь он измерен - топ по суточному объёму самой площадки,
+                # где висит это плечо. Площадка молчит - едет пустой список, и страница
+                # показывает свои четыре как запас.
+                params['tokens'] = _top_tokens(_uni, 10)
+            else:
+                # БОРД СРАВНИВАЕТ ТОП ПО ОБЪЁМУ, А НЕ ФИКСИРОВАННУЮ ЧЕТВЁРКУ. Замороженный
+                # список однажды сравнивает то, чем уже никто не торгует.
+                _toks = tuple(_top_tokens(_uni, 4)) or S.PERP_BOARD_TOKENS
+                params['tokens'] = _toks
+                params['marks'] = {t: (_uni.get(t) or {}).get('mark') or None for t in _toks}
         env = S.scene_data(scene, params, lg, bot_un)
     # СПИСАНИЯ АГЕНТСКОГО СЧЁТЧИКА ЗДЕСЬ НЕТ НАРОЧНО (`L.spend` не зовётся): он считает
     # вопросы к агенту, а структурный экран - не вопрос к агенту. Расход кредитов при этом
@@ -258,6 +282,48 @@ def handle(req, uid, lang='ru', bot_un=None):
     # именно её. Второй счётчик рядом с первым разошёлся бы с ним на первой правке.
     env['surface'] = 'miniapp'
     return _strip_private(env)
+
+
+#: КЭШ ВСЕЛЕННОЙ ПЕРПОВ HYPERLIQUID: (время, словарь). Тридцать секунд - не про экономию
+#: чужого API, а про то, чтобы ОДИН экран не спрашивал одно и то же дважды: борду нужны цены по
+#: четырём токенам, карте - цена и список тикеров, и всё это один и тот же ответ.
+_UNI_TTL = 30.0
+_UNI = [0.0, {}]
+
+
+def _hl_universe():
+    """Все перп-коины Hyperliquid: {ТИКЕР: {mark, vol24, ...}}. -> dict (может быть пустым).
+
+    ПУСТОЙ СЛОВАРЬ - ДОПУСТИМЫЙ ОТВЕТ, а не ошибка экрана: Hyperliquid не Nansen, его молчание
+    лишает карту отметки «мы здесь» и списка тикеров, но не самой карты. Выдуманная цена дала бы
+    отметку, которой никто не мерил, а выдуманный список тикеров - кнопки на токены, которых на
+    площадке может не быть.
+    """
+    import time as _t
+    if _UNI[1] and (_t.time() - _UNI[0]) < _UNI_TTL:
+        return _UNI[1]
+    try:
+        import asyncio
+        import oc_perps as _hl
+        _p = os.path.join(ROOT, 'onchain')
+        if _p not in sys.path:
+            sys.path.insert(0, _p)
+        uni = asyncio.run(_hl.hl_universe()) or {}
+    except Exception as e:                        # noqa: BLE001
+        print('[nansen_gate] вселенная перпов не взялась: %s' % str(e)[:100])
+        return {}
+    _UNI[0], _UNI[1] = _t.time(), uni
+    return uni
+
+
+def _top_tokens(uni, n=10):
+    """Топ перп-тикеров по объёму за сутки. -> [str] (пусто, если площадка молчит)."""
+    try:
+        import oc_perps as _hl
+        return _hl.hl_top_tokens(uni, n)
+    except Exception as e:                        # noqa: BLE001
+        print('[nansen_gate] топ тикеров не собрался: %s' % str(e)[:100])
+        return []
 
 
 def _mark_price(token):

@@ -89,6 +89,7 @@ def _synthetic(scene):
     _spec.loader.exec_module(BL)
     _keep = (N._post_fix, N.pm_address_summary, N.perp_positions, N.sm_dex_trades, N._key,
              N.pm_market_screener)
+    _keep_mark = G._mark_price
     try:
         N._key = lambda: 'synthetic'
         N._post_fix = lambda p, b, **k: (list(BL.PM_HOLDERS)
@@ -96,7 +97,13 @@ def _synthetic(scene):
         N.pm_address_summary = lambda a, **k: BL.PM_SUMMARIES.get(a)
         N.perp_positions = lambda t, n=50: list(BL.PERP_ROWS)
         N.sm_dex_trades = lambda chains=None, per_page=15: list(BL.SM_TRADE_ROWS)
-        N.pm_market_screener = lambda query='', per_page=12: list(BL.PM_MARKETS)
+        N.pm_market_screener = lambda query='', per_page=12, **k: list(BL.PM_MARKETS)
+        # ЦЕНУ ТОЖЕ ПОДМЕНЯЕМ, И ЭТО ВАЖНО ДЛЯ БОРДА РИСКА: без подмены `_mark_price` пошёл бы
+        # в живой Hyperliquid, и в «полностью синтетической» фикстуре оказалась бы ОДНА
+        # настоящая величина - расстояние до скопления, то есть главное число экрана. Смесь
+        # выдуманных позиций с настоящей ценой хуже чистой выдумки: она выглядит как замер.
+        G._mark_price = lambda tok: (BL.PERP_MARK if str(tok).upper() == 'BTC'
+                                     else (3000.0 if str(tok).upper() == 'ETH' else None))
         req = {'sc': scene, 'lg': 'en'}
         if scene == 'pm_reputation':
             req['mk'] = '654412'
@@ -106,6 +113,7 @@ def _synthetic(scene):
     finally:
         (N._post_fix, N.pm_address_summary, N.perp_positions,
          N.sm_dex_trades, N._key, N.pm_market_screener) = _keep
+        G._mark_price = _keep_mark
     env['recorded_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
     env['rehearsal'] = True
     env['provenance'] = 'synthetic'

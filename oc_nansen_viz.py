@@ -352,6 +352,28 @@ def _price(v):
     return '%.4f' % v
 
 
+#: сколько символов метки кошелька показываем. 22 - предел, после которого строка подписи
+#: начинает переносить самое важное (сумму) на вторую строку.
+LABEL_MAX = 22
+
+
+def _label_clean(s):
+    """Метка кошелька в пригодный для строки вид. -> str.
+
+    РЕЖЕМ ПО ГРАНИЦЕ СЛОВА И СТАВИМ МНОГОТОЧИЕ. Живой прогон (HYPE, скриншот Ren) показал, что
+    метки Hyperliquid бывают длинными описаниями с кавычками: в подпись попадало
+    `Uses "TRADEXYZ1" HL Refe` - обрубок на полуслове, который читается как испорченные данные,
+    а не как сокращение. Многоточие говорит «здесь обрезано мы», а не «Nansen прислал мусор».
+    """
+    t = ' '.join(str(s or '').split())
+    if len(t) <= LABEL_MAX:
+        return t
+    cut = t[:LABEL_MAX]
+    if ' ' in cut[8:]:                     # ищем пробел не в самом начале - иначе останется «Uses»
+        cut = cut[:cut.rfind(' ')]
+    return cut.rstrip(' ,;:-"\'') + '…'
+
+
 def liq_clusters(rows, mark=None):
     """Позиции -> скопления плеча по цене ликвидации. -> dict | None.
 
@@ -407,7 +429,9 @@ def liq_clusters(rows, mark=None):
             # объявить деньги «известными» ни за что. Плюс адрес не имеет права ехать в
             # мини-апп: экран показывает только то, что прошло `_strip_private`.
             _lbl = ''
-        _lbl = _lbl[:24]
+        # ЧИСТИМ ПОСЛЕ проверки на адрес: обрезанный адрес проверку бы прошёл, а в мини-апп ему
+        # нельзя и обрубком (скруббер справедливо ловит форму адреса, а не только полный).
+        _lbl = _label_clean(_lbl)
         pts.append((liq, val, _sd, _lbl))
         if _lbl:
             named_who[_lbl] = named_who.get(_lbl, 0.0) + val
@@ -473,6 +497,139 @@ def _dom_side(pts):
     _l = sum(v for _p, v, s, _lbl in pts if s == 'LONG')
     _s = sum(v for _p, v, s, _lbl in pts if s == 'SHORT')
     return 'LONG' if _l > _s else ('SHORT' if _s > _l else '')
+
+
+def liq_board(by_token):
+    """СРАВНЕНИЕ ТОКЕНОВ: где чужое плечо ближе к обрыву. -> dict | None.
+
+    `by_token` - {ТИКЕР: {'rows': строки tgm/perp-positions, 'mark': цена или None}}. Сеть
+    здесь НЕ ТРОГАЕТСЯ нарочно: считает эта функция, спрашивает вызывающий (чат или шлюз), и
+    тогда одни и те же числа приходят и в текст, и в картинку, и в мини-апп.
+
+    -> {'rows': [{'tok','total','longs','shorts','named','top_usd','top_lo','top_hi',
+        'top_side','mark','gap_pct','shown','no_liq'}], 'tokens', 'no_mark', 'age_sec': None}
+
+    ГЛАВНОЕ ЧИСЛО ЗДЕСЬ - РАССТОЯНИЕ ДО СКОПЛЕНИЯ, А НЕ ЕГО РАЗМЕР. «$300M висит» - факт;
+    «$300M висит в 4% ниже цены» - величина, по которой принимают решение: чем короче путь до
+    плотного уровня, тем быстрее рынок проедет его на чужих стопах. Поэтому порядок строк - по
+    близости, а не по сумме.
+
+    ЦЕНЫ НЕТ - РАССТОЯНИЯ НЕТ, и строка уезжает в конец со словом. Посчитать «расстояние» от
+    выдуманной цены значило бы выдать догадку за замер в том самом числе, которое ведёт экран.
+    """
+    if not isinstance(by_token, dict) or not by_token:
+        return None
+    out, no_mark = [], 0
+    for tok, d in by_token.items():
+        if not isinstance(d, dict):
+            continue
+        cl = liq_clusters(d.get('rows'), d.get('mark'))
+        if not cl:
+            # ТОКЕН БЕЗ КАРТЫ НЕ ВЫБРАСЫВАЕТСЯ МОЛЧА: его строка остаётся со словом «карты
+            # нет». Выброси мы её - борд выглядел бы полным, умалчивая, что по одному из
+            # токенов мы ничего не знаем.
+            out.append({'tok': str(tok)[:12], 'total': None, 'longs': None, 'shorts': None,
+                        'named': None, 'top_usd': None, 'top_lo': None, 'top_hi': None,
+                        'top_side': '', 'mark': _num(d.get('mark')), 'gap_pct': None,
+                        'shown': 0, 'no_liq': 0,
+                        # ДВА РАЗНЫХ «НЕТ»: позиций не отдали вовсе или позиции есть, а цен
+                        # ликвидации в них нет. Первое - про площадку, второе - про схему
+                        # ответа, и чинятся они по-разному.
+                        'status': 'norows' if not d.get('rows') else 'nomap'})
+            continue
+        _lo, _hi, _sum = cl['top']
+        _mark = cl.get('mark')
+        _gap = None
+        if _mark:
+            _mid = (_lo + _hi) / 2.0
+            _gap = 100.0 * (_mid - _mark) / _mark          # знак = сторона: минус это ниже цены
+        else:
+            no_mark += 1
+        out.append({'tok': str(tok)[:12], 'total': cl['total'], 'longs': cl['longs'],
+                    'shorts': cl['shorts'], 'named': cl.get('named') or 0.0,
+                    'top_usd': _sum, 'top_lo': _lo, 'top_hi': _hi,
+                    'top_side': (cl['buckets'][max(range(len(cl['buckets'])),
+                                                   key=lambda i: cl['buckets'][i][2])][3]
+                                 if cl['buckets'] else ''),
+                    'mark': _mark, 'gap_pct': _gap, 'shown': cl['shown'],
+                    'no_liq': cl['no_liq'], 'status': 'ok'})
+    if not out:
+        return None
+    out.sort(key=lambda r: (r['gap_pct'] is None, abs(r['gap_pct'] or 0)))
+    return {'rows': out, 'tokens': len(out), 'no_mark': no_mark, 'age_sec': None}
+
+
+def liq_board_caption(d, lang='ru'):
+    """Подпись борда риска: у кого путь до плотного уровня короче. -> str.
+
+    Та же функция для чата и для мини-аппа: две копии этой фразы разошлись бы на первой правке
+    (тот же разбор, что у `liq_caption`).
+    """
+    if not isinstance(d, dict) or not d.get('rows'):
+        return ''
+    en = (lang == 'en')
+    L = [('⚔️ <b>Where other people\'s leverage is closest to the edge</b>' if en
+          else '⚔️ <b>У кого чужое плечо ближе к обрыву</b>')]
+    L.append(('Order is by distance from the current price to the densest liquidation cluster, '
+              'not by its size: $300M three per cent away and $300M forty per cent away are '
+              'different situations.' if en else
+              'Порядок - по расстоянию от текущей цены до самого плотного скопления '
+              'ликвидаций, а не по его размеру: $300M в трёх процентах и $300M в сорока - '
+              'разные ситуации.'))
+    L.append('')
+    for i, r in enumerate(d['rows'], 1):
+        if r.get('status') == 'norows':
+            L.append(('%d. <b>%s</b> - no open positions came back for this token' if en else
+                      '%d. <b>%s</b> - открытых позиций по этому токену не отдали')
+                     % (i, r['tok']))
+            continue
+        if r.get('status') != 'ok':
+            L.append(('%d. <b>%s</b> - no map: the positions carry no liquidation price'
+                      if en else
+                      '%d. <b>%s</b> - карты нет: в позициях нет цены ликвидации')
+                     % (i, r['tok']))
+            continue
+        if r.get('gap_pct') is None:
+            _where = ('distance not measured: no current price' if en
+                      else 'расстояние не измерено: нет текущей цены')
+        else:
+            _g = r['gap_pct']
+            _where = (('%.1f%% %s the price' % (abs(_g), 'below' if _g < 0 else 'above'))
+                      if en else
+                      ('%.1f%% %s цены' % (abs(_g), 'ниже' if _g < 0 else 'выше')))
+        _side = r.get('top_side') or ''
+        # СТОРОНА СТОИТ СРАЗУ ЗА СУММОЙ, А НЕ В КОНЦЕ СТРОКИ. В конце она прилипала к фразе
+        # «расстояние не измерено: нет текущей цены (лонги)» и читалась как уточнение к ЦЕНЕ,
+        # хотя относится к скоплению.
+        _side_txt = ''
+        if _side:
+            _side_txt = ((' (%s)' % ('longs' if _side == 'LONG' else 'shorts')) if en
+                         else (' (%s)' % ('лонги' if _side == 'LONG' else 'шорты')))
+        L.append(('%d. <b>%s</b>: $%s in the densest cluster%s, %s' if en else
+                  '%d. <b>%s</b>: $%s в самом плотном скоплении%s, %s')
+                 % (i, r['tok'], _short(r['top_usd']), _side_txt, _where))
+        L.append(('    on the map $%s across %d position(s) · longs $%s vs shorts $%s' if en
+                  else '    на карте $%s по %d позици(ям) · лонги $%s против шортов $%s')
+                 % (_short(r['total']), int(r['shown'] or 0), _short(r['longs']),
+                    _short(r['shorts'])))
+        if r.get('named'):
+            L.append(('    of that $%s sits on wallets Nansen has a name for' if en else
+                      '    из этого $%s висит на кошельках, которых Nansen знает по имени')
+                     % _short(r['named']))
+    L.append('')
+    if d.get('no_mark'):
+        L.append((('<i>For %d token(s) the current price did not load, so their distance is '
+                   'not measured and they are last in the list - not safest.</i>') if en else
+                  ('<i>По %d токен(ам) текущая цена не взялась, поэтому расстояние не '
+                   'измерено и они стоят в конце списка - это не «там безопаснее».</i>'))
+                 % int(d['no_mark']))
+    # ИСТОЧНИК ДОПИСЫВАЕТСЯ ЗДЕСЬ ЖЕ, как в `liq_caption`: у этого модуля нет доступа к
+    # `nansen_api.with_source` (клиент импортирует картинки, а не наоборот), и заводить
+    # обратный импорт ради одной фразы значило бы закольцевать модули.
+    L.append(('<i>These are where other people stop out, not a forecast and not advice. '
+              'Source: Nansen.</i>' if en else
+              '<i>Это уровни чужих стопов, а не прогноз и не совет. Источник: Nansen.</i>'))
+    return '\n'.join(L)
 
 
 def liq_map_png(rows, token='', mark=None, lang='ru', out_dir=None):
@@ -622,7 +779,12 @@ def liq_caption(cl, token='', lang='ru'):
              'Total on the map: $%s across %d position(s).' % (_short(_tot), _shown)]
         if cl['longs'] or cl['shorts']:
             L.append('Longs $%s vs shorts $%s.' % (_short(cl['longs']), _short(cl['shorts'])))
-        if _nmd and _names:
+        if _nmd and _names and _nmd >= _tot * 0.999:
+            # ВСЯ КАРТА ИМЕНОВАНА - ТАК И СКАЖЕМ. Живой HYPE: метка есть у всех 45 позиций, и
+            # фраза «$1.01B из $1.01B» заставляет человека сверять два одинаковых числа глазами.
+            L.append('Every position on this map sits on a wallet Nansen has a name for; the '
+                     'biggest: %s.' % _names)
+        elif _nmd and _names:
             L.append('$%s of it sits on wallets Nansen has a name for (%d position(s)): %s.'
                      % (_short(_nmd), _nn, _names))
         elif _nmd:
@@ -640,7 +802,10 @@ def liq_caption(cl, token='', lang='ru'):
         if cl['longs'] or cl['shorts']:
             L.append('Лонги $%s против шортов $%s.' % (_short(cl['longs']),
                                                        _short(cl['shorts'])))
-        if _nmd and _names:
+        if _nmd and _names and _nmd >= _tot * 0.999:
+            L.append('Все позиции этой карты - на кошельках, которых Nansen знает по имени; '
+                     'крупнейшие: %s.' % _names)
+        elif _nmd and _names:
             L.append('Из них $%s висит на кошельках, которых Nansen знает по имени '
                      '(%d позици(й)): %s.' % (_short(_nmd), _nn, _names))
         elif _nmd:
