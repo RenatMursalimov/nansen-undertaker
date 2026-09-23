@@ -343,6 +343,12 @@ LIQ_WINDOW = 0.5
 #: сигнале, во-вторых, четыре понятных ступени человек сравнивает между собой, а ползунок с
 #: 37% сравнить не с чем. По умолчанию - `LIQ_WINDOW`, то есть ровно то, что было.
 LIQ_ZOOMS = (10, 25, 50, 100, 0)
+#: СКОЛЬКО УРОВНЕЙ РЕЗАТЬ - ВТОРАЯ РУЧКА, И ОНА ПРО ДРУГОЕ. Масштаб решает, КАКОЙ участок цены
+#: смотрим; детализация - на сколько уровней его делить. Одной «умной» ручкой это не сводится:
+#: на ±10% бывает нужно 8 широких уровней, а на ±100% - 28 узких, и наоборот. Набор закрыт по
+#: той же причине, что у масштаба: свободное число - произвольное значение в подписанном сигнале,
+#: а на 40 уровнях подписи сумм перестают влезать вовсе.
+LIQ_BUCKET_STEPS = (8, 14, 20, 28)
 
 
 def _price(v):
@@ -401,7 +407,16 @@ def liq_zoom_ok(z):
     return z if z in LIQ_ZOOMS else None
 
 
-def liq_clusters(rows, mark=None, zoom=None):
+def liq_buckets_ok(n):
+    """Проверить число уровней по закрытому списку. -> int | None (None = умолчание)."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return None
+    return n if n in LIQ_BUCKET_STEPS else None
+
+
+def liq_clusters(rows, mark=None, zoom=None, buckets=None):
     """Позиции -> скопления плеча по цене ликвидации. -> dict | None.
 
     Считает ОТДЕЛЬНО от рисования, и это принципиально: числа нужны и тексту (заголовок
@@ -535,12 +550,17 @@ def liq_clusters(rows, mark=None, zoom=None):
                 # но назвать процент всё равно надо - иначе фраза «в пределах 50%» соврёт
                 # человеку, который просил 10%.
                 'req_pct': ((_wfrac * 100) if _wfrac else None),
+                'buckets_n': 1,
                 'win_pct': ((_wfrac * 100) if (_mk and win and _wfrac) else None),
                 'zoom': _z}
-    step = (hi - lo) / float(LIQ_BUCKETS)
+    # ЧИСЛО КОРЗИН - ВЫБРАННОЕ ЧЕЛОВЕКОМ ЛИБО УМОЛЧАНИЕ. Решается в ОДНОМ месте, чтобы шаг и
+    # индекс корзины считались от одного числа: два разных значения тут дали бы корзины, которые
+    # не сходятся со своими же подписями.
+    _nb = liq_buckets_ok(buckets) or LIQ_BUCKETS
+    step = (hi - lo) / float(_nb)
     acc = {}
     for liq, val, sd, lbl in pts:
-        i = min(int((liq - lo) / step), LIQ_BUCKETS - 1)
+        i = min(int((liq - lo) / step), _nb - 1)
         b = acc.setdefault(i, {'sum': 0.0, 'LONG': 0.0, 'SHORT': 0.0, 'named': 0.0,
                                'n_named': 0, 'who': {}})
         b['sum'] += val
@@ -579,6 +599,10 @@ def liq_clusters(rows, mark=None, zoom=None):
             # и карта по всем - разные карты, и человек обязан знать, какую смотрит.
             'window': win, 'off_usd': off_usd, 'off_n': off_n, 'win_empty': win_empty,
             'req_pct': ((_wfrac * 100) if _wfrac else None),
+            # СКОЛЬКО УРОВНЕЙ РЕАЛЬНО ПОСЧИТАНО: страница подписывает ручку ФАКТОМ из
+            # ответа, а не положением ползунка - иначе подпись врёт, когда просьба не
+            # доехала (например, Воркер ещё не переложен).
+            'buckets_n': _nb,
             'win_pct': ((_wfrac * 100) if (_mk and win and _wfrac) else None), 'zoom': _z}
 
 

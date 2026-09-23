@@ -1,4 +1,11 @@
 {
+ "buckets": 14,
+ "buckets_steps": [
+  8,
+  14,
+  20,
+  28
+ ],
  "caveats": [
   "1 position(s) had no liquidation price and are NOT on the map",
   "these are where other people stop out, not a forecast"
@@ -57,6 +64,7 @@
     "Fund C"
    ]
   ],
+  "buckets_n": 14,
   "longs": 23400000.0,
   "mark": 67250.0,
   "named": 26400000.0,
@@ -96,7 +104,7 @@
   "zoom": null
  },
  "provenance": "synthetic",
- "recorded_at": "2026-09-23T05:44:22Z",
+ "recorded_at": "2026-09-23T07:51:13Z",
  "rehearsal": true,
  "rendered_text": "BTC liquidation map. Biggest cluster: $11.8M between $62.0K and $63.0K. Total on the map: $31.6M across 5 position(s). Longs $23.4M vs shorts $8.2M. $26.4M of it sits on wallets Nansen has a name for (4 position(s)): Whale B, Smart Money, Fund C. 1 position(s) had no liquidation price and are NOT on the map. This is where other people stop out, not a forecast. Source: Nansen.",
  "scene": "liq_map",

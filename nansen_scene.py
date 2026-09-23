@@ -246,7 +246,8 @@ def _pm_caveats(rep, top, lang):
 # ═══════════════════════════════════════════════════════════════════════════════
 # СЦЕНА 2. liq_map - где висит чужое плечо
 # ═══════════════════════════════════════════════════════════════════════════════
-def liq_map_data(token, mark=None, lang='ru', rows=None, tokens=None, zoom=None):
+def liq_map_data(token, mark=None, lang='ru', rows=None, tokens=None, zoom=None,
+                 buckets=None):
     """Карта ликвидаций по перп-токену. -> конверт.
 
     `mark` (текущая цена) НЕОБЯЗАТЕЛЕН и передаётся снаружи: он приезжает не из Nansen, а с
@@ -264,7 +265,7 @@ def liq_map_data(token, mark=None, lang='ru', rows=None, tokens=None, zoom=None)
     if not rows:
         return _envelope('liq_map', None, N.fail_reason('empty'), lang, cost_requests=1,
                          cost_credits=_cr, refusal_what=_what)
-    cl = V.liq_clusters(rows, mark, zoom)
+    cl = V.liq_clusters(rows, mark, zoom, buckets)
     if not cl:
         # СТРОКИ ЕСТЬ, А ЦЕН ЛИКВИДАЦИИ В НИХ НЕТ - это расхождение схемы, а не «пусто».
         # Отдаём отдельным состоянием: иначе человек прочтёт отсутствие карты как отсутствие
@@ -288,7 +289,9 @@ def liq_map_data(token, mark=None, lang='ru', rows=None, tokens=None, zoom=None)
                             # МАСШТАБЫ ПЕРЕЧИСЛЯЕТ СЛОВАРЬ, А НЕ СТРАНИЦА: набор ступеней -
                             # решение слоя чисел, и второй список в разметке разъехался бы
                             # с первым на первой правке.
-                            'zooms': list(V.LIQ_ZOOMS), 'zoom': cl.get('zoom')})
+                            'zooms': list(V.LIQ_ZOOMS), 'zoom': cl.get('zoom'),
+                            'buckets_steps': list(V.LIQ_BUCKET_STEPS),
+                            'buckets': cl.get('buckets_n')})
 
 
 def _liq_caveats(cl, lang):
@@ -577,7 +580,8 @@ def scene_data(scene, params=None, lang='ru', bot_un=None, with_text=True):
         env = pm_reputation_data(params.get('market'), params.get('top'), lang)
     elif scene == 'liq_map':
         env = liq_map_data(params.get('token'), params.get('mark'), lang,
-                           tokens=params.get('tokens'), zoom=params.get('zoom'))
+                           tokens=params.get('tokens'), zoom=params.get('zoom'),
+                           buckets=params.get('buckets'))
     elif scene == 'sharp_markets':
         env = sharp_markets_data(lang, params.get('markets'), params.get('holders'))
     elif scene == 'perp_risk':

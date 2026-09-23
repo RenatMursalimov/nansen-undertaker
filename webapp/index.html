@@ -684,7 +684,8 @@ function sharpLoad() {
 /* ═══════════════════════════════════════════════════════════════════════════
    ЭКРАН 2. КАРТА ЛИКВИДАЦИЙ — где висит чужое плечо
    ═══════════════════════════════════════════════════════════════════════════ */
-var LIQ = { token: (qp('token') || 'BTC').toUpperCase(), env: null, pick: -1, zoom: null };
+var LIQ = { token: (qp('token') || 'BTC').toUpperCase(), env: null, pick: -1, zoom: null,
+            buckets: null };
 var LIQ_TOKENS = ['BTC', 'ETH', 'SOL', 'HYPE'];
 var BOARD = { on: false, env: null, busy: false };
 
@@ -699,15 +700,32 @@ function boardLoad() {
 function liqSVG(p) {
   var b = p.buckets || [];
   if (!b.length) return '';
-  var W = 320, H = 150, pad = 22, n = b.length;
+  /* ДВЕ ОСИ ВМЕСТО ДВУХ ЦИФР ПО КРАЯМ (замечание владельца: «никаких осей не видно ценовых»).
+     Слева - ДЕНЬГИ: без неё столбик был высотой без величины, и сумму приходилось угадывать
+     или тапать. Снизу - ЦЕНА: пять засечек по диапазону, а не только края.
+     ЛЕВОЕ ПОЛЕ ШИРЕ ПРАВОГО НАРОЧНО: там стоят подписи вида «$1.4B», и на 22 пикселях они
+     обрезались бы - обрезанное число хуже отсутствующего, потому что выглядит как настоящее. */
+  var W = 320, H = 150, padL = 44, padR = 10, padB = 16, n = b.length;
   var max = 0, i;
   for (i = 0; i < n; i++) max = Math.max(max, Number(b[i][2] || 0));
-  var bw = (W - pad * 2) / n;
+  var plotW = W - padL - padR;
+  var bw = plotW / n;
+  var pad = padL;                      /* дальше в коде «pad» = левая граница поля графика */
   var lo = Number(b[0][0]), hi = Number(b[n - 1][1]);
-  var s = '<svg viewBox="0 0 ' + W + ' ' + (H + 18) + '" role="img">';
+  var s = '<svg viewBox="0 0 ' + W + ' ' + (H + padB + 10) + '" role="img">';
+  /* ОСЬ ДЕНЕГ: три линии сетки и подписи. Считается из max, то есть из тех же чисел, что
+     столбики - своей арифметики у страницы нет. */
+  for (i = 0; i <= 2; i++) {
+    var gv = max * (i / 2.0);
+    var gy = H - (H - 24) * (i / 2.0);
+    s += '<line x1="' + padL + '" y1="' + gy.toFixed(1) + '" x2="' + (W - padR)
+       + '" y2="' + gy.toFixed(1) + '" stroke="#3a2168" stroke-width="0.7"/>'
+       + '<text x="' + (padL - 4) + '" y="' + (gy - 2).toFixed(1)
+       + '" text-anchor="end" fill="#b4a3dd" font-size="8">$' + esc(usd(gv)) + '</text>';
+  }
   for (i = 0; i < n; i++) {
     var v = Number(b[i][2] || 0);
-    var hgt = max ? Math.max(2, (H - pad) * v / max) : 2;
+    var hgt = max ? Math.max(2, (H - 24) * v / max) : 2;
     var x = pad + i * bw, y = H - hgt;
     var side = String(b[i][3] || '');
     var col = side === 'SHORT' ? 'var(--short)' : (side === 'LONG' ? 'var(--long)' : '#6b7280');
@@ -734,25 +752,46 @@ function liqSVG(p) {
          + '" width="' + nw.toFixed(1) + '" height="' + nh.toFixed(1)
          + '" fill="var(--named)" opacity="0.95" rx="1" pointer-events="none"/>';
     }
+    /* СУММА ПОДПИСАНА НА САМОМ СТОЛБИКЕ (просьба владельца: «а так удобно было бы суммы
+       видеть»). Подписываем только заметные столбики: на мелких подпись перекрыла бы соседей,
+       а обрезанное или наложенное число хуже отсутствующего. Остальные по-прежнему отвечают
+       на тап - деталь под графиком. Текст ПОВЁРНУТ: в столбик шириной ~18 пикселей «$364.3M»
+       по горизонтали не влезает ни при каком размере шрифта. */
+    if (max && v >= max * 0.18 && bw >= 9) {
+      s += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (y - 3).toFixed(1)
+         + '" fill="#f3eeff" font-size="7.5" text-anchor="start" pointer-events="none"'
+         + ' transform="rotate(-90 ' + (x + bw / 2).toFixed(1) + ' ' + (y - 3).toFixed(1)
+         + ')">$' + esc(usd(v)) + '</text>';
+    }
+  }
+  /* ОСЬ ЦЕНЫ: засечки по диапазону, а не только его края. Пять штук - столько подписей
+     умещается на 320 пикселях, не наезжая друг на друга. */
+  if (hi > lo) {
+    for (i = 0; i <= 4; i++) {
+      var tx = padL + plotW * (i / 4.0);
+      var tv = lo + (hi - lo) * (i / 4.0);
+      var anch = (i === 0) ? 'start' : (i === 4 ? 'end' : 'middle');
+      s += '<line x1="' + tx.toFixed(1) + '" y1="' + H + '" x2="' + tx.toFixed(1)
+         + '" y2="' + (H + 3) + '" stroke="#4a2c82" stroke-width="0.8"/>'
+         + '<text x="' + tx.toFixed(1) + '" y="' + (H + 12)
+         + '" text-anchor="' + anch + '" fill="#b4a3dd" font-size="8">$'
+         + esc(price(tv)) + '</text>';
+    }
   }
   /* ПУНКТИР ТЕКУЩЕЙ ЦЕНЫ. Нет цены - НЕТ И ОТМЕТКИ: выдуманная цена дала бы «осталось 3%»,
      которого никто не мерил. Карта без отметки остаётся честной картой уровней. */
   var mark = p.mark;
   if (mark !== null && mark !== undefined && hi > lo) {
-    var mx = pad + (W - pad * 2) * (Number(mark) - lo) / (hi - lo);
-    if (mx >= pad && mx <= W - pad) {
+    var mx = padL + plotW * (Number(mark) - lo) / (hi - lo);
+    if (mx >= padL && mx <= W - padR) {
       s += '<line x1="' + mx.toFixed(1) + '" y1="4" x2="' + mx.toFixed(1) + '" y2="' + H
          + '" stroke="#e8eaee" stroke-width="1" stroke-dasharray="3 3"/>'
-         + '<text x="' + Math.min(W - 40, mx + 3).toFixed(1)
+         + '<text x="' + Math.min(W - 46, mx + 3).toFixed(1)
          + '" y="12" fill="#e8eaee" font-size="9">now $' + esc(price(mark)) + '</text>';
     }
   }
-  s += '<line x1="' + pad + '" y1="' + H + '" x2="' + (W - pad) + '" y2="' + H
-     + '" stroke="#252a34"/>';
-  s += '<text x="' + pad + '" y="' + (H + 13) + '" fill="#9aa3b2" font-size="9">$'
-     + esc(price(lo)) + '</text>';
-  s += '<text x="' + (W - pad) + '" y="' + (H + 13)
-     + '" text-anchor="end" fill="#9aa3b2" font-size="9">$' + esc(price(hi)) + '</text>';
+  s += '<line x1="' + padL + '" y1="' + H + '" x2="' + (W - padR) + '" y2="' + H
+     + '" stroke="#4a2c82"/>';
   s += '</svg>';
   return s;
 }
@@ -786,15 +825,29 @@ function liqHTML(env) {
      + (nmTot > 0 ? '<span><i style="background:var(--named)"></i>money on named wallets'
                   + '</span>' : '')
      + '<span>dashed — current price</span></div>';
-  h += '<div class="det' + (LIQ.pick >= 0 ? ' on' : '') + '" id="liqdet">'
-     + (LIQ.pick >= 0 && p.buckets && p.buckets[LIQ.pick]
-        ? ('$' + usd(p.buckets[LIQ.pick][2]) + ' between $' + price(p.buckets[LIQ.pick][0])
-           + ' and $' + price(p.buckets[LIQ.pick][1])
-           + (p.buckets[LIQ.pick][3] ? ' · mostly ' + esc(p.buckets[LIQ.pick][3]) : '')
-           + (Number(p.buckets[LIQ.pick][4] || 0) > 0
-              ? ' · $' + usd(p.buckets[LIQ.pick][4]) + ' of it named'
-                + (p.buckets[LIQ.pick][5] ? ', biggest ' + esc(p.buckets[LIQ.pick][5]) : '')
-              : ' · no labelled wallet in this bar'))
+  /* ДЕТАЛЬ КОРЗИНЫ ВСЕГДА ВИДНА, А НЕ ТОЛЬКО ПОСЛЕ ТАПА. Живое замечание владельца: «нажимаешь
+     на колонки - не показывает какая сумма». Блок и раньше был, но появлялся ТОЛЬКО по тапу и
+     ТОЛЬКО ниже графика, поэтому читался как «ничего не произошло». Теперь до тапа в нём стоит
+     САМАЯ ПЛОТНАЯ корзина (то, о чём человек спросит первым), а тап меняет её на выбранную. */
+  var _pi = (LIQ.pick >= 0 && p.buckets && p.buckets[LIQ.pick]) ? LIQ.pick : -1;
+  if (_pi < 0 && p.buckets && p.buckets.length) {
+    var _bm = 0;
+    for (i = 0; i < p.buckets.length; i++) {
+      if (Number(p.buckets[i][2] || 0) > Number(p.buckets[_bm][2] || 0)) { _bm = i; }
+    }
+    _pi = _bm;
+  }
+  h += '<div class="det on" id="liqdet">'
+     + (_pi >= 0
+        ? ((LIQ.pick === _pi ? '' : 'densest level · ')
+           + '<b>$' + usd(p.buckets[_pi][2]) + '</b> between $' + price(p.buckets[_pi][0])
+           + ' and $' + price(p.buckets[_pi][1])
+           + (p.buckets[_pi][3] ? ' · mostly ' + esc(p.buckets[_pi][3]) : '')
+           + (Number(p.buckets[_pi][4] || 0) > 0
+              ? ' · $' + usd(p.buckets[_pi][4]) + ' of it named'
+                + (p.buckets[_pi][5] ? ', biggest ' + esc(p.buckets[_pi][5]) : '')
+              : ' · no labelled wallet in this bar')
+           + ' · <span class="dim">tap any bar to switch</span>')
         : 'Tap a bar for its level, size and who is named inside it.') + '</div>';
   h += '<div class="dim">These are other people\'s stop-out levels, not a forecast.</div>';
   h += footer(env) + '</div>';
@@ -876,20 +929,54 @@ function liqRender() {
      чисел, и второй список в разметке разъехался бы с первым. АКТИВНАЯ СТУПЕНЬ ОТМЕЧАЕТСЯ ПО
      ОТВЕТУ (`win_pct`/`zoom`), А НЕ ПО НАЖАТИЮ: если шлюз почему-то ответил другим окном,
      человек увидит это подсветкой, а не поверит своему тапу. */
+  /* ═══ МАСШТАБ ПОЛЗУНКОМ, КАК ГРОМКОСТЬ (просьба владельца) ═══
+     Значения всё равно из ЗАКРЫТОЙ лестницы (`zooms` в конверте): ползунок двигает НОМЕР
+     ступени, а не проценты. Свободный процент из клиента - это произвольное значение в
+     подписанном сигнале, и сравнивать «37%» не с чем; лестница же сравнима и повторяема.
+     ПОДПИСЬ ПОД ПОЛЗУНКОМ ПОКАЗЫВАЕТ ФАКТ ИЗ ОТВЕТА, А НЕ ПОЛОЖЕНИЕ РУЧКИ. Первая редакция
+     читала `env.win_pct`, а оно лежит В PAYLOAD - поэтому подсветка не двигалась вовсе, и
+     выглядело это как «кнопки не работают». Ровно тот случай, когда экран обещал обратную
+     связь и не давал её. */
   var zs = (LIQ.env && LIQ.env.zooms) || [];
   if (zs.length) {
-    var zNow = (LIQ.env && (LIQ.env.zoom === 0 || LIQ.env.zoom) ? LIQ.env.zoom
-                : (LIQ.env && LIQ.env.win_pct ? Math.round(LIQ.env.win_pct) : null));
-    h += '<div class="btns" style="margin-top:6px"><span class="dim" style="align-self:center">'
-       + 'scale:</span>';
-    for (i = 0; i < zs.length; i++) {
-      var zv = Number(zs[i]);
-      h += '<span class="btn' + (zNow === zv ? ' on' : '') + '" data-zn="' + zv + '">'
-         + (zv ? ('±' + zv + '%') : 'all') + '</span>';
+    var _p0 = (LIQ.env && LIQ.env.payload) || {};
+    var zAns = (LIQ.env && (LIQ.env.zoom === 0 || LIQ.env.zoom)) ? Number(LIQ.env.zoom)
+               : (_p0.win_pct ? Math.round(_p0.win_pct) : null);
+    var zIdx = zs.indexOf(zAns);
+    if (zIdx < 0) { zIdx = zs.indexOf(50); }
+    if (zIdx < 0) { zIdx = 0; }
+    h += '<div class="btns" style="margin-top:8px;align-items:center">'
+       + '<span class="dim">scale</span>'
+       + '<input id="znrange" type="range" min="0" max="' + (zs.length - 1) + '" step="1"'
+       + ' value="' + zIdx + '" style="flex:1;min-width:120px;accent-color:#00d395">'
+       + '<span class="btn on" id="znlbl">' + (zAns ? ('±' + zAns + '%') : 'all') + '</span>'
+       + '</div>';
+    /* ВТОРОЙ ПОЛЗУНОК - ЧИСЛО КЛАСТЕРОВ («количество и масштаб», как просил владелец).
+       Масштаб решает, КАКОЙ участок цены смотрим; детализация - на сколько уровней его резать.
+       Две разные величины, поэтому две ручки, а не одна «умная». */
+    var bs = (LIQ.env && LIQ.env.buckets_steps) || [];
+    if (bs.length) {
+      var bAns = _p0.buckets_n || (LIQ.env && LIQ.env.buckets) || 14;
+      var bIdx = bs.indexOf(Number(bAns));
+      if (bIdx < 0) { bIdx = Math.floor(bs.length / 2); }
+      h += '<div class="btns" style="margin-top:4px;align-items:center">'
+         + '<span class="dim">detail</span>'
+         + '<input id="bkrange" type="range" min="0" max="' + (bs.length - 1) + '" step="1"'
+         + ' value="' + bIdx + '" style="flex:1;min-width:120px;accent-color:#00d395">'
+         + '<span class="btn on" id="bklbl">' + esc(bs[bIdx]) + ' levels</span></div>';
     }
-    h += '</div>';
     h += '<div class="dim">Levels are bucketed inside this window around the current price. '
        + 'Money outside it is counted and named, not dropped.</div>';
+    /* ЧЕСТНАЯ СТРОКА ПРО РАСХОЖДЕНИЕ. Если попросили одно окно, а ответ пришёл с другим -
+       почти всегда это значит, что Воркер ещё не переложен и поле масштаба не доезжает.
+       Молчать тут нельзя: человек будет двигать ручку и думать, что сломан экран. */
+    if (LIQ.zoom !== null && LIQ.zoom !== undefined && zAns !== LIQ.zoom) {
+      h += '<div class="warn">You asked for '
+         + (LIQ.zoom ? ('±' + LIQ.zoom + '%') : 'the full range')
+         + ', the gateway answered with '
+         + (zAns ? ('±' + zAns + '%') : 'the full range')
+         + '. The scale field is not reaching the bot yet — the Worker needs redeploying.</div>';
+    }
   }
   /* СВОЙ ТИКЕР ВВОДОМ. Это НЕ то же, что ручной ввод market_id, который мы из hero убрали:
      там номер был служебным и человек искал бы его вне экрана, а тикер он и так знает. */
@@ -916,11 +1003,33 @@ function liqRender() {
       return function () { LIQ.token = tk; LIQ.env = null; LIQ.pick = -1; liqLoad(); };
     })(brs[i].getAttribute('data-btk'));
   }
-  var zbs = el.querySelectorAll('.btn[data-zn]');
-  for (i = 0; i < zbs.length; i++) {
-    zbs[i].onclick = (function (z) {
-      return function () { LIQ.zoom = z; LIQ.env = null; LIQ.pick = -1; liqLoad(); };
-    })(Number(zbs[i].getAttribute('data-zn')));
+  /* ПОЛЗУНКИ СПРАШИВАЮТ СЕТЬ НА `change` (палец отпустили), А НЕ НА `input` (каждый пиксель):
+     иначе одно движение ручки = десяток запросов к площадке. Подпись же двигается сразу, на
+     `input`, - человек должен видеть, что ручка живая, ещё до ответа. */
+  var zr = document.getElementById('znrange');
+  var zl = document.getElementById('znlbl');
+  if (zr) {
+    var zsv = (LIQ.env && LIQ.env.zooms) || [];
+    zr.oninput = function () {
+      var v = Number(zsv[Number(zr.value)]);
+      if (zl) { zl.textContent = v ? ('±' + v + '%') : 'all'; }
+    };
+    zr.onchange = function () {
+      LIQ.zoom = Number(zsv[Number(zr.value)]);
+      LIQ.env = null; LIQ.pick = -1; liqLoad();
+    };
+  }
+  var br = document.getElementById('bkrange');
+  var bl = document.getElementById('bklbl');
+  if (br) {
+    var bsv = (LIQ.env && LIQ.env.buckets_steps) || [];
+    br.oninput = function () {
+      if (bl) { bl.textContent = bsv[Number(br.value)] + ' levels'; }
+    };
+    br.onchange = function () {
+      LIQ.buckets = Number(bsv[Number(br.value)]);
+      LIQ.env = null; LIQ.pick = -1; liqLoad();
+    };
   }
   var tkin = document.getElementById('tkin');
   var tkgo = document.getElementById('tkgo');
@@ -956,6 +1065,7 @@ function liqLoad() {
   /* МАСШТАБ ЕДЕТ ТОЛЬКО ЕСЛИ ЕГО ВЫБРАЛИ. Ноль - это ЗНАЧЕНИЕ («весь размах»), а не «не
      выбрано», поэтому проверка именно на null, а не на ложность. */
   if (LIQ.zoom !== null && LIQ.zoom !== undefined) { req.zn = LIQ.zoom; }
+  if (LIQ.buckets !== null && LIQ.buckets !== undefined) { req.bk = LIQ.buckets; }
   askScene(req, function (env) {
     LIQ.env = env; showReh(env); liqRender();
   });

@@ -2328,6 +2328,155 @@ def sm_dca_block(rows, bot_un=None, lang='ru', top=10):
     return with_source('\n'.join(L), lang)
 
 
+def pm_positions(market_id, per_page=20):
+    """ВСЕ ДЕРЖАТЕЛИ РЫНКА С ИХ PnL ПО ЭТОМУ РЫНКУ. -> [dict].
+
+    СХЕМА СНЯТА КРУГОМ 3 ЖИВОЙ ПРОБЫ 24.09, И ГЛАВНОЕ В НЕЙ - ЧЕГО В ТЕЛЕ НЕТ: поля адреса эта
+    ручка не знает ВООБЩЕ. Отвергнуты все три кандидата (`address`, `wallet_address`,
+    `trader_address`), а на теле из ОДНОГО `market_id` пришли 200 и десять строк. То есть это
+    не «детализация позиции кошелька», как читалось по имени, а СРЕЗ ПО РЫНКУ.
+
+    Поля ответа (из пробы): address, owner_address, token_id, outcome, outcome_index, balance,
+    avg_entry_price, current_price, buy_tokens, buy_cost_usd, sell_tokens, sell_proceeds_usd,
+    token_pnl_usd, unrealized_value_usd, redemption_value_usd, market_id, market_resolved,
+    event_id, event_title.
+
+    ЧЕМ ЭТО ДОПОЛНЯЕТ ЭКРАН РЕПУТАЦИИ. Там - винрейт держателей ПО ВСЕЙ ИХ ИСТОРИИ; здесь - что
+    у них происходит ИМЕННО В ЭТОМ рынке: по какой цене вошли и сколько уже потеряли или
+    заработали. Второй вопрос без первого отвечает «кто в плюсе», а вместе они отвечают «кто
+    здесь умеет и кто просто пока в плюсе».
+    """
+    return _rows(_post("prediction-market/position-detail",
+                       {"market_id": str(market_id),
+                        "pagination": {"page": 1, "per_page": int(per_page)}},
+                       ckey=f"pmposd:{market_id}:{per_page}"))
+
+
+def pm_positions_block(rows, market_id='', lang='ru', top=10):
+    """Держатели рынка с PnL - текстом. -> str | None.
+
+    ВЕДЁМ PnL, А НЕ РАЗМЕРОМ. «$400K в позиции» говорит о ставке, «$400K в позиции и -$120K по
+    ней» говорит о том, как эта ставка ИДЁТ, - и это второе решает, стоит ли стоять рядом.
+    """
+    if not rows:
+        return None
+    en = (lang == 'en')
+    L = [('🧾 <b>Who is in this market, and how it is going for them</b>' if en
+          else '🧾 <b>Кто в этом рынке и как у них идёт</b>')]
+    if market_id:
+        L.append('<code>%s</code>' % _esc(str(market_id)[:40]))
+    _title = None
+    _res = None
+    _shown = 0
+    _pnl_sum = 0.0
+    _rows2 = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        _shape('pm-position-detail', r)
+        if _title is None:
+            _title = r.get('event_title')
+            _res = r.get('market_resolved')
+        _rows2.append(r)
+    if _title:
+        L.append('<i>%s</i>' % _esc(str(_title)[:120]))
+    if _res is True:
+        L.append(('<i>The market is RESOLVED: these numbers are final, not open risk.</i>' if en
+                  else '<i>Рынок РАЗРЕШЁН: это итоговые числа, а не открытый риск.</i>'))
+    # СОРТИРУЕМ ПО АБСОЛЮТНОМУ PnL: интересны и крупнейшие победители, и крупнейшие проигравшие -
+    # «кто здесь больше всех поставил на карту» это обе стороны, а не только плюс.
+    _rows2.sort(key=lambda r: -abs(_num_or_none(r.get('token_pnl_usd')) or 0))
+    L.append('')
+    for i, r in enumerate(_rows2[:int(top)], 1):
+        who = _who(r)
+        _out = _first(r, ('outcome', 'outcome_name')) or pm_holder_side(r)
+        _pnl = _num_or_none(r.get('token_pnl_usd'))
+        _ent = _num_or_none(r.get('avg_entry_price'))
+        _cur = _num_or_none(r.get('current_price'))
+        _unr = _num_or_none(r.get('unrealized_value_usd'))
+        seg = []
+        if _pnl is not None:
+            _pnl_sum += _pnl
+            seg.append((('PnL +$%s' if _pnl >= 0 else 'PnL -$%s') % _usd(abs(_pnl))))
+        if _ent is not None and _cur is not None:
+            seg.append(('entry %.0f¢ → %.0f¢' if en else 'вход %.0f¢ → %.0f¢')
+                       % (_ent * 100 if _ent <= 1 else _ent, _cur * 100 if _cur <= 1 else _cur))
+        if _unr:
+            seg.append(('open $%s' if en else 'открыто $%s') % _usd(_unr))
+        _shown += 1
+        L.append('%d. %s [%s] · %s' % (i, who, _esc(str(_out)[:12]), ' · '.join(seg) or '?'))
+    if not _shown:
+        return None
+    L.append('')
+    L.append((('<i>Net PnL of the %d holder(s) shown: %s$%s. This is their result in THIS '
+               'market, not their lifetime record.</i>') if en else
+              ('<i>Суммарный PnL показанных %d держател(ей): %s$%s. Это результат В ЭТОМ '
+               'рынке, а не их история вообще.</i>'))
+             % (_shown, '+' if _pnl_sum >= 0 else '-', _usd(abs(_pnl_sum))))
+    return with_source('\n'.join(L), lang)
+
+
+def jup_dca(token_address, per_page=20):
+    """DCA-ПРОГРАММЫ НА JUPITER (Solana) ПО ТОКЕНУ. -> [dict].
+
+    СХЕМА СНЯТА КРУГОМ 3 ЖИВОЙ ПРОБЫ 24.09, и оба урока - про смысл, а не про имена полей:
+    поля `chain` ручка не знает (у Jupiter сеть одна), а НАТИВНЫЙ токен (WSOL) она отвергает
+    прямым текстом - «does not support native tokens on any chain». То есть спрашивать про SOL
+    здесь нельзя ПО УСТРОЙСТВУ, и это не наш баг.
+
+    Поля ответа: trader_address, trader_label, token_input, token_output, input_mint_address,
+    output_mint_address, deposit_amount, deposit_spent, deposit_usd_value, other_token_redeemed,
+    status, since_timestamp, last_timestamp, dca_vault_address, creation_hash.
+    """
+    return _rows(_post("tgm/jup-dca",
+                       {"token_address": str(token_address),
+                        "pagination": {"page": 1, "per_page": int(per_page)}},
+                       ckey=f"jupdca:{token_address}:{per_page}"))
+
+
+def jup_dca_block(rows, token='', lang='ru', top=10):
+    """DCA на Jupiter - текстом. -> str | None. Ведёт величиной вклада и долей исполнения."""
+    if not rows:
+        return None
+    en = (lang == 'en')
+    L = [('🧊 <b>Jupiter DCA on this token</b>' if en
+          else '🧊 <b>DCA на Jupiter по этому токену</b>')]
+    L.append(('A DCA program is a commitment to keep buying: the share already spent says how '
+              'much of it is still ahead.' if en else
+              'Программа DCA - обещание продолжать покупать: доля потраченного говорит, сколько '
+              'покупок ещё впереди.'))
+    L.append('')
+    _shown = 0
+    for r in rows[:int(top)]:
+        if not isinstance(r, dict):
+            continue
+        _shape('jup-dca', r)
+        _shown += 1
+        who = _who(r) if (r.get('trader_label') or r.get('trader_address')) else '?'
+        _in = str(r.get('token_input') or '?')[:12]
+        _out = str(r.get('token_output') or '?')[:12]
+        _usdv = _num_or_none(r.get('deposit_usd_value'))
+        _dep = _num_or_none(r.get('deposit_amount'))
+        _spent = _num_or_none(r.get('deposit_spent'))
+        seg = []
+        if _usdv is not None:
+            seg.append('$%s' % _usd(_usdv))
+        if _spent is not None and _dep:
+            try:
+                seg.append(('spent %.0f%%' if en else 'потрачено %.0f%%')
+                           % max(0.0, min(100.0, 100.0 * float(_spent) / float(_dep))))
+            except (TypeError, ValueError, ZeroDivisionError):
+                pass
+        _st = str(r.get('status') or '').strip()[:14]
+        if _st:
+            seg.append(_esc(_st))
+        L.append('%d. %s · <b>%s → %s</b>%s' % (_shown, who, _esc(_in), _esc(_out),
+                                                (' · ' + ' · '.join(seg)) if seg else ''))
+    if not _shown:
+        return None
+    return with_source('\n'.join(L), lang)
+
+
 def defi_holdings(address):
     """DeFi-ЧАСТЬ ПОРТФЕЛЯ КОШЕЛЬКА: активы, долги, награды по протоколам. -> dict | None.
 
