@@ -1,6 +1,7 @@
 {
  "caveats": [
   "1 program(s) have no execution share: the response is missing one of the two numbers it needs, and a share from one number would be invented",
+  "for 1 program(s) the amount still to be bought is NOT computed: the response is missing the size or the executed share",
   "a DCA program is a commitment to buy, not a purchase: part of it may never be executed"
  ],
  "cost_credits": null,
@@ -9,6 +10,9 @@
  "lang": "en",
  "outcome": "ok",
  "payload": {
+  "ahead_gap": 1,
+  "ahead_n": 2,
+  "ahead_usd": 1617500.0,
   "more": 0,
   "rows": [
    {
@@ -44,9 +48,9 @@
   "with_val": 3
  },
  "provenance": "synthetic",
- "recorded_at": "2026-09-23T09:54:13Z",
+ "recorded_at": "2026-09-23T11:51:50Z",
  "rehearsal": true,
- "rendered_text": "🧊 <b>Smart money buying on a schedule (DCA)</b>\nA DCA program is a commitment to keep buying, not a single trade: the share already spent says how much of it is still ahead.\n\n1. Smart Whale 1 · <b>USDC → WETH</b> · $2.00M · spent 20% · active\n2. Smart Whale 2 · <b>USDT → SOL</b> · $350.0K · spent 95% · active\n3. 0x4444…0044 · <b>USDC → AAA</b> · $90.0K · closed\n\n<i>📡 Source: Nansen, freshness not measured</i>",
+ "rendered_text": "🧊 <b>Smart money buying on a schedule (DCA)</b>\nA DCA program is a commitment to keep buying, not a single trade: the share already spent says how much of it is still ahead.\n🔮 Still to be bought: <b>$1.62M</b> across 2 program(s)\n\n1. Smart Whale 1 · <b>USDC → WETH</b> · $2.00M · spent 20% · active\n2. Smart Whale 2 · <b>USDT → SOL</b> · $350.0K · spent 95% · active\n3. 0x4444…0044 · <b>USDC → AAA</b> · $90.0K · closed\n\n<i>📡 Source: Nansen, freshness not measured</i>",
  "scene": "smart_dca",
  "source": "Nansen",
  "surface": "miniapp"

@@ -564,6 +564,20 @@ def _dca_caveats(d, lang):
                     if en else
                     'ещё %d программ(ы) приехали и не показаны: экран показывает %d')
                    % (int(d['more']), int(d.get('shown') or 0)))
+    # НОЛЬ «ВПЕРЕДИ» - ЭТО ОТВЕТ, И ОН НАЗЫВАЕТСЯ СЛОВОМ. Живой прогон владельца: в ответе была
+    # одна программа, закрытая и отработанная на 100%, а экран обещал сигнал про БУДУЩИЕ
+    # покупки. Молчание об этом оставляет обещание невыполненным и незамеченным.
+    if d.get('with_val') and not d.get('ahead_n'):
+        out.append('nothing in this response is still ahead: every program here is fully '
+                   'executed, so this is a record of past buying, not of future buying'
+                   if en else
+                   'впереди в этом ответе ничего: все программы отработаны, то есть это запись '
+                   'о прошлых покупках, а не о будущих')
+    if d.get('ahead_gap'):
+        out.append(('for %d program(s) the amount still to be bought is NOT computed: the '
+                    'response is missing the size or the executed share' if en else
+                    'по %d программ(ам) остаток не посчитан: в ответе нет размера или доли '
+                    'исполнения') % int(d['ahead_gap']))
     out.append('a DCA program is a commitment to buy, not a purchase: part of it may never be '
                'executed' if en else
                'программа DCA - обещание покупать, а не покупка: часть её может так и не '
@@ -604,6 +618,11 @@ def _chain_caveats(d, lang):
                     'by TVL' if en else
                     'ещё %d сет(ей) есть в ответе и нет на экране: он показывает топ-%d по TVL')
                    % (int(d['total']) - int(d['shown']), int(d.get('shown') or 0)))
+    if d.get('chg_n') and not d.get('chg_nonzero'):
+        out.append(('the change in TVL came back as zero for ALL %d chain(s): read it as "not '
+                    'measured in this window", not as calm' if en else
+                    'изменение TVL приехало нулевым у ВСЕХ %d сет(ей): читать это надо как «в '
+                    'этом окне не измерено», а не как спокойствие') % int(d['chg_n']))
     out.append('the order is by TVL, and TVL is money parked, not money moving: a chain can be '
                'busier than a bigger one' if en else
                'порядок по TVL, а TVL - это припаркованные деньги, а не движущиеся: сеть '
