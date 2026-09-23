@@ -286,3 +286,59 @@ and then passed through `.rstrip('0').rstrip('.')`, so **500 active addresses pr
 truncated figure is worse than a missing one, because it still looks like a measurement. The
 formatting now prints what was measured, and the number goes through the same dictionary the mini-app
 draws.
+
+
+## The caption under the picture was a brick of plain text, and it said "Nansen" twice
+
+Spotted by the owner in a group: *“why is it solid text with no formatting”* and *“why write this
+below if Nansen is at the start”*. Both were true, and both were in the same three lines of code.
+
+**Plain text.** `liq_caption` joined its sentences with a space, and `send_photo` was called without
+`parse_mode`. So eight statements arrived as one paragraph. The cost is not only visual: the caption
+carries *different* statements — the size of the densest cluster, the total on the map, whose money it
+is, and **what is not on the map at all** — and glued into a paragraph the last of those is the one a
+reader skips. One line per statement now, with the qualifiers marked, because a qualifier changes the
+meaning of the number above it.
+
+**The source twice.** The picture already carries a `Nansen` mark burnt into the canvas (bottom right,
+`fig.text`), and that mark survives being forwarded as a file — which is exactly what the source line
+is *for*. Repeating it in the caption of the same message is noise. The caption therefore takes
+`on_image=True` from `liq_map_png` and omits the source; the **text-only** fallback (no picture, no
+canvas, no mark) still names it, because there nothing else does. The rule: *one source claim per
+object, on the part of the object that survives sharing.*
+
+This is guarded by tests rather than by care: the caption must be multi-line, its markup must be
+balanced, the text-only variant must name Nansen, the on-image variant must not, **and** the canvas
+mark must exist in the drawing code — without that last check, removing the line would be removing
+the claim.
+
+Two consequences that are easy to miss:
+
+* **markup means escaping.** Wallet labels come from Nansen, and one `&` or `<` in a label makes the
+  markup invalid — Telegram then rejects the whole message and the person gets *nothing* instead of a
+  map. Anything from the provider is escaped now (`_h`), and a test feeds a label containing both;
+* **the caption is trimmed by Telegram's own measure** (`tg_html.fit`), not by `cap[:1024]`. A blind
+  slice lands inside a tag and produces the same total rejection. The token card was fixed this way
+  earlier; the map was still on the naive slice.
+
+The single-line captions of the other pictures (flows, probability) still repeat the source, and that
+is left as it is for now rather than swept silently — a one-line caption does not have the problem
+that was reported, and a test currently *requires* the source in those captions.
+
+## A collision the frame check could not see
+
+With the horizontal layout the price marker `now $67.3K` is drawn at the right edge — and so are the
+per-bar amounts. On the live render the marker landed on top of `$11.80M`: two different numbers read
+as one string. Nothing was outside the canvas, so the "everything inside the frame" measurement was
+green, and the defect was visible only in the picture.
+
+**Resolution rule: the dashed price line wins.** The amount of the row the marker sits on is not
+drawn — that number is still on the money axis and in the detail line under the chart, while the price
+marker is unique and has nowhere else to go. Same "if it does not fit, do not draw it" rule, except
+what crowds the label is another label rather than the frame.
+
+The render harness now compares every pair of `<text>` rectangles for overlap, in both orientations,
+in addition to comparing each one with the canvas. Currently zero overflows and zero collisions. This
+is the second time in this project that a chart defect was found by measuring the rendered page rather
+than by reading the code (the first was the invisible bars on the sharp-money screen), which is why
+the check is in the harness and not in a reviewer's eye.

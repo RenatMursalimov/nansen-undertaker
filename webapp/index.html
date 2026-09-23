@@ -915,6 +915,17 @@ function liqSVG(p) {
   var padTop = 16, padBot = 6, padLeftH = 52, padRightH = 54;
   var Hh = padTop + rowH * n + padBot;
   var plotWH = W - padLeftH - padRightH;
+  /* ГДЕ ПРОЙДЁТ ПУНКТИР ТЕКУЩЕЙ ЦЕНЫ - СЧИТАЕМ ДО СТОЛБИКОВ, А НЕ ПОСЛЕ.
+     ЗАЧЕМ ЗАРАНЕЕ. Подпись «now $67.3K» стоит у правого края, и там же стоят подписи сумм.
+     На живом рендере они наложились друг на друга: два разных числа слиплись в одну строку -
+     ровно тот дефект, который уже ловили на картинке в чате (золотое по синему). Рамку при
+     этом не нарушал никто, поэтому проверка «всё внутри холста» его не видела.
+     ПРАВИЛО РАЗРЕШЕНИЯ СПОРА: побеждает ПУНКТИР. Отметка цены на карте одна и уникальна, а
+     сумма строки есть и на оси денег, и в строке детали под графиком. Поэтому подпись суммы
+     той строки, куда садится «now», не рисуется вовсе - то же правило «не влезло - не рисуем»,
+     только теснит не рамка, а другое число. */
+  var _mySlot = (mark !== null && hi > lo) ? ((hi - mark) / (hi - lo)) * n : null;
+  var _myY = (_mySlot === null) ? null : (padTop + _mySlot * rowH);
   s = SVG_OPEN + W + ' ' + Hh + '">'
     + '<rect x="0" y="0" width="' + W + '" height="' + Hh + '" fill="' + C_BG + '"/>';
   /* ОСЬ ДЕНЕГ - СВЕРХУ, ТРИ ЗАСЕЧКИ. Она же объясняет длину столбика. */
@@ -954,9 +965,13 @@ function liqSVG(p) {
          + '" text-anchor="end" fill="#b4a3dd" font-size="' + (rowH >= 11 ? 8 : 7)
          + '">$' + esc(price((Number(b[i][0]) + Number(b[i][1])) / 2)) + '</text>';
     }
-    /* СУММА СПРАВА ОТ СТОЛБИКА, БЕЗ ПОВОРОТА, И ТОЛЬКО ЕСЛИ ВЛЕЗАЕТ В ПРАВОЕ ПОЛЕ. */
+    /* СУММА СПРАВА ОТ СТОЛБИКА, БЕЗ ПОВОРОТА, И ТОЛЬКО ЕСЛИ ВЛЕЗАЕТ В ПРАВОЕ ПОЛЕ И НЕ
+       СПОРИТ С ПОДПИСЬЮ ТЕКУЩЕЙ ЦЕНЫ (см. про спор выше). */
     var lblh = '$' + usd(vh);
-    if (max && vh >= max * 0.06 && (padLeftH + wid + 3 + lblh.length * 4.6) <= W) {
+    var _yTxt = yy + rowH / 2 + 2.6;
+    var _clash = (_myY !== null) && Math.abs(_yTxt - (_myY - 3)) < rowH;
+    if (max && vh >= max * 0.06 && !_clash
+        && (padLeftH + wid + 3 + lblh.length * 4.6) <= W) {
       s += '<text x="' + (padLeftH + wid + 3).toFixed(1) + '" y="'
          + (yy + rowH / 2 + 2.6).toFixed(1) + '" fill="#f3eeff" font-size="'
          + (rowH >= 11 ? 8 : 7) + '" pointer-events="none">' + esc(lblh) + '</text>';
@@ -968,7 +983,7 @@ function liqSVG(p) {
      уровне - самая опасная из возможных здесь ошибок, ведь по нему человек читает, куда
      цене идти. */
   if (mark !== null && hi > lo) {
-    var my = padTop + (rowH * n) * (hi - mark) / (hi - lo);
+    var my = _myY;
     if (my >= padTop && my <= Hh - padBot) {
       s += '<line x1="' + padLeftH + '" y1="' + my.toFixed(1) + '" x2="' + (W - 4)
          + '" y2="' + my.toFixed(1) + '" stroke="#e8eaee" stroke-width="1"'

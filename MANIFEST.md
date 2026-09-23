@@ -19,7 +19,7 @@
 | `docs/DEMO_SCRIPT.md` | `1aeb7dffe6ba17d8` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/ENDPOINT_SWEEP.md` | `5ab537dc99510c9f` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/JUDGE.md` | `476c8708dbdca533` | из бота, приватные пути/сервисы заменены (см. ниже) |
-| `docs/MINIAPP_DECISIONS.md` | `9fbfc23b16bd76f7` | из бота, приватные пути/сервисы заменены (см. ниже) |
+| `docs/MINIAPP_DECISIONS.md` | `f3f0430cb4407277` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/PROJECT_STATUS.md` | `6aa1b555f53df6d4` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/RECORDING_RUNBOOK.md` | `f897c1d05a2244e0` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/VIDEO_SCRIPT.md` | `ca576bf4290b32cd` | из бота, приватные пути/сервисы заменены (см. ниже) |
@@ -43,8 +43,8 @@
 | `docs/wiki/_Sidebar.md` | `bed3e53f7e03b897` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `env_load.py` | `222f6df16beb597b` | только в выжимке, в боте этого файла нет |
 | `fixtures/chain_rank.json` | `cd53c9607d73110b` | байт-в-байт из бота |
-| `fixtures/liq_map.json` | `920b7e126e08b030` | байт-в-байт из бота |
-| `fixtures/perp_risk.json` | `9210a732c86de012` | байт-в-байт из бота |
+| `fixtures/liq_map.json` | `ff8c106d6f2b4042` | байт-в-байт из бота |
+| `fixtures/perp_risk.json` | `bd49d9147674539c` | байт-в-байт из бота |
 | `fixtures/pm_markets.json` | `4d6156148c320da3` | байт-в-байт из бота |
 | `fixtures/pm_positions.json` | `19653117d543f046` | байт-в-байт из бота |
 | `fixtures/pm_reputation.json` | `e2f03bd6fb5091e5` | байт-в-байт из бота |
@@ -56,7 +56,7 @@
 | `nansen_limits.py` | `4ea08d0118f935e2` | байт-в-байт из бота |
 | `nansen_log.py` | `faf9098462ce1dfa` | байт-в-байт из бота |
 | `nansen_scene.py` | `765bc172eb7617b8` | байт-в-байт из бота |
-| `oc_nansen_viz.py` | `2715c8dcc4618810` | байт-в-байт из бота |
+| `oc_nansen_viz.py` | `c0ea8acb1f321501` | байт-в-байт из бота |
 | `requirements.txt` | `56dbb14aff00e3cd` | только в выжимке, в боте этого файла нет |
 | `scrub.py` | `673b87cec26ce3dd` | только в выжимке, в боте этого файла нет |
 | `tests/test_public.py` | `8235a2e96ee22b7b` | только в выжимке, в боте этого файла нет |
@@ -70,7 +70,7 @@
 | `tools/record_fixture.py` | `3e6fc4018b83fed1` | байт-в-байт из бота |
 | `tools/render_social_preview.py` | `ba595dc312016848` | байт-в-байт из бота |
 | `tools/scene_text_baseline.py` | `7be1e9c14359564f` | байт-в-байт из бота |
-| `webapp/index.html` | `6c293229484dd898` | байт-в-байт из бота |
+| `webapp/index.html` | `2935dc4c4aaff2f5` | байт-в-байт из бота |
 
 ## Единственная объявленная санитарная замена
 
