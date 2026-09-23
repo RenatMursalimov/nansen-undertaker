@@ -227,19 +227,19 @@ def _cases_next():
         ('ra-agent/posts-by-user', 'СНЯТО: username + date {from,to}',
          dict(_pg, username="nansen_ai", date=N._date_range(7))),
         # ── КРУГ 3: ТЕЛО БЕЗ ПАГИНАЦИИ (площадка сказала, что не знает это поле) ──────────
-        ('tgm/position-intelligence', 'круг 3: БЕЗ пагинации, только сеть и адрес токена',
-         {"chain": "ethereum", "token_address": TOKEN_ETH_WETH}),
-        ('search/web-search', 'круг 3: БЕЗ пагинации, только queries',
+        # КРУГ 4: площадка сказала, что не знает и `chain` тоже. Остаётся один адрес токена -
+        # ровно как у `jup-dca`, где сеть тоже оказалась лишней.
+        ('tgm/position-intelligence', 'круг 4: только token_address (chain тоже не знает)',
+         {"token_address": TOKEN_ETH_WETH}),
+        ('search/web-search', 'СНЯТО: только queries, 200 + results/organic',
          {"queries": ["smart money"]}),
         # ── КРУГ 3: НЕ НАТИВНЫЙ ТОКЕН SOLANA (нативный отвергнут по смыслу) ──────────────
-        ('tgm/jup-dca', 'круг 3: JUP вместо WSOL (нативные не поддерживаются)',
+        ('tgm/jup-dca', 'СНЯТО: обычный mint (нативные не поддерживаются), 200 + строки',
          dict(_pg, token_address=TOKEN_SOL_JUP)),
         # ── КРУГ 3: ТРЕТЬЕ ИМЯ ПОЛЯ АДРЕСА, ПО ОДНОМУ НА ЗАПРОС ─────────────────────────
         # `trader_address` - имя из ОТВЕТА `smart-money/dcas`, то есть слово самой площадки, а
         # не наша фантазия. Если и оно не подойдёт - следующий круг берёт `address_list`.
-        ('prediction-market/position-detail', 'круг 3: trader_address (имя из ответа dcas)',
-         {"trader_address": PM_WALLET, "market_id": LIVE_PM_MARKET}),
-        ('prediction-market/position-detail', 'круг 3: только market_id, без адреса вовсе',
+        ('prediction-market/position-detail', 'СНЯТО: ТОЛЬКО market_id, 200 + 10 строк',
          {"market_id": LIVE_PM_MARKET}),
     ]
 

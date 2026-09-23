@@ -10,7 +10,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 | Scenarios | Endpoints used | Telemetry scenes |
 |---|---|---|
-| 30: 28 user-facing on Nansen + 1 background + 1 local | 32 | 28 of 33 in registry |
+| 32: 30 user-facing on Nansen + 1 background + 1 local | 34 | 30 of 35 in registry |
 
 ## Three doors: where Nansen can be asked at all
 
@@ -28,22 +28,22 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 | Scenario | Say to the bot | By button | Where | Price |
 |---|---|---|---|---|
-| [💹 Smart money inflow by window](#flows) | `smart flows` | 🧠 Nansen → 💹 Smart flows (1h/24h/7d/30d) | 💬 | price not named in the official list · counted on a separate line |
-| [🔥 Smart Money inside the shared Trends screen](#trends) | — | 🧠 Nansen → 🔥 Screener: 24h inflow | 💬 | 1 credit |
-| [💼 What smart money accumulates](#holdings) | `smart holdings` | 🧠 Nansen → 💼 What they hold | 💬 | 3 credits |
-| [🧠 Smart money trades over 24h + share of market cap](#trades) | `smart trades` | 🧠 Nansen → 🧠 Smart money trades now | 💬 | 1–5 credits |
-| [🏆 Top perp traders](#perpleaders) | `top perps` | 🧠 Nansen → 🏆 Top perp traders | 💬 | 5 credits |
+| [💹 Smart money inflow by window](#flows) | `smart flows` | 🧠 Nansen → 🧠 Smart money → 💹 Smart flows (1h/24h/7d/30d) | 💬 | price not named in the official list · counted on a separate line |
+| [🔥 Smart Money inside the shared Trends screen](#trends) | — | 🧠 Nansen → 🧠 Smart money → 🔥 Screener: 24h inflow | 💬 | 1 credit |
+| [💼 What smart money accumulates](#holdings) | `smart holdings` | 🧠 Nansen → 🧠 Smart money → 💼 What they hold | 💬 | 3 credits |
+| [🧠 Smart money trades over 24h + share of market cap](#trades) | `smart trades` | 🧠 Nansen → 🧠 Smart money → 🧠 Trades now | 💬 | 1–5 credits |
+| [🏆 Top perp traders](#perpleaders) | `top perps` | 🧠 Nansen → ⚔️ Leverage → 🏆 Top perp traders | 💬 | 5 credits |
 | [💥 Leveraged positions and the LIQUIDATION PRICE by token](#perppos) | `perp positions BTC`<br>`liquidations BTC` | token card (e.g. BTC) → 💥 Liq. | 💬 👥🔘 | 5 credits |
 | [🗺 Liquidation map: where other people's leverage hangs](#liqmap) | `liquidation map BTC`<br>`liq map BTC` | token card → 💥 Liq. → 🗺 Liquidation map<br>mini-app → 🗺 Liquidations → a ticker button or your own input | 💬 👥🔘 | 5 credits (the same request as the position list) |
-| [🩺 A wallet's perp account and room to liquidation](#walletperps) | `nansen perp 0x…` | 🧠 Nansen → 🩺 Wallet perp account | 💬 | price not named in the official list |
+| [🩺 A wallet's perp account and room to liquidation](#walletperps) | `nansen perp 0x…` | 🧠 Nansen → ⚔️ Leverage → 🩺 Wallet perp account | 💬 | price not named in the official list |
 | [🧠 Token breakdown: flows, Nansen Score, holder labels](#tokencheck) | `passport 0x… deep` | token/meme card → 🧠 | 💬 👥🔘 | 4 requests, about 12 credits |
 | [🔄 Who net-bought and who sold a token](#wbs) | `who bought 0x… 7`<br>`who bought sold 0x…` | token card → 🧠 → 🔄 Who bought and sold | 💬 👥🔘 | 1 credit per side |
-| [🪪 Token info sheet from Nansen](#tinfo) | `token info 0x…` | 🧠 Nansen → 🪪 Token information | 💬 | 1 credit |
+| [🪪 Token info sheet from Nansen](#tinfo) | `token info 0x…` | 🧠 Nansen → 🔎 Wallet and token → 🪪 Token information | 💬 | 1 credit |
 | [📊 Holder-segment flows AS A CHART](#flowpng) | `flows chart 0x…` | token card → 🧠 → 📊 Flows chart | 💬 👥🔘 | 1 credit |
 | [🧪 Backtest on onchain candles](#backtest) | — | meme card → 🧪 Backtest | 💬 | 5 credits for 89 daily candles |
 | [👤 Wallet profile: labels, PnL, related](#profile) | `profile 0x…`<br>`profile 0x… deep` | bare address in DM → 🕵 Dossier | 💬 | 3 requests; "deeper" adds premium labels for 150 credits |
-| [🤝 Who a wallet trades with most](#cparty) | `counterparties 0x…` | 🧠 Nansen → 🤝 Wallet counterparties | 💬 | price not named in the official list |
-| [💼 Wallet portfolio per Nansen data](#balance) | `nansen balance 0x…` | 🧠 Nansen → 💼 Wallet portfolio | 💬 | price not named in the official list |
+| [🤝 Who a wallet trades with most](#cparty) | `counterparties 0x…` | 🧠 Nansen → 🔎 Wallet and token → 🤝 Counterparties | 💬 | price not named in the official list |
+| [💼 Wallet portfolio per Nansen data](#balance) | `nansen balance 0x…` | 🧠 Nansen → 🔎 Wallet and token → 💼 Wallet portfolio | 💬 | price not named in the official list |
 | [🎲 Trending Polymarket markets with market_id](#pmmarkets) | `polymarket markets` | 🧠 Nansen → 🎲 Polymarket → 🎲 Trending markets | 💬 | price not named in the official list |
 | [📈 Market probability chart over time](#pmchart) | `polymarket chart 654412` | markets list → 📈 N | 💬 | price not named in the official list |
 | [📖 Polymarket order book](#pmbook) | `polymarket orderbook 654412` | markets list → 📖 N | 💬 | price not named in the official list |
@@ -51,12 +51,14 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [🎰 Polymarket trader profile](#pmwallet) | `polymarket profile 0x…` | 🎲 Polymarket → 🎰 Trader profile | 💬 | 2 requests |
 | [🏆 Top traders of a specific market](#pmleaders) | `market leaders 654412` | 🎲 Polymarket → 🏆 Market leaders | 💬 | price not named in the official list |
 | [🔍 Free-form question to the Nansen agent](#agent) | — | exchange card → 🔍 Nansen<br>a question in DM or chat | 💬 👥🔘 👥🤖 | 200 credits (fast) or 750 (expert) — the MOST expensive path |
-| [🧊 Who buys on a schedule (smart money DCA)](#dca) | `dca` | 🧠 Nansen → 🧊 Buying on a schedule | 💬 | price not named in the official list · 1 request |
-| [🌐 Chain ranking: TVL, DEX volume, active addresses](#chains) | `chain rank` | 🧠 Nansen → 🌐 Chain ranking | 💬 | price not named in the official list · 1 request |
-| [💠 The DeFi part of a wallet: assets MINUS debts](#defi) | `defi 0x…` | 🧠 Nansen → 💠 DeFi part of a wallet | 💬 | price not named in the official list · 1 request |
-| [🎯 Where the money on Polymarket is sharp (market comparison)](#sharpmarkets) | `sharp money` | 🧠 Nansen → 🎯 Where money is sharp | 💬 | price not named in the official list · 1 + N + N×H requests (13 by default) |
-| [⚔️ Risk board: whose leverage is closest to the edge](#perprisk) | `risk board` | 🧠 Nansen → ⚔️ Perp risk board<br>liquidation map → ⚔️ Compare all four | 💬 👥🔘 | price not named in the official list · one request per token (4) |
-| [🧮 My contest tally](#tally) | `nansen stats` | 🧠 Nansen → 🧮 My contest tally | 💬 | free, reads its own log |
+| [🧊 Who buys on a schedule (smart money DCA)](#dca) | `dca` | 🧠 Nansen → 🧠 Smart money → 🧊 Buying on a schedule | 💬 | price not named in the official list · 1 request |
+| [🌐 Chain ranking: TVL, DEX volume, active addresses](#chains) | `chain rank` | 🧠 Nansen → 🌐 Chains and tally → 🌐 Chain ranking | 💬 | price not named in the official list · 1 request |
+| [💠 The DeFi part of a wallet: assets MINUS debts](#defi) | `defi 0x…` | 🧠 Nansen → 🔎 Wallet and token → 💠 DeFi part | 💬 | price not named in the official list · 1 request |
+| [🧾 Who is in a Polymarket market, and their PnL](#pmpos) | `market positions 654412` | 🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL | 💬 | price not named in the official list · 1 request |
+| [🧊 Jupiter DCA by token (Solana)](#jupdca) | `jup dca <mint>` | 🧠 Nansen → 🧠 Smart money → 🧊 Jupiter DCA by token | 💬 | price not named in the official list · 1 request |
+| [🎯 Where the money on Polymarket is sharp (market comparison)](#sharpmarkets) | `sharp money` | 🧠 Nansen → 🎲 Polymarket → 🎯 Where money is sharp | 💬 | price not named in the official list · 1 + N + N×H requests (13 by default) |
+| [⚔️ Risk board: whose leverage is closest to the edge](#perprisk) | `risk board` | 🧠 Nansen → ⚔️ Leverage → ⚔️ Perp risk board<br>liquidation map → ⚔️ Compare all four | 💬 👥🔘 | price not named in the official list · one request per token (4) |
+| [🧮 My contest tally](#tally) | `nansen stats` | 🧠 Nansen → 🌐 Chains and tally → 🧮 My contest tally | 💬 | free, reads its own log |
 | [📰 Morning digest and tweet jobs](#digest) | — | on a schedule, no human | 💬 | counted separately from people: a job has no person and does not go into the tally |
 
 ---
@@ -66,7 +68,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 💹 Smart money inflow by window
 
 **Say to the bot:** `smart flows`
-**By button:** 🧠 Nansen → 💹 Smart flows (1h/24h/7d/30d)
+**By button:** 🧠 Nansen → 🧠 Smart money → 💹 Smart flows (1h/24h/7d/30d)
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
 **What you get:** tickers with net inflow over the window; tapping a ticker opens the token card
@@ -89,7 +91,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🔥 Smart Money inside the shared Trends screen
 
-**By button:** 🧠 Nansen → 🔥 Screener: 24h inflow
+**By button:** 🧠 Nansen → 🧠 Smart money → 🔥 Screener: 24h inflow
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
 **What you get:** tokens with positive netflow in the shared Trends screen format; a tap opens the token card
@@ -113,7 +115,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 💼 What smart money accumulates
 
 **Say to the bot:** `smart holdings`
-**By button:** 🧠 Nansen → 💼 What they hold
+**By button:** 🧠 Nansen → 🧠 Smart money → 💼 What they hold
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
 **What you get:** top positions by $ with the 24h change
@@ -137,7 +139,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 🧠 Smart money trades over 24h + share of market cap
 
 **Say to the bot:** `smart trades`
-**By button:** 🧠 Nansen → 🧠 Smart money trades now
+**By button:** 🧠 Nansen → 🧠 Smart money → 🧠 Trades now
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 **In the mini-app:** a screen of its own — it renders this same dictionary, so the chart cannot drift from the sentence.
 
@@ -162,7 +164,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 🏆 Top perp traders
 
 **Say to the bot:** `top perps`
-**By button:** 🧠 Nansen → 🏆 Top perp traders
+**By button:** 🧠 Nansen → ⚔️ Leverage → 🏆 Top perp traders
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
 **What you get:** profitable perp accounts; tapping a trader opens their account
@@ -235,7 +237,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 🩺 A wallet's perp account and room to liquidation
 
 **Say to the bot:** `nansen perp 0x…`
-**By button:** 🧠 Nansen → 🩺 Wallet perp account
+**By button:** 🧠 Nansen → ⚔️ Leverage → 🩺 Wallet perp account
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
 **What you get:** capital, how much is collateralized, unrealized PnL, account health and positions
@@ -307,7 +309,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 🪪 Token info sheet from Nansen
 
 **Say to the bot:** `token info 0x…`
-**By button:** 🧠 Nansen → 🪪 Token information
+**By button:** 🧠 Nansen → 🔎 Wallet and token → 🪪 Token information
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
 **What you get:** market cap, volume, liquidity, holder count
@@ -402,7 +404,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 🤝 Who a wallet trades with most
 
 **Say to the bot:** `counterparties 0x…`
-**By button:** 🧠 Nansen → 🤝 Wallet counterparties
+**By button:** 🧠 Nansen → 🔎 Wallet and token → 🤝 Counterparties
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
 **What you get:** counterparties over 30 days and volumes
@@ -426,7 +428,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 💼 Wallet portfolio per Nansen data
 
 **Say to the bot:** `nansen balance 0x…`
-**By button:** 🧠 Nansen → 💼 Wallet portfolio
+**By button:** 🧠 Nansen → 🔎 Wallet and token → 💼 Wallet portfolio
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
 **What you get:** portfolio composition by $ without spam tokens
@@ -619,7 +621,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 🧊 Who buys on a schedule (smart money DCA)
 
 **Say to the bot:** `dca`
-**By button:** 🧠 Nansen → 🧊 Buying on a schedule
+**By button:** 🧠 Nansen → 🧠 Smart money → 🧊 Buying on a schedule
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
 **What you get:** active DCA programs: who, from which token into which, the size of the program and the share already spent
@@ -643,7 +645,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 🌐 Chain ranking: TVL, DEX volume, active addresses
 
 **Say to the bot:** `chain rank`
-**By button:** 🧠 Nansen → 🌐 Chain ranking
+**By button:** 🧠 Nansen → 🌐 Chains and tally → 🌐 Chain ranking
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
 **What you get:** chains by TVL with their daily change, DEX volume and active addresses
@@ -667,7 +669,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 💠 The DeFi part of a wallet: assets MINUS debts
 
 **Say to the bot:** `defi 0x…`
-**By button:** 🧠 Nansen → 💠 DeFi part of a wallet
+**By button:** 🧠 Nansen → 🔎 Wallet and token → 💠 DeFi part
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
 **What you get:** the net figure (assets minus debts), unclaimed rewards and the protocols by size
@@ -686,12 +688,60 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ---
 
+<a name="pmpos"></a>
+
+## 🧾 Who is in a Polymarket market, and their PnL
+
+**Say to the bot:** `market positions 654412`
+**By button:** 🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL
+**Where:** in DM · **not in a group**: the word command is parsed only by the DM router
+
+**What you get:** every holder of the market with their PnL in that market: entry, current price, realized and open
+
+**Price:** price not named in the official list · 1 request
+
+**Why:** reputation says how a holder did over a lifetime; this says how the same holder is doing right here, and together they separate skill from luck
+
+**Endpoints:** `prediction-market/position-detail`
+
+**Telemetry scene:** `pm_positions` — this screen's spend is counted under it.
+
+**For a tweet (EN):**
+
+> Reputation says how a holder did over a lifetime. This says how the same holder is doing in this exact market: entry, current price, realized and open.
+
+---
+
+<a name="jupdca"></a>
+
+## 🧊 Jupiter DCA by token (Solana)
+
+**Say to the bot:** `jup dca <mint>`
+**By button:** 🧠 Nansen → 🧠 Smart money → 🧊 Jupiter DCA by token
+**Where:** in DM · **not in a group**: the word command is parsed only by the DM router
+
+**What you get:** DCA programs for a token: who, from which token into which, the deposit and the share already spent
+
+**Price:** price not named in the official list · 1 request
+
+**Why:** on Solana scheduled buying runs through Jupiter, and it is the same question about future purchases on a different venue
+
+**Endpoints:** `tgm/jup-dca`
+
+**Telemetry scene:** `jup_dca` — this screen's spend is counted under it.
+
+**For a tweet (EN):**
+
+> Scheduled buying on Solana runs through Jupiter. Same question as DCA elsewhere: how much of the commitment is still ahead.
+
+---
+
 <a name="sharpmarkets"></a>
 
 ## 🎯 Where the money on Polymarket is sharp (market comparison)
 
 **Say to the bot:** `sharp money`
-**By button:** 🧠 Nansen → 🎯 Where money is sharp
+**By button:** 🧠 Nansen → 🎲 Polymarket → 🎯 Where money is sharp
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 **In the mini-app:** a screen of its own — it renders this same dictionary, so the chart cannot drift from the sentence.
 
@@ -716,7 +766,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## ⚔️ Risk board: whose leverage is closest to the edge
 
 **Say to the bot:** `risk board`
-**By button:** 🧠 Nansen → ⚔️ Perp risk board · liquidation map → ⚔️ Compare all four
+**By button:** 🧠 Nansen → ⚔️ Leverage → ⚔️ Perp risk board · liquidation map → ⚔️ Compare all four
 **Where:** in DM · in a group — by the button on a card the bot itself posted (`cx:board`)
 **In the mini-app:** a screen of its own — it renders this same dictionary, so the chart cannot drift from the sentence.
 
@@ -741,7 +791,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 🧮 My contest tally
 
 **Say to the bot:** `nansen stats`
-**By button:** 🧠 Nansen → 🧮 My contest tally
+**By button:** 🧠 Nansen → 🌐 Chains and tally → 🧮 My contest tally
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
 **What you get:** how many calls and credits per person and their rank; a leaderboard WITHOUT names and IDs
@@ -783,7 +833,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## Client routes with no ordinary user scenario
 
-The catalog above has 30 workflows that use 32 unique API routes. The client contains **56** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
+The catalog above has 32 workflows that use 34 unique API routes. The client contains **58** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
 
 This is not a claim that all work end-to-end: having a client is not the same as a ready scenario. The list is broken out precisely so as not to pass API coverage off as user-available functionality.
 

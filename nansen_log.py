@@ -110,6 +110,8 @@ SCENES = (
     'smart_dca',               # «dca»: кто покупает по расписанию (smart-money/dcas)
     'chain_rank',              # «рейтинг сетей» (chains/chain-rank)
     'defi_holdings',           # «дефи 0x…» (portfolio/defi-holdings)
+    'pm_positions',            # «позиции рынка <id>» (prediction-market/position-detail)
+    'jup_dca',                 # «jup dca <mint>» (tgm/jup-dca)
 )
 _SCENES = frozenset(SCENES)
 
@@ -159,6 +161,7 @@ _EP_UNKNOWN = frozenset((
     # подставлял «примерно 5» - придуманная цена в экране, по которому принимают решение, это
     # ложь в самом проверяемом месте.
     'smart-money/dcas', 'chains/chain-rank', 'portfolio/defi-holdings',
+    'prediction-market/position-detail', 'tgm/jup-dca',
     'profiler/address/labels', 'profiler/address/pnl-summary',
     'profiler/address/related-wallets', 'profiler/address/counterparties',
     'profiler/address/current-balance',

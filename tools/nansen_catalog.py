@@ -67,7 +67,7 @@ WHERE_KINDS = ('dm', 'group_btn', 'group_agent')
 SCENARIOS = [
     # ── SMART MONEY ───────────────────────────────────────────────────────────
     {'id': 'flows', 'title': '💹 Приток smart money по окнам',
-     'cmds': ['смарт потоки'], 'btns': ['🧠 Nansen → 💹 Смарт-потоки → 1ч/24ч/7д/30д'],
+     'cmds': ['смарт потоки'], 'btns': ['🧠 Nansen → 🧠 Умные деньги → 💹 Смарт-потоки → 1ч/24ч/7д/30д'],
      'eps': ['smart-money/netflow'], 'scene': 'smart_flows', 'menu': 'nsn_flows',
      'price': 'цена не названа в официальном списке · считаем отдельной строкой',
      'gives': 'тикеры с нетто-притоком за окно; тап по тикеру открывает карточку токена',
@@ -75,7 +75,7 @@ SCENARIOS = [
      'hook': 'Smart money net inflow by window (1h/24h/7d/30d), straight into a Telegram chat. '
              'Tap a ticker and the full token card opens.'},
     {'id': 'trends', 'title': '🔥 Smart Money в общем экране Трендов',
-     'cmds': [], 'btns': ['🧠 Nansen → 🔥 Скринер: приток за 24ч'],
+     'cmds': [], 'btns': ['🧠 Nansen → 🧠 Умные деньги → 🔥 Скринер: приток за 24ч'],
      'eps': ['token-screener'], 'scene': 'trends', 'menu': 'nsn_screener',
      'price': '1 кредит',
      'gives': 'токены с положительным netflow в формате общего экрана трендов; тап открывает '
@@ -86,14 +86,14 @@ SCENARIOS = [
      'hook': 'Nansen is not a separate dashboard here. Smart-money inflow is embedded into the '
              'daily Trends screen, one tap away from the token card.'},
     {'id': 'holdings', 'title': '💼 Что копит smart money',
-     'cmds': ['смарт холдинги'], 'btns': ['🧠 Nansen → 💼 Что копят'],
+     'cmds': ['смарт холдинги'], 'btns': ['🧠 Nansen → 🧠 Умные деньги → 💼 Что копят'],
      'eps': ['smart-money/holdings'], 'scene': 'smart_holdings', 'menu': 'nsn_holdings',
      'price': '3 кредита',
      'gives': 'топ позиций по $ с изменением за сутки',
      'why': 'поток говорит «что берут сейчас», холдинги - «что уже держат»',
      'hook': 'What smart money already holds, not just what they bought today.'},
     {'id': 'trades', 'app': True, 'title': '🧠 Сделки smart money за сутки + доля от капитализации',
-     'cmds': ['смарт сделки'], 'btns': ['🧠 Nansen → 🧠 Сделки smart money сейчас'],
+     'cmds': ['смарт сделки'], 'btns': ['🧠 Nansen → 🧠 Умные деньги → 🧠 Сделки сейчас'],
      'eps': ['smart-money/dex-trades'], 'scene': 'smart_trades', 'menu': 'nsn_trades',
      'price': '1–5 кредитов',
      'gives': 'кто, во что и на сколько зашёл, плюс капитализация токена и ДОЛЯ сделки от неё',
@@ -103,7 +103,7 @@ SCENARIOS = [
              '2.3% of its entire market cap. The same $48K into a $50B token is noise.'},
     # ── ПЕРПЫ И ПЛЕЧО ─────────────────────────────────────────────────────────
     {'id': 'perpleaders', 'title': '🏆 Топ перп-трейдеров',
-     'cmds': ['топ перпы'], 'btns': ['🧠 Nansen → 🏆 Топ перп-трейдеры'],
+     'cmds': ['топ перпы'], 'btns': ['🧠 Nansen → ⚔️ Чужое плечо → 🏆 Топ перп-трейдеры'],
      'eps': ['perp-leaderboard'], 'scene': 'perp_leaders', 'menu': 'nsn_perps',
      'price': '5 кредитов',
      'gives': 'прибыльные счета на перпах; тап по трейдеру открывает его счёт',
@@ -135,7 +135,7 @@ SCENARIOS = [
      'hook': 'A liquidation map: $22.5M of leverage stacked between $61.5K and $62.4K. '
              'The list tells you who is in. The map tells you where the market moves fast.'},
     {'id': 'walletperps', 'title': '🩺 Счёт кошелька на перпах и запас до ликвидации',
-     'cmds': ['нансен перпы 0x…'], 'btns': ['🧠 Nansen → 🩺 Счёт кошелька на перпах'],
+     'cmds': ['нансен перпы 0x…'], 'btns': ['🧠 Nansen → ⚔️ Чужое плечо → 🩺 Счёт на перпах'],
      'eps': ['profiler/perp-positions'], 'scene': 'wallet_perps', 'menu': 'nsn_wperps',
      'price': 'цена не названа в официальном списке',
      'gives': 'капитал, сколько под залогом, нереализованный PnL, здоровье счёта и позиции',
@@ -163,7 +163,7 @@ SCENARIOS = [
      'why': 'нетто-поток - это итог; здесь видно, КТО его сделал',
      'hook': 'Who net-bought and who net-sold a token over the last N days, by label.'},
     {'id': 'tinfo', 'title': '🪪 Справка по токену от Nansen',
-     'cmds': ['инфо токен 0x…'], 'btns': ['🧠 Nansen → 🪪 Справка по токену'],
+     'cmds': ['инфо токен 0x…'], 'btns': ['🧠 Nansen → 🔎 Кошелёк и токен → 🪪 Справка по токену'],
      'eps': ['tgm/token-information'], 'scene': 'token_info', 'menu': 'nsn_tinfo',
      'price': '1 кредит',
      'gives': 'капитализацию, объём, ликвидность, число держателей',
@@ -201,14 +201,14 @@ SCENARIOS = [
      'hook': 'Wallet dossier: labels, PnL, related wallets. And when there are no labels it '
              'says so in words instead of showing an empty panel.'},
     {'id': 'cparty', 'title': '🤝 С кем кошелёк торгует чаще всего',
-     'cmds': ['контрагенты 0x…'], 'btns': ['🧠 Nansen → 🤝 С кем торгует кошелёк'],
+     'cmds': ['контрагенты 0x…'], 'btns': ['🧠 Nansen → 🔎 Кошелёк и токен → 🤝 Контрагенты'],
      'eps': ['profiler/address/counterparties'], 'scene': 'counterparties',
      'menu': 'nsn_cparty', 'price': 'цена не названа в официальном списке',
      'gives': 'контрагентов за 30 дней и объёмы',
      'why': 'связи адреса говорят о нём больше, чем его баланс',
      'hook': "Who a wallet actually trades with. Its counterparties say more than its balance."},
     {'id': 'balance', 'title': '💼 Портфель кошелька по данным Nansen',
-     'cmds': ['нансен баланс 0x…'], 'btns': ['🧠 Nansen → 💼 Портфель кошелька'],
+     'cmds': ['нансен баланс 0x…'], 'btns': ['🧠 Nansen → 🔎 Кошелёк и токен → 💼 Портфель кошелька'],
      'eps': ['profiler/address/current-balance'], 'scene': 'wallet_balance',
      'menu': 'nsn_bal', 'price': 'цена не названа в официальном списке',
      'gives': 'состав портфеля по $ без спам-токенов',
@@ -287,7 +287,7 @@ SCENARIOS = [
              'screen prints what it cost.'},
     # ── ОТКРЫТО ЖИВОЙ ПРОБОЙ СХЕМ 24.09 ─────────────────────────────────────────────────
     {'id': 'dca', 'title': '🧊 Кто покупает по расписанию (DCA умных денег)',
-     'cmds': ['dca', 'кто набирает'], 'btns': ['🧠 Nansen → 🧊 Покупают по расписанию (DCA)'],
+     'cmds': ['dca', 'кто набирает'], 'btns': ['🧠 Nansen → 🧠 Умные деньги → 🧊 Покупают по расписанию'],
      'eps': ['smart-money/dcas'], 'scene': 'smart_dca', 'menu': 'nsn_dca',
      'price': 'цена не названа в официальном списке · 1 запрос',
      'gives': 'активные программы DCA: кто, из чего во что, размер программы и какая доля уже '
@@ -297,7 +297,7 @@ SCENARIOS = [
      'hook': 'A single trade says what a wallet did. A DCA program says what it is committed to '
              'keep doing - and how much of that is still ahead.'},
     {'id': 'chains', 'title': '🌐 Рейтинг сетей: TVL, объём DEX, активные адреса',
-     'cmds': ['рейтинг сетей', 'chain rank'], 'btns': ['🧠 Nansen → 🌐 Рейтинг сетей'],
+     'cmds': ['рейтинг сетей', 'chain rank'], 'btns': ['🧠 Nansen → 🌐 Сети и зачёт → 🌐 Рейтинг сетей'],
      'eps': ['chains/chain-rank'], 'scene': 'chain_rank', 'menu': 'nsn_chains',
      'price': 'цена не названа в официальном списке · 1 запрос',
      'gives': 'сети по TVL с их суточным изменением, объёмом DEX и активными адресами',
@@ -306,7 +306,7 @@ SCENARIOS = [
      'hook': 'Where to look today is a question about chains before it is a question about '
              'tokens: TVL, DEX volume and active addresses with their daily change.'},
     {'id': 'defi', 'title': '💠 DeFi-часть кошелька: активы МИНУС долги',
-     'cmds': ['дефи 0x…'], 'btns': ['🧠 Nansen → 💠 DeFi-часть кошелька'],
+     'cmds': ['дефи 0x…'], 'btns': ['🧠 Nansen → 🔎 Кошелёк и токен → 💠 DeFi-часть'],
      'eps': ['portfolio/defi-holdings'], 'scene': 'defi_holdings', 'menu': 'nsn_defi',
      'price': 'цена не названа в официальном списке · 1 запрос',
      'gives': 'чистую величину (активы минус долги), незабранные награды и список протоколов '
@@ -315,11 +315,33 @@ SCENARIOS = [
             'выглядят одинаково, а это разные кошельки',
      'hook': 'A wallet holding two million with one and a half million of debt looks identical '
              'to a debt-free one in a token list. Here it does not.'},
+    {'id': 'pmpos', 'title': '🧾 Кто в рынке Polymarket и с каким PnL',
+     'cmds': ['позиции рынка 654412', 'кто в рынке 654412'],
+     'btns': ['🧠 Nansen → 🎲 Polymarket → 🧾 Кто в рынке и с каким PnL'],
+     'eps': ['prediction-market/position-detail'], 'scene': 'pm_positions',
+     'menu': 'pm_posdetail',
+     'price': 'цена не названа в официальном списке · 1 запрос',
+     'gives': 'всех держателей рынка с их PnL именно по этому рынку: вход, текущая цена, '
+              'реализованное и открытое',
+     'why': 'экран репутации говорит, как держатели угадывали ВООБЩЕ; этот - как у них идёт '
+            'ИМЕННО ЗДЕСЬ, и вместе они отвечают «кто умеет» против «кто пока в плюсе»',
+     'hook': 'Reputation says how a holder did over a lifetime. This says how the same holder '
+             'is doing in this exact market: entry, current price, realized and open.'},
+    {'id': 'jupdca', 'title': '🧊 DCA на Jupiter по токену (Solana)',
+     'cmds': ['jup dca <mint>'], 'btns': ['🧠 Nansen → 🧠 Умные деньги → 🧊 DCA на Jupiter'],
+     'eps': ['tgm/jup-dca'], 'scene': 'jup_dca', 'menu': 'nsn_jupdca',
+     'price': 'цена не названа в официальном списке · 1 запрос',
+     'gives': 'программы DCA по токену: кто, из чего во что, размер вклада и доля уже '
+              'потраченного',
+     'why': 'на Solana расписанные покупки идут через Jupiter, и это тот же вопрос о будущих '
+            'покупках, только на другой площадке',
+     'hook': 'Scheduled buying on Solana runs through Jupiter. Same question as DCA elsewhere: '
+             'how much of the commitment is still ahead.'},
     # ── СРАВНИТЕЛЬНЫЕ ЭКРАНЫ: не «что по этому объекту», а «какой из них выбрать» ────────
     {'id': 'sharpmarkets', 'app': True,
      'title': '🎯 Где на Polymarket деньги острые (сравнение рынков)',
      'cmds': ['острые деньги', 'sharp money'],
-     'btns': ['🧠 Nansen → 🎯 Где деньги острые (рынки)'],
+     'btns': ['🧠 Nansen → 🎲 Polymarket → 🎯 Где деньги острые'],
      'eps': ['prediction-market/market-screener', 'prediction-market/top-holders',
              'prediction-market/address-summary'],
      'scene': 'sharp_markets', 'menu': 'nsn_sharp',
@@ -332,7 +354,7 @@ SCENARIOS = [
              'that were right before, and how much with wallets that were not.'},
     {'id': 'perprisk', 'app': True, 'title': '⚔️ Борд риска: у кого плечо ближе к обрыву',
      'cmds': ['борд риска', 'risk board'],
-     'btns': ['🧠 Nansen → ⚔️ Борд риска по перпам',
+     'btns': ['🧠 Nansen → ⚔️ Чужое плечо → ⚔️ Борд риска',
               'карта ликвидаций → ⚔️ Сравнить все четыре'],
      'eps': ['tgm/perp-positions'], 'scene': 'perp_risk', 'menu': 'nsn_board',
      'where': ('dm', 'group_btn'), 'gcb': 'cx:board',
@@ -345,7 +367,7 @@ SCENARIOS = [
      'hook': 'Four perp markets ranked by how close the price is to the densest liquidation '
              'cluster - not by how big that cluster is.'},
     {'id': 'tally', 'title': '🧮 Мой зачёт в конкурсе',
-     'cmds': ['нансен зачёт', 'мой зачёт'], 'btns': ['🧠 Nansen → 🧮 Мой зачёт в конкурсе'],
+     'cmds': ['нансен зачёт', 'мой зачёт'], 'btns': ['🧠 Nansen → 🌐 Сети и зачёт → 🧮 Мой зачёт'],
      'eps': [], 'scene': None, 'menu': 'nsn_tally', 'price': 'бесплатно, читает свой лог',
      'gives': 'сколько вызовов и кредитов на человеке и его место; лидерборд БЕЗ имён и ID',
      'why': 'многопользовательский бот: вклад считается, а приватность при этом не тратится',
@@ -372,13 +394,13 @@ SCENARIOS = [
 #: перевод: пустое поле тут — та же ложь в судейском документе, что и выдуманная цена.
 _EN = {
     'flows': {'cmds': ['smart flows'],
-              'btns': ['🧠 Nansen → 💹 Smart flows (1h/24h/7d/30d)'],
+              'btns': ['🧠 Nansen → 🧠 Smart money → 💹 Smart flows (1h/24h/7d/30d)'],
               'title': '💹 Smart money inflow by window',
               'price': 'price not named in the official list · counted on a separate line',
               'gives': 'tickers with net inflow over the window; tapping a ticker opens the '
                        'token card',
               'why': 'the window total answers "how much", the first question about any token'},
-    'trends': {'cmds': [], 'btns': ['🧠 Nansen → 🔥 Screener: 24h inflow'],
+    'trends': {'cmds': [], 'btns': ['🧠 Nansen → 🧠 Smart money → 🔥 Screener: 24h inflow'],
                'title': '🔥 Smart Money inside the shared Trends screen',
                'price': '1 credit',
                'gives': 'tokens with positive netflow in the shared Trends screen format; '
@@ -386,13 +408,13 @@ _EN = {
                'why': 'Nansen is not a separate mode but part of the daily route: the Trends '
                       'hub button "🧠 Nansen" opens the very same submenu as Onchain does, and '
                       'this screen is trend → card → holders/flows/trades'},
-    'holdings': {'cmds': ['smart holdings'], 'btns': ['🧠 Nansen → 💼 What they hold'],
+    'holdings': {'cmds': ['smart holdings'], 'btns': ['🧠 Nansen → 🧠 Smart money → 💼 What they hold'],
                  'title': '💼 What smart money accumulates',
                  'price': '3 credits',
                  'gives': 'top positions by $ with the 24h change',
                  'why': 'flow says "what they are buying now", holdings say "what they already '
                         'hold"'},
-    'trades': {'cmds': ['smart trades'], 'btns': ['🧠 Nansen → 🧠 Smart money trades now'],
+    'trades': {'cmds': ['smart trades'], 'btns': ['🧠 Nansen → 🧠 Smart money → 🧠 Trades now'],
                'title': '🧠 Smart money trades over 24h + share of market cap',
                'price': '1–5 credits',
                'gives': 'who entered what and for how much, plus the token market cap and the '
@@ -400,7 +422,7 @@ _EN = {
                'why': '"$48K went into a token" says nothing until it says into what: $48K into '
                       'a $2.1M token is 2.3% of the entire market cap and a signal, while into '
                       'a $50B token it is noise'},
-    'perpleaders': {'cmds': ['top perps'], 'btns': ['🧠 Nansen → 🏆 Top perp traders'],
+    'perpleaders': {'cmds': ['top perps'], 'btns': ['🧠 Nansen → ⚔️ Leverage → 🏆 Top perp traders'],
                     'title': '🏆 Top perp traders',
                     'price': '5 credits',
                     'gives': 'profitable perp accounts; tapping a trader opens their account',
@@ -425,7 +447,7 @@ _EN = {
                         'by measured 24h Hyperliquid volume, not a list kept by hand',
                'why': 'the position list answers "who is in", the map answers "at which level '
                       'the market moves fast"; it is not a line but a distribution'},
-    'walletperps': {'cmds': ['nansen perp 0x…'], 'btns': ['🧠 Nansen → 🩺 Wallet perp account'],
+    'walletperps': {'cmds': ['nansen perp 0x…'], 'btns': ['🧠 Nansen → ⚔️ Leverage → 🩺 Wallet perp account'],
                     'title': "🩺 A wallet's perp account and room to liquidation",
                     'price': 'price not named in the official list',
                     'gives': 'capital, how much is collateralized, unrealized PnL, account '
@@ -444,7 +466,7 @@ _EN = {
             'price': '1 credit per side',
             'gives': 'a label or address and the $ volume for each side over the period',
             'why': 'net flow is the total; here you see WHO made it'},
-    'tinfo': {'cmds': ['token info 0x…'], 'btns': ['🧠 Nansen → 🪪 Token information'],
+    'tinfo': {'cmds': ['token info 0x…'], 'btns': ['🧠 Nansen → 🔎 Wallet and token → 🪪 Token information'],
               'title': '🪪 Token info sheet from Nansen',
               'price': '1 credit',
               'gives': 'market cap, volume, liquidity, holder count',
@@ -470,12 +492,12 @@ _EN = {
                 'gives': 'labels, PnL and win rate, related wallets',
                 'why': 'the first question about an unknown address is "who is this"; "no '
                        'labels" does NOT mean "clean address", and the screen says so directly'},
-    'cparty': {'cmds': ['counterparties 0x…'], 'btns': ['🧠 Nansen → 🤝 Wallet counterparties'],
+    'cparty': {'cmds': ['counterparties 0x…'], 'btns': ['🧠 Nansen → 🔎 Wallet and token → 🤝 Counterparties'],
                'title': '🤝 Who a wallet trades with most',
                'price': 'price not named in the official list',
                'gives': 'counterparties over 30 days and volumes',
                'why': "an address's connections say more about it than its balance"},
-    'balance': {'cmds': ['nansen balance 0x…'], 'btns': ['🧠 Nansen → 💼 Wallet portfolio'],
+    'balance': {'cmds': ['nansen balance 0x…'], 'btns': ['🧠 Nansen → 🔎 Wallet and token → 💼 Wallet portfolio'],
                 'title': '💼 Wallet portfolio per Nansen data',
                 'price': 'price not named in the official list',
                 'gives': 'portfolio composition by $ without spam tokens',
@@ -528,20 +550,36 @@ _EN = {
               'price': '200 credits (fast) or 750 (expert) — the MOST expensive path',
               'gives': "the agent's answer in words, with a source attribution",
               'why': 'the only door for questions that have no structural endpoint'},
-    'dca': {'cmds': ['dca'], 'btns': ['🧠 Nansen → 🧊 Buying on a schedule'],
+    'dca': {'cmds': ['dca'], 'btns': ['🧠 Nansen → 🧠 Smart money → 🧊 Buying on a schedule'],
             'title': '🧊 Who buys on a schedule (smart money DCA)',
             'price': 'price not named in the official list · 1 request',
             'gives': 'active DCA programs: who, from which token into which, the size of the '
                      'program and the share already spent',
             'why': 'the only signal here about FUTURE buying: a single $2M trade and a $2M DCA '
                    'program are different statements of intent'},
-    'chains': {'cmds': ['chain rank'], 'btns': ['🧠 Nansen → 🌐 Chain ranking'],
+    'chains': {'cmds': ['chain rank'], 'btns': ['🧠 Nansen → 🌐 Chains and tally → 🌐 Chain ranking'],
                'title': '🌐 Chain ranking: TVL, DEX volume, active addresses',
                'price': 'price not named in the official list · 1 request',
                'gives': 'chains by TVL with their daily change, DEX volume and active addresses',
                'why': '"where to look today" is a question about chains before it is a question '
                       'about tokens'},
-    'defi': {'cmds': ['defi 0x…'], 'btns': ['🧠 Nansen → 💠 DeFi part of a wallet'],
+    'pmpos': {'cmds': ['market positions 654412'],
+              'btns': ['🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL'],
+              'title': '🧾 Who is in a Polymarket market, and their PnL',
+              'price': 'price not named in the official list · 1 request',
+              'gives': 'every holder of the market with their PnL in that market: entry, current '
+                       'price, realized and open',
+              'why': 'reputation says how a holder did over a lifetime; this says how the same '
+                     'holder is doing right here, and together they separate skill from luck'},
+    'jupdca': {'cmds': ['jup dca <mint>'],
+               'btns': ['🧠 Nansen → 🧠 Smart money → 🧊 Jupiter DCA by token'],
+               'title': '🧊 Jupiter DCA by token (Solana)',
+               'price': 'price not named in the official list · 1 request',
+               'gives': 'DCA programs for a token: who, from which token into which, the deposit '
+                        'and the share already spent',
+               'why': 'on Solana scheduled buying runs through Jupiter, and it is the same '
+                      'question about future purchases on a different venue'},
+    'defi': {'cmds': ['defi 0x…'], 'btns': ['🧠 Nansen → 🔎 Wallet and token → 💠 DeFi part'],
              'title': '💠 The DeFi part of a wallet: assets MINUS debts',
              'price': 'price not named in the official list · 1 request',
              'gives': 'the net figure (assets minus debts), unclaimed rewards and the protocols '
@@ -549,7 +587,7 @@ _EN = {
              'why': 'a wallet holding $2M with no debt and one holding $2M against $1.7M of debt '
                     'look identical in a token list, and they are not the same wallet'},
     'sharpmarkets': {'cmds': ['sharp money'],
-                     'btns': ['🧠 Nansen → 🎯 Where money is sharp'],
+                     'btns': ['🧠 Nansen → 🎲 Polymarket → 🎯 Where money is sharp'],
                      'title': '🎯 Where the money on Polymarket is sharp (market comparison)',
                      'price': 'price not named in the official list · 1 + N + N×H requests '
                               '(13 by default)',
@@ -560,7 +598,7 @@ _EN = {
                             'out of ten heated markets you want the one where the other side '
                             'is not random people, and that only shows up side by side'},
     'perprisk': {'cmds': ['risk board'],
-                 'btns': ['🧠 Nansen → ⚔️ Perp risk board',
+                 'btns': ['🧠 Nansen → ⚔️ Leverage → ⚔️ Perp risk board',
                           'liquidation map → ⚔️ Compare all four'],
                  'title': '⚔️ Risk board: whose leverage is closest to the edge',
                  'price': 'price not named in the official list · one request per token (4)',
@@ -571,7 +609,7 @@ _EN = {
                  'why': 'a single map does not answer "and how about the others": the market '
                         'runs through the nearest level first, and only a comparison shows '
                         'which one that is'},
-    'tally': {'cmds': ['nansen stats'], 'btns': ['🧠 Nansen → 🧮 My contest tally'],
+    'tally': {'cmds': ['nansen stats'], 'btns': ['🧠 Nansen → 🌐 Chains and tally → 🧮 My contest tally'],
               'title': '🧮 My contest tally',
               'price': 'free, reads its own log',
               'gives': 'how many calls and credits per person and their rank; a leaderboard '

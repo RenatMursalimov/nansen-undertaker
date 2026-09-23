@@ -54,7 +54,7 @@ because the telemetry was already writing those rows.
 Decisions, including the screen deliberately **not** shipped and two leaks the scrubber caught before
 production: [`docs/MINIAPP_DECISIONS.md`](docs/MINIAPP_DECISIONS.md).
 
-**56 Nansen API routes** · **30 documented workflows** · **33 named telemetry scenes** ·
+**58 Nansen API routes** · **32 documented workflows** · **35 named telemetry scenes** ·
 **8 distinct failure states**
 
 - [`docs/proofs/LIVE_HERO_2026-09-20.md`](docs/proofs/LIVE_HERO_2026-09-20.md) — sanitized live hero proof: 4 calls, 3 known histories, 0 failures.
@@ -196,9 +196,9 @@ separately — a visible “184 unpriced calls” is better than a tidy total bu
 
 The generated catalog distinguishes **client capability** from **shipped workflow**:
 
-- 56 unique network routes exist in the client;
-- 30 workflows are documented:
-  - 28 user-facing workflows that call Nansen;
+- 58 unique network routes exist in the client;
+- 32 workflows are documented:
+  - 30 user-facing workflows that call Nansen;
   - 1 background digest workflow;
   - 1 local contribution-tally workflow;
 - 29 unique API routes drive those workflows;
@@ -242,7 +242,7 @@ output and one-line X hook.
 | `tools/render_social_preview.py` | reproducibly renders the 1280×640 GitHub/demo card |
 | `assets/social-preview.png` | generated GitHub social preview and 0–3s demo title card |
 | `docs/PROJECT_STATUS.md` | current eligibility, evidence and remaining external steps |
-| `docs/ENDPOINT_SWEEP.md` | all 56 routes, exact server commands, budgets and cron schedule |
+| `docs/ENDPOINT_SWEEP.md` | all 58 routes, exact server commands, budgets and cron schedule |
 | `docs/RECORDING_RUNBOOK.md` | exact sandbox deploy, live UX check and 52-second recording flow |
 | `docs/wiki/` | version-controlled source for the short GitHub Wiki navigation layer |
 | `tests/test_public.py` | offline proof with the network boundary substituted |
