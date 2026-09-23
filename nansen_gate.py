@@ -53,7 +53,12 @@ FIXTURE_DIR = os.path.join(ROOT, 'nansen', 'fixtures')
 #: 1 + N + N×H запросов (при 4 рынках по 3 держателя - 17), `perp_risk` - по запросу на токен.
 #: Числа консервативные вверх: недопустить дорогой экран у края капа дешевле, чем перейти кап.
 SCENE_COST = {'pm_markets': 5, 'pm_reputation': 30, 'liq_map': 5, 'smart_trades': 5,
-              'sharp_markets': 120, 'perp_risk': 20}
+              'sharp_markets': 120, 'perp_risk': 20,
+              # ТРИ НОВЫХ ЭКРАНА - ОДИН ЗАПРОС КАЖДЫЙ, и цена их в официальном списке не
+              # названа вовсе. Пятёрка здесь - консервативная оценка ДЛЯ ПРОВЕРКИ КАПА, а не
+              # утверждение о цене: человеку в подвале экрана честно печатается число ЗАПРОСОВ,
+              # потому что придуманные кредиты в самом проверяемом месте экрана были бы ложью.
+              'smart_dca': 5, 'chain_rank': 5, 'pm_positions': 5}
 
 
 def _admins():
@@ -133,6 +138,12 @@ def _scene_ctx(scene, uid):
         return T.scene('sharp_markets', uid, surface='miniapp')
     if scene == 'perp_risk':
         return T.scene('perp_risk', uid, surface='miniapp')
+    if scene == 'smart_dca':
+        return T.scene('smart_dca', uid, surface='miniapp')
+    if scene == 'chain_rank':
+        return T.scene('chain_rank', uid, surface='miniapp')
+    if scene == 'pm_positions':
+        return T.scene('pm_positions', uid, surface='miniapp')
     return T.scene('smart_trades', uid, surface='miniapp')
 
 
@@ -204,7 +215,10 @@ def handle(req, uid, lang='ru', bot_un=None):
         return _rehearsal(scene, lg)
 
     params = {}
-    if scene == 'pm_reputation':
+    if scene in ('pm_reputation', 'pm_positions'):
+        # ОБА ЭКРАНА РЫНКА ЧИТАЮТ ОДНО И ТО ЖЕ ПОЛЕ СИГНАЛА (`mk`), и это не экономия: номер
+        # рынка едет между экранами ОДНИМ способом, поэтому новый экран не требует ни новой
+        # формы на Воркере, ни нового способа его туда положить.
         params['market'] = str(req.get('mk') or '')[:40]
         if not params['market']:
             return {'scene': scene, 'outcome': 'badreq', 'source': 'Nansen',

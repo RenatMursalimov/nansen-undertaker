@@ -10,16 +10,16 @@
 | `.github/workflows/tests.yml` | `d020a3b5ca3ebe21` | только в выжимке, в боте этого файла нет |
 | `.gitignore` | `62e03de43434737b` | только в выжимке, в боте этого файла нет |
 | `LICENSE` | `6bc57942e4f8d266` | только в выжимке, в боте этого файла нет |
-| `README.md` | `b704573bc886576f` | только в выжимке, в боте этого файла нет |
+| `README.md` | `73625884dd7a0d5b` | только в выжимке, в боте этого файла нет |
 | `assets/social-preview.png` | `2e02bc4b7b3180d0` | только в выжимке, в боте этого файла нет |
 | `cli.py` | `4c78de781214bcae` | только в выжимке, в боте этого файла нет |
 | `db.py` | `921eb925672e4612` | только в выжимке, в боте этого файла нет |
-| `docs/CATALOG.md` | `fae0c294c331c3c3` | из бота, приватные пути/сервисы заменены (см. ниже) |
-| `docs/CATALOG_ru.md` | `fb0d739e8080532c` | из бота, приватные пути/сервисы заменены (см. ниже) |
+| `docs/CATALOG.md` | `276b9aff943c33b9` | из бота, приватные пути/сервисы заменены (см. ниже) |
+| `docs/CATALOG_ru.md` | `f115c523c7c78918` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/DEMO_SCRIPT.md` | `1aeb7dffe6ba17d8` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/ENDPOINT_SWEEP.md` | `5ab537dc99510c9f` | из бота, приватные пути/сервисы заменены (см. ниже) |
-| `docs/JUDGE.md` | `02eb895c5a9f8a7d` | из бота, приватные пути/сервисы заменены (см. ниже) |
-| `docs/MINIAPP_DECISIONS.md` | `d676c90d3c16812b` | из бота, приватные пути/сервисы заменены (см. ниже) |
+| `docs/JUDGE.md` | `476c8708dbdca533` | из бота, приватные пути/сервисы заменены (см. ниже) |
+| `docs/MINIAPP_DECISIONS.md` | `9fbfc23b16bd76f7` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/PROJECT_STATUS.md` | `6aa1b555f53df6d4` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/RECORDING_RUNBOOK.md` | `f897c1d05a2244e0` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/VIDEO_SCRIPT.md` | `ca576bf4290b32cd` | из бота, приватные пути/сервисы заменены (см. ниже) |
@@ -42,32 +42,35 @@
 | `docs/wiki/Status.md` | `52a803345629f7d0` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `docs/wiki/_Sidebar.md` | `bed3e53f7e03b897` | из бота, приватные пути/сервисы заменены (см. ниже) |
 | `env_load.py` | `222f6df16beb597b` | только в выжимке, в боте этого файла нет |
+| `fixtures/chain_rank.json` | `cd53c9607d73110b` | байт-в-байт из бота |
 | `fixtures/liq_map.json` | `920b7e126e08b030` | байт-в-байт из бота |
 | `fixtures/perp_risk.json` | `9210a732c86de012` | байт-в-байт из бота |
 | `fixtures/pm_markets.json` | `4d6156148c320da3` | байт-в-байт из бота |
+| `fixtures/pm_positions.json` | `19653117d543f046` | байт-в-байт из бота |
 | `fixtures/pm_reputation.json` | `e2f03bd6fb5091e5` | байт-в-байт из бота |
 | `fixtures/sharp_markets.json` | `fb9148038bd29d8d` | байт-в-байт из бота |
+| `fixtures/smart_dca.json` | `678f05278d8904e0` | байт-в-байт из бота |
 | `fixtures/smart_trades.json` | `50b56a7262a8b97d` | байт-в-байт из бота |
-| `nansen_api.py` | `5eff671f7dcec644` | байт-в-байт из бота |
-| `nansen_gate.py` | `ed82d1ee45f01d89` | байт-в-байт из бота |
+| `nansen_api.py` | `3e2f1b4035229942` | байт-в-байт из бота |
+| `nansen_gate.py` | `204aae9805997afa` | байт-в-байт из бота |
 | `nansen_limits.py` | `4ea08d0118f935e2` | байт-в-байт из бота |
 | `nansen_log.py` | `faf9098462ce1dfa` | байт-в-байт из бота |
-| `nansen_scene.py` | `c2127596c8fa08ac` | байт-в-байт из бота |
+| `nansen_scene.py` | `765bc172eb7617b8` | байт-в-байт из бота |
 | `oc_nansen_viz.py` | `2715c8dcc4618810` | байт-в-байт из бота |
 | `requirements.txt` | `56dbb14aff00e3cd` | только в выжимке, в боте этого файла нет |
-| `scrub.py` | `4f6b5e1c5b6e08ab` | только в выжимке, в боте этого файла нет |
+| `scrub.py` | `673b87cec26ce3dd` | только в выжимке, в боте этого файла нет |
 | `tests/test_public.py` | `8235a2e96ee22b7b` | только в выжимке, в боте этого файла нет |
-| `tools/nansen_catalog.py` | `d458c3ac26c930c6` | байт-в-байт из бота |
+| `tools/nansen_catalog.py` | `4b8a8b1f168f8359` | байт-в-байт из бота |
 | `tools/nansen_daily.py` | `699fd28d7d76437d` | байт-в-байт из бота |
 | `tools/nansen_endpoint_sweep.py` | `afc19e53f4674e1c` | байт-в-байт из бота |
 | `tools/nansen_live_smoke.py` | `923f06a1adebef3d` | байт-в-байт из бота |
 | `tools/nansen_meridian_corpus.py` | `4a604e9a98ceb0d8` | байт-в-байт из бота |
 | `tools/nansen_probe.py` | `67d341386e119930` | байт-в-байт из бота |
 | `tools/nansen_trade_probe.py` | `1b2b3ddf5bd460b5` | байт-в-байт из бота |
-| `tools/record_fixture.py` | `0081fbc141369ec7` | байт-в-байт из бота |
+| `tools/record_fixture.py` | `3e6fc4018b83fed1` | байт-в-байт из бота |
 | `tools/render_social_preview.py` | `ba595dc312016848` | байт-в-байт из бота |
-| `tools/scene_text_baseline.py` | `bc442fd06cd68797` | байт-в-байт из бота |
-| `webapp/index.html` | `d972f53cd42b6948` | байт-в-байт из бота |
+| `tools/scene_text_baseline.py` | `7be1e9c14359564f` | байт-в-байт из бота |
+| `webapp/index.html` | `6c293229484dd898` | байт-в-байт из бота |
 
 ## Единственная объявленная санитарная замена
 

@@ -111,6 +111,50 @@ SM_TRADE_ROWS = [
      'token_bought_symbol': 'CCC', 'chain': 'ethereum', 'trade_value_usd': 9000.0},
 ]
 
+#: ВХОДЫ ТРЁХ ЭКРАНОВ, ПРИШЕДШИХ В МИНИ-АПП. В каждом наборе НАРОЧНО есть неполная строка:
+#: baseline сторожит не только «красивый» случай, но и то, как текст говорит о пропущенном
+#: числе. Сцена, у которой в тестовых данных всё на месте, однажды напечатает «0%» вместо
+#: «не измерено» и никто этого не заметит.
+SM_DCA_ROWS = [
+    {'trader_address_label': 'Smart Whale 1', 'input_token_symbol': 'USDC',
+     'output_token_symbol': 'WETH', 'deposit_value_usd': 2000000.0,
+     'deposit_token_amount': 2000000.0, 'token_spent_amount': 400000.0,
+     'dca_status': 'active'},
+    {'trader_address_label': 'Smart Whale 2', 'input_token_symbol': 'USDT',
+     'output_token_symbol': 'SOL', 'deposit_value_usd': 350000.0,
+     'deposit_token_amount': 350000.0, 'token_spent_amount': 332500.0,
+     'dca_status': 'active'},
+    # ДОЛИ ИСПОЛНЕНИЯ НЕТ: в ответе нет одного из двух чисел, и текст обязан сказать это словом.
+    {'trader_address': '0x4444000000000000000000000000000000000044',
+     'input_token_symbol': 'USDC', 'output_token_symbol': 'AAA',
+     'deposit_value_usd': 90000.0, 'dca_status': 'closed'},
+]
+
+CHAIN_ROWS = [
+    {'chain': 'ethereum', 'tvl_usd': 52000000000.0, 'tvl_usd_percent_change': 1.4,
+     'total_dex_volume_usd': 3100000000.0, 'active_address_count_txs': 480000.0},
+    {'chain': 'solana', 'tvl_usd': 9400000000.0, 'tvl_usd_percent_change': -2.1,
+     'total_dex_volume_usd': 5200000000.0, 'active_address_count_txs': 1200000.0},
+    # ИЗМЕНЕНИЯ TVL НЕТ: неподвижность на экране это НАШЕ отсутствующее число.
+    {'chain': 'base', 'tvl_usd': 3100000000.0,
+     'total_dex_volume_usd': 900000000.0, 'active_address_count_txs': 640000.0},
+]
+
+PM_POS_ROWS = [
+    {'address': '0x5555000000000000000000000000000000000055', 'outcome': 'Yes',
+     'token_pnl_usd': 128000.0, 'avg_entry_price': 0.42, 'current_price': 0.61,
+     'unrealized_value_usd': 302000.0,
+     'event_title': 'Will the Fed cut rates in September?', 'market_resolved': False},
+    {'address': '0x6666000000000000000000000000000000000066', 'outcome': 'No',
+     'token_pnl_usd': -81000.0, 'avg_entry_price': 0.55, 'current_price': 0.39,
+     'unrealized_value_usd': 0.0,
+     'event_title': 'Will the Fed cut rates in September?', 'market_resolved': False},
+    # PnL НЕ ПРИЕХАЛ: такой держатель НЕ считается в сумму, и об этом сказано оговоркой.
+    {'address': '0x7777000000000000000000000000000000000077', 'outcome': 'Yes',
+     'unrealized_value_usd': 4100.0,
+     'event_title': 'Will the Fed cut rates in September?', 'market_resolved': False},
+]
+
 
 def _sections():
     """Текст трёх сцен на фиксированных входах. -> [(имя, текст)].
@@ -174,6 +218,19 @@ def _sections():
     bd = V.liq_board(_board)
     for lang in ('ru', 'en'):
         out.append(('perp_risk.%s' % lang, V.liq_board_caption(bd, lang)))
+
+    # ── 6-8. ТРИ ЭКРАНА, ПРИШЕДШИЕ В МИНИ-АПП. Зовём ровно то, что зовёт бот, и через
+    #    СЛОВАРЬ: `*_data` -> `*_block`. Так baseline сторожит именно тот путь, по которому
+    #    ходит картинка, а не второй, оставленный для совместимости.
+    for lang in ('ru', 'en'):
+        out.append(('smart_dca.%s' % lang,
+                    N.sm_dca_block(N.sm_dca_data(SM_DCA_ROWS), None, lang)))
+    for lang in ('ru', 'en'):
+        out.append(('chain_rank.%s' % lang,
+                    N.chain_rank_block(N.chain_rank_data(CHAIN_ROWS), lang)))
+    for lang in ('ru', 'en'):
+        out.append(('pm_positions.%s' % lang,
+                    N.pm_positions_block(N.pm_positions_data(PM_POS_ROWS), '654412', lang)))
     return out
 
 

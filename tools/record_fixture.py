@@ -67,6 +67,13 @@ def _plan(scene, market, token):
         L.append('  спросит: позиции с плечом по %s (1 запрос)' % (token or '<нужен --token>'))
     elif scene == 'smart_trades':
         L.append('  спросит: сделки smart money за сутки (1 запрос)')
+    elif scene == 'smart_dca':
+        L.append('  спросит: программы DCA умных денег (1 запрос)')
+    elif scene == 'chain_rank':
+        L.append('  спросит: рейтинг сетей (1 запрос)')
+    elif scene == 'pm_positions':
+        L.append('  спросит: держателей рынка %s с их PnL (1 запрос)'
+                 % (market or '<нужен --market>'))
     L.append('  запишет: %s' % os.path.join('nansen', 'fixtures', '%s.json' % scene))
     L.append('  вычистит: полные адреса кошельков (тем же кодом, что живой путь)')
     return '\n'.join(L)
@@ -89,6 +96,11 @@ def _synthetic(scene):
     _spec.loader.exec_module(BL)
     _keep = (N._post_fix, N.pm_address_summary, N.perp_positions, N.sm_dex_trades, N._key,
              N.pm_market_screener)
+    # ТРИ НОВЫЕ РУЧКИ ПОДМЕНЯЮТСЯ ТАК ЖЕ, КАК ОСТАЛЬНЫЕ: без подмены «полностью синтетическая»
+    # фикстура пошла бы в живой Nansen за DCA, сетями и держателями рынка - то есть потратила бы
+    # кредиты и подмешала настоящие числа к выдуманным. Смесь выглядит как замер и потому хуже
+    # чистой выдумки (этот промах здесь уже ловили на ценах Hyperliquid).
+    _keep_new = (N.smart_money_dcas, N.chain_rank, N.pm_positions)
     _keep_mark = (G._mark_price, G._hl_universe)
     try:
         N._key = lambda: 'synthetic'
@@ -98,6 +110,9 @@ def _synthetic(scene):
         N.perp_positions = lambda t, n=50: list(BL.PERP_ROWS)
         N.sm_dex_trades = lambda chains=None, per_page=15: list(BL.SM_TRADE_ROWS)
         N.pm_market_screener = lambda query='', per_page=12, **k: list(BL.PM_MARKETS)
+        N.smart_money_dcas = lambda per_page=20: list(BL.SM_DCA_ROWS)
+        N.chain_rank = lambda per_page=20: list(BL.CHAIN_ROWS)
+        N.pm_positions = lambda mid, per_page=20: list(BL.PM_POS_ROWS)
         # ЦЕНУ ТОЖЕ ПОДМЕНЯЕМ, И ЭТО ВАЖНО ДЛЯ БОРДА РИСКА: без подмены `_mark_price` пошёл бы
         # в живой Hyperliquid, и в «полностью синтетической» фикстуре оказалась бы ОДНА
         # настоящая величина - расстояние до скопления, то есть главное число экрана. Смесь
@@ -118,10 +133,13 @@ def _synthetic(scene):
             req['mk'] = '654412'
         if scene == 'liq_map':
             req['tk'] = 'BTC'
+        if scene == 'pm_positions':
+            req['mk'] = '654412'
         env = G.handle(req, uid=0, lang='en')
     finally:
         (N._post_fix, N.pm_address_summary, N.perp_positions,
          N.sm_dex_trades, N._key, N.pm_market_screener) = _keep
+        (N.smart_money_dcas, N.chain_rank, N.pm_positions) = _keep_new
         G._mark_price, G._hl_universe = _keep_mark
     env['recorded_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
     env['rehearsal'] = True

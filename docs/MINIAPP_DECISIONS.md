@@ -181,3 +181,108 @@ gateway (“no positions came back”), not a guess from the page about what exi
 
 The risk board follows the same measured order (top four), instead of comparing whatever four were
 frozen into the code.
+
+
+## A slider that "worked with a delay" was a slider being deleted and rebuilt
+
+The owner's words: *“when you move the slider it works with a delay, and it disappears together with
+the detail; the sliders should stay and be easy to move with the mouse, and the maps should redraw.”*
+
+The instinct is to blame the network, and it would have been wrong. The handler set `LIQ.env = null`
+and the sliders were rendered **from the envelope** — so while the request was in flight the page
+deleted its own controls and put them back a second later. The knob jumped and lost focus because the
+`input` node was being recreated under the finger, not because the answer was slow. Tapping a bar did
+the same thing: it rebuilt the entire screen, which is why the detail line “disappeared with the
+sliders”.
+
+Three separate operations now, instead of one rebuild for every event:
+
+| what happens | what is rebuilt |
+|---|---|
+| first answer, ticker change, orientation change | controls + result |
+| tap on a bar, board toggle, "updating…" | result only |
+| answer for the same ticker | nothing — knob values and labels are *set*, not recreated |
+
+The law that the active step is marked **from the answer** (not from the tap) survived; it is now
+enforced by setting values on live nodes. One thing had to be corrected on the render harness: the
+first version called that sync while the request was still in flight, which rewound the knob to the
+*previous* answer the moment the finger let go — visually “the slider jumps by itself”, the very
+complaint being fixed. During a request the controls are not touched at all.
+
+Each request carries a sequence number. Two quick drags used to mean the first answer could repaint
+the screen while the second was still in flight — showing a setting the person had already changed
+their mind about.
+
+## Two orientations, and the horizontal one is the default again
+
+*“Why did you rebuild it vertical, it was horizontal.”* Correct twice over: the picture the bot sends
+to chat is horizontal (`barh`), and horizontal labels need **no rotated text** — and rotated numbers
+were exactly what escaped the card's frame. The vertical layout is kept as an option, because its
+dashed price line reads like a candlestick chart. Neither is “right”, so the choice belongs to the
+person: `↔ / ↕` redraws the same numbers with **zero** requests.
+
+The row order matches the chat image: cheap levels at the bottom, expensive at the top. Drawn the
+other way the map would be numerically correct and semantically upside down, and two different
+pictures of one dataset read as an error.
+
+**Numbers are clamped into the canvas, and a label that does not fit is not drawn at all.** An
+amount cut in half looks like real data; a missing one sends the reader to the detail line under the
+chart, where the number is in full. Verified by measurement rather than by eye: the render harness
+compares every `<text>` rectangle with the `<svg>` rectangle in both orientations at 8/14/20/28
+levels — currently zero escapes.
+
+The slider says “14 levels” while the map may show five bars, and that needed one sentence rather
+than a fix: detail is how many equal slices the window is **cut into**, and a slice with no money in
+it is not drawn. Without that sentence the screen looks like it cannot count.
+
+## Save as an image: the colours had to leave the CSS
+
+`💾 save image` serialises the chart's SVG into a canvas and writes a PNG at ×3 scale (320 px is a
+phone width; the labels would be unreadable in a file). Two details are load-bearing:
+
+* the chart's fills used to be `var(--long)` / `var(--short)`. CSS custom properties **do not exist**
+  inside an extracted SVG, so the saved file would have come out colourless. Hardcoding the hex
+  values in the script would have created a second palette that silently drifts from the first, so
+  the colours are read from the page itself (`getComputedStyle`) and written into the markup as
+  numbers;
+* Telegram's in-app browser does not always allow a page to write a file. The button therefore
+  **does not promise success**: if the download does not land, the screen says so and names the path
+  that always works — the bot sends the same map as a picture in chat.
+
+## The “➕ More” tab, and why this is not the fourth screen that was refused
+
+*“Didn't you add other tabs with features to the canvas?”* Two signals moved onto the canvas, chosen
+by what the existing screens could **not** answer:
+
+* **scheduled buying (DCA)** — the only forward-looking signal in the set. Every other screen reports
+  the past: who already holds, where leverage already hangs. A DCA program is money committed to
+  buying *later*, and the bar shows how much of it is already spent;
+* **chain ranking** — the only screen that is about neither a wallet nor a market, but about where the
+  money is at all. It answers “where to look today” before an object is picked.
+
+This does not contradict Part C above. That refusal was about a screen whose central field
+(`language`) the platform does not return. These two run on endpoints whose schemas were **measured**
+by live probes on 2026-09-24, and both already worked in chat — the canvas gave them a surface, not a
+second implementation: same dictionary, same telemetry scene name, so app and chat spend adds up on
+one row.
+
+## “Who is in this market” is attached to the market card, not to a tab of its own
+
+The owner caught the same defect for the second time: *“I look and you are again making the user hunt
+for the market identifier.”* The screen existed only as the command `позиции рынка <id>`, and there
+is nowhere to get that id except someone else's website — the command required work **outside** the
+bot.
+
+A tab of its own would have reproduced the bug, because on entering a tab no market is selected yet,
+so it would have to ask. The screen is therefore a button on the already-open market card in the app,
+and the row **🧾 N** under the market list in chat — the id rides in the callback, next to 📈, 📖 and
+🎭, which were fixed the same way earlier. The command stays as the fast path for whoever already has
+an id, and the menu hint now points at the button instead of teaching a number by example.
+
+## A number quietly damaged by a stray `.rstrip`
+
+Found while splitting the chain ranking into numbers and words: the active-address count was formatted
+and then passed through `.rstrip('0').rstrip('.')`, so **500 active addresses printed as “5”**. A
+truncated figure is worse than a missing one, because it still looks like a measurement. The
+formatting now prints what was measured, and the number goes through the same dictionary the mini-app
+draws.
