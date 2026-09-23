@@ -295,6 +295,23 @@ def _liq_caveats(cl, lang):
         out.append(('%d position(s) had no liquidation price and are NOT on the map' if en else
                     'у %d позиц(ий) цены ликвидации не было - их на карте НЕТ')
                    % int(cl['no_liq']))
+    # ОКНО КАРТЫ - ОГОВОРКА ПЕРВОГО РЯДА. Без неё «всего на карте $X» читается как «всего плеча
+    # $X», а часть его лежит дальше и просто не нарисована (разбор TAO/NEAR).
+    if cl.get('off_usd'):
+        if cl.get('win_pct'):
+            out.append(('the map covers ±%.0f%% around the current price: a further $%s '
+                        '(%d position(s)) liquidates outside that window and is NOT drawn'
+                        if en else
+                        'карта покрывает ±%.0f%% вокруг текущей цены: ещё $%s (%d позиц(ий)) '
+                        'ликвидируется вне этого окна и НЕ нарисовано')
+                       % (cl['win_pct'], _viz()._short(cl['off_usd']), int(cl['off_n'])))
+        else:
+            out.append(('$%s (%d position(s)) lies outside the plotted range and is NOT drawn: '
+                        'without a current price the range is trimmed by the data itself'
+                        if en else
+                        '$%s (%d позиц(ий)) лежит вне нарисованного диапазона и НЕ нарисовано: '
+                        'без текущей цены диапазон обрезан по самим данным')
+                       % (_viz()._short(cl['off_usd']), int(cl['off_n'])))
     if cl.get('mark') is None:
         out.append('current price did not load: the map has no "you are here" marker' if en else
                    'текущая цена не взялась: на карте нет отметки «мы здесь»')

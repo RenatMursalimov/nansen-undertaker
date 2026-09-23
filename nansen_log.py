@@ -105,6 +105,10 @@ SCENES = (
     # строка расхода стала бы невидимой ровно там, где на неё смотрят.
     'sharp_markets',           # «острые деньги»: трендовые рынки по составу держателей
     'perp_risk',               # «борд риска»: у кого плечо ближе к обрыву
+    # ДВЕ СЦЕНЫ, ОТКРЫТЫЕ ЖИВОЙ ПРОБОЙ 24.09: до неё их схемы были неизвестны, и экранов не
+    # существовало. Имена в реестре появляются ВМЕСТЕ с дверью, а не заранее «под будущее».
+    'smart_dca',               # «dca»: кто покупает по расписанию (smart-money/dcas)
+    'chain_rank',              # «рейтинг сетей» (chains/chain-rank)
 )
 _SCENES = frozenset(SCENES)
 
@@ -149,6 +153,11 @@ _SAID_UNKNOWN = set()
 _SAID_ONCE = set()
 _EP_UNKNOWN = frozenset((
     'smart-money/netflow',
+    # ДВЕ РУЧКИ, ОТКРЫТЫЕ ПРОБОЙ 24.09: схема снята, а ЦЕНА в официальном списке не названа.
+    # Записаны здесь явно, чтобы экран говорил «цена не названа» и считал запросами, а не
+    # подставлял «примерно 5» - придуманная цена в экране, по которому принимают решение, это
+    # ложь в самом проверяемом месте.
+    'smart-money/dcas', 'chains/chain-rank',
     'profiler/address/labels', 'profiler/address/pnl-summary',
     'profiler/address/related-wallets', 'profiler/address/counterparties',
     'profiler/address/current-balance',

@@ -285,6 +285,26 @@ SCENARIOS = [
      'why': 'единственная дверь для вопросов, под которые нет структурного эндпоинта',
      'hook': 'The agent is the expensive path: 200 credits, or 750 in expert mode. So every '
              'screen prints what it cost.'},
+    # ── ОТКРЫТО ЖИВОЙ ПРОБОЙ СХЕМ 24.09 ─────────────────────────────────────────────────
+    {'id': 'dca', 'title': '🧊 Кто покупает по расписанию (DCA умных денег)',
+     'cmds': ['dca', 'кто набирает'], 'btns': ['🧠 Nansen → 🧊 Покупают по расписанию (DCA)'],
+     'eps': ['smart-money/dcas'], 'scene': 'smart_dca', 'menu': 'nsn_dca',
+     'price': 'цена не названа в официальном списке · 1 запрос',
+     'gives': 'активные программы DCA: кто, из чего во что, размер программы и какая доля уже '
+              'потрачена',
+     'why': 'единственный сигнал в наборе про БУДУЩИЕ покупки: разовая сделка на $2M и '
+            'программа DCA на $2M - разные утверждения о намерении',
+     'hook': 'A single trade says what a wallet did. A DCA program says what it is committed to '
+             'keep doing - and how much of that is still ahead.'},
+    {'id': 'chains', 'title': '🌐 Рейтинг сетей: TVL, объём DEX, активные адреса',
+     'cmds': ['рейтинг сетей', 'chain rank'], 'btns': ['🧠 Nansen → 🌐 Рейтинг сетей'],
+     'eps': ['chains/chain-rank'], 'scene': 'chain_rank', 'menu': 'nsn_chains',
+     'price': 'цена не названа в официальном списке · 1 запрос',
+     'gives': 'сети по TVL с их суточным изменением, объёмом DEX и активными адресами',
+     'why': 'вопрос «куда вообще смотреть сегодня» решается на уровне сети раньше, чем на '
+            'уровне токена',
+     'hook': 'Where to look today is a question about chains before it is a question about '
+             'tokens: TVL, DEX volume and active addresses with their daily change.'},
     # ── СРАВНИТЕЛЬНЫЕ ЭКРАНЫ: не «что по этому объекту», а «какой из них выбрать» ────────
     {'id': 'sharpmarkets', 'app': True,
      'title': '🎯 Где на Polymarket деньги острые (сравнение рынков)',
@@ -498,6 +518,19 @@ _EN = {
               'price': '200 credits (fast) or 750 (expert) — the MOST expensive path',
               'gives': "the agent's answer in words, with a source attribution",
               'why': 'the only door for questions that have no structural endpoint'},
+    'dca': {'cmds': ['dca'], 'btns': ['🧠 Nansen → 🧊 Buying on a schedule'],
+            'title': '🧊 Who buys on a schedule (smart money DCA)',
+            'price': 'price not named in the official list · 1 request',
+            'gives': 'active DCA programs: who, from which token into which, the size of the '
+                     'program and the share already spent',
+            'why': 'the only signal here about FUTURE buying: a single $2M trade and a $2M DCA '
+                   'program are different statements of intent'},
+    'chains': {'cmds': ['chain rank'], 'btns': ['🧠 Nansen → 🌐 Chain ranking'],
+               'title': '🌐 Chain ranking: TVL, DEX volume, active addresses',
+               'price': 'price not named in the official list · 1 request',
+               'gives': 'chains by TVL with their daily change, DEX volume and active addresses',
+               'why': '"where to look today" is a question about chains before it is a question '
+                      'about tokens'},
     'sharpmarkets': {'cmds': ['sharp money'],
                      'btns': ['🧠 Nansen → 🎯 Where money is sharp'],
                      'title': '🎯 Where the money on Polymarket is sharp (market comparison)',

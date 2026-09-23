@@ -10,7 +10,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 | Scenarios | Endpoints used | Telemetry scenes |
 |---|---|---|
-| 27: 25 user-facing on Nansen + 1 background + 1 local | 29 | 25 of 30 in registry |
+| 29: 27 user-facing on Nansen + 1 background + 1 local | 31 | 27 of 32 in registry |
 
 ## Three doors: where Nansen can be asked at all
 
@@ -51,6 +51,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [🎰 Polymarket trader profile](#pmwallet) | `polymarket profile 0x…` | 🎲 Polymarket → 🎰 Trader profile | 💬 | 2 requests |
 | [🏆 Top traders of a specific market](#pmleaders) | `market leaders 654412` | 🎲 Polymarket → 🏆 Market leaders | 💬 | price not named in the official list |
 | [🔍 Free-form question to the Nansen agent](#agent) | — | exchange card → 🔍 Nansen<br>a question in DM or chat | 💬 👥🔘 👥🤖 | 200 credits (fast) or 750 (expert) — the MOST expensive path |
+| [🧊 Who buys on a schedule (smart money DCA)](#dca) | `dca` | 🧠 Nansen → 🧊 Buying on a schedule | 💬 | price not named in the official list · 1 request |
+| [🌐 Chain ranking: TVL, DEX volume, active addresses](#chains) | `chain rank` | 🧠 Nansen → 🌐 Chain ranking | 💬 | price not named in the official list · 1 request |
 | [🎯 Where the money on Polymarket is sharp (market comparison)](#sharpmarkets) | `sharp money` | 🧠 Nansen → 🎯 Where money is sharp | 💬 | price not named in the official list · 1 + N + N×H requests (13 by default) |
 | [⚔️ Risk board: whose leverage is closest to the edge](#perprisk) | `risk board` | 🧠 Nansen → ⚔️ Perp risk board<br>liquidation map → ⚔️ Compare all four | 💬 👥🔘 | price not named in the official list · one request per token (4) |
 | [🧮 My contest tally](#tally) | `nansen stats` | 🧠 Nansen → 🧮 My contest tally | 💬 | free, reads its own log |
@@ -611,6 +613,54 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ---
 
+<a name="dca"></a>
+
+## 🧊 Who buys on a schedule (smart money DCA)
+
+**Say to the bot:** `dca`
+**By button:** 🧠 Nansen → 🧊 Buying on a schedule
+**Where:** in DM · **not in a group**: the word command is parsed only by the DM router
+
+**What you get:** active DCA programs: who, from which token into which, the size of the program and the share already spent
+
+**Price:** price not named in the official list · 1 request
+
+**Why:** the only signal here about FUTURE buying: a single $2M trade and a $2M DCA program are different statements of intent
+
+**Endpoints:** `smart-money/dcas`
+
+**Telemetry scene:** `smart_dca` — this screen's spend is counted under it.
+
+**For a tweet (EN):**
+
+> A single trade says what a wallet did. A DCA program says what it is committed to keep doing - and how much of that is still ahead.
+
+---
+
+<a name="chains"></a>
+
+## 🌐 Chain ranking: TVL, DEX volume, active addresses
+
+**Say to the bot:** `chain rank`
+**By button:** 🧠 Nansen → 🌐 Chain ranking
+**Where:** in DM · **not in a group**: the word command is parsed only by the DM router
+
+**What you get:** chains by TVL with their daily change, DEX volume and active addresses
+
+**Price:** price not named in the official list · 1 request
+
+**Why:** "where to look today" is a question about chains before it is a question about tokens
+
+**Endpoints:** `chains/chain-rank`
+
+**Telemetry scene:** `chain_rank` — this screen's spend is counted under it.
+
+**For a tweet (EN):**
+
+> Where to look today is a question about chains before it is a question about tokens: TVL, DEX volume and active addresses with their daily change.
+
+---
+
 <a name="sharpmarkets"></a>
 
 ## 🎯 Where the money on Polymarket is sharp (market comparison)
@@ -708,7 +758,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## Client routes with no ordinary user scenario
 
-The catalog above has 27 workflows that use 29 unique API routes. The client contains **53** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
+The catalog above has 29 workflows that use 31 unique API routes. The client contains **55** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
 
 This is not a claim that all work end-to-end: having a client is not the same as a ready scenario. The list is broken out precisely so as not to pass API coverage off as user-available functionality.
 

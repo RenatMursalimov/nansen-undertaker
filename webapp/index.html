@@ -23,29 +23,53 @@
     * своих порогов. Порог винрейта и порог «доли от капитализации» приезжают числом.
 -->
 <style>
+  /* ═══ ПАЛИТРА: ФИОЛЕТОВЫЙ ФОН «ХАРМЫ» + ЗЕЛЁНЫЙ АКЦЕНТ NANSEN ═══
+     Просьба владельца: экран должен читаться как наш (комнаты «Харма» - глубокий фиолетовый)
+     и как Nansen (их зелёный). Поэтому фон и карточки фиолетовые, а ЗЕЛЁНЫМ окрашено только
+     то, что означает данные Nansen: акцент активного таба, «сильные/острые деньги», короткая
+     сторона. Цвет здесь НЕСЁТ СМЫСЛ, и это ограничение сильнее вкуса: раскрасить зелёным всё
+     подряд значит отнять у зелёного значение, а вместе с ним и у легенды. */
   :root{
-    --bg:#0f1115; --card:#171a21; --line:#252a34; --ink:#e8eaee; --dim:#9aa3b2;
-    --weak:#e5533d;      /* винрейт ниже порога — «деньги тех, кто чаще ошибался» */
-    --mid:#d8a23a;       /* середина */
-    --strong:#37a169;    /* винрейт выше */
-    --grey:#5b6474;      /* ИСТОРИЯ НЕ РАЗОБРАНА: не «слабые» и не «сильные» */
-    --long:#e5533d; --short:#37a169;
-    --named:#58a6ff;     /* деньги с меткой Nansen внутри столбика: ТОТ ЖЕ цвет, что на
+    --bg:#150b2e; --bg2:#12092a; --bg3:#1b0f3a;
+    --card:#221244; --card2:#190c37; --line:#3a2168; --line2:#4a2c82;
+    --ink:#f3eeff; --dim:#b4a3dd;
+    --nsn:#00d395;       /* зелёный Nansen: акцент и «данные Nansen» */
+    --nsn-d:#0a8f6a;     /* его тёмный оттенок для рамок/подложек */
+    --weak:#ff6b81;      /* винрейт ниже порога — «деньги тех, кто чаще ошибался» */
+    --mid:#ffc24d;       /* середина */
+    --strong:#00d395;    /* винрейт выше порога — тот же зелёный, что у бренда данных */
+    --grey:#6b5f90;      /* ИСТОРИЯ НЕ РАЗОБРАНА: не «слабые» и не «сильные» */
+    --long:#ff6b81; --short:#00d395;
+    --named:#49c8ff;     /* деньги с меткой Nansen внутри столбика: ТОТ ЖЕ цвет, что на
                             картинке в чате, и НЕ цвет пунктира текущей цены - один цвет
                             обязан означать одну величину на обоих экранах */
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);
+  body{margin:0;color:var(--ink);
+       background:var(--bg);
+       background-image:linear-gradient(180deg,var(--bg3) 0,var(--bg) 38%,var(--bg2) 100%);
+       background-attachment:fixed;
        font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
        padding:0 0 28px;-webkit-text-size-adjust:100%}
   .wrap{padding:12px 12px 0}
-  .tabs{display:flex;gap:6px;position:sticky;top:0;background:var(--bg);padding:10px 12px;
+  /* ШАПКА: чей экран и ЧЬИ ДАННЫЕ. Вторая половина здесь не украшение - на экране, который
+     показывают судьям, источник обязан быть виден без чтения подвала. */
+  .top{display:flex;align-items:center;gap:8px;padding:10px 12px 2px}
+  .top .ttl{font-size:14px;font-weight:700;letter-spacing:.2px}
+  .top .by{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11px;
+           color:var(--dim);text-transform:uppercase;letter-spacing:.8px}
+  .top .by b{color:var(--nsn);letter-spacing:1.4px}
+  .top .by{text-decoration:none}
+  .mark{flex:0 0 auto;filter:drop-shadow(0 0 6px rgba(0,211,149,.35))}
+  .tabs{display:flex;gap:6px;position:sticky;top:0;padding:10px 12px;
+        background:rgba(21,11,46,.92);backdrop-filter:blur(6px);
         z-index:5;border-bottom:1px solid var(--line)}
-  .tab{flex:1;padding:9px 6px;border:1px solid var(--line);border-radius:10px;
+  .tab{flex:1;padding:9px 6px;border:1px solid var(--line);border-radius:12px;
        background:var(--card);color:var(--dim);text-align:center;font-size:13px;cursor:pointer}
-  .tab.on{color:var(--ink);border-color:#3d4457;background:#1e2230}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
-        padding:12px;margin:10px 0}
+  .tab.on{color:var(--ink);border-color:var(--nsn);background:#261a4e;
+          box-shadow:0 0 0 1px rgba(0,211,149,.25) inset}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;
+        padding:12px;margin:10px 0;box-shadow:0 8px 24px rgba(8,2,24,.35)}
   h1{font-size:17px;margin:2px 0 8px}
   .lead{font-size:16px;line-height:1.35;margin:0 0 6px}
   .lead b{color:#fff}
@@ -53,7 +77,7 @@
   .row{display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer}
   .row .nm{flex:0 0 42%;font-size:12.5px;white-space:nowrap;overflow:hidden;
            text-overflow:ellipsis}
-  .row .barwrap{flex:1;height:18px;background:#11141a;border-radius:4px;overflow:hidden}
+  .row .barwrap{flex:1;height:18px;background:var(--card2);border-radius:5px;overflow:hidden}
   .row .bar{height:100%}
   .row .val{flex:0 0 66px;text-align:right;font-size:12px;color:var(--dim)}
   .det{display:none;padding:6px 0 8px 8px;border-left:2px solid var(--line);
@@ -64,47 +88,85 @@
   .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;
             margin-right:4px;vertical-align:-1px}
   .sides{display:flex;gap:8px;margin:8px 0}
-  .side{flex:1;background:#11141a;border-radius:8px;padding:7px 9px;font-size:12.5px}
+  .side{flex:1;background:var(--card2);border:1px solid var(--line);border-radius:10px;
+        padding:7px 9px;font-size:12.5px}
   .foot{border-top:1px solid var(--line);margin-top:10px;padding-top:8px;
         font-size:11.5px;color:var(--dim)}
+  /* «Source: Nansen» В ПОДВАЛЕ ОКРАШЕН В ИХ ЗЕЛЁНЫЙ - источник обязан быть заметен. */
+  .foot .src{color:var(--nsn);font-weight:600}
   .cav{margin:6px 0 0;padding-left:16px}
   .cav li{margin:2px 0}
-  .said{white-space:pre-wrap;font-size:12px;color:#b9c1cf;background:#11141a;
-        border-radius:8px;padding:9px;margin-top:8px;max-height:210px;overflow:auto}
+  .said{white-space:pre-wrap;font-size:12px;color:#cfc4ee;background:var(--card2);
+        border:1px solid var(--line);border-left:3px solid var(--nsn-d);
+        border-radius:10px;padding:9px;margin-top:8px;max-height:210px;overflow:auto}
   .btns{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 2px}
-  .btn{padding:8px 12px;border:1px solid var(--line);border-radius:9px;background:#1b1f28;
+  .btn{padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:#261a4e;
        color:var(--ink);font-size:13px;cursor:pointer}
-  .btn.on{border-color:#4a86ff;color:#fff}
-  input.mk{width:100%;padding:9px 10px;border-radius:9px;border:1px solid var(--line);
-           background:#11141a;color:var(--ink);font-size:14px}
+  .btn.on{border-color:var(--nsn);color:#fff;box-shadow:0 0 0 1px rgba(0,211,149,.25) inset}
+  input.mk{width:100%;padding:9px 10px;border-radius:10px;border:1px solid var(--line);
+           background:var(--card2);color:var(--ink);font-size:14px}
   /* РЯД РЫНКА: вопрос крупно, вероятность и объём мелко. Идентификатора в разметке для глаз
      нет вовсе - он лежит в data-атрибуте и нужен только тапу. */
-  .mkrow{padding:9px 2px;border-bottom:1px solid #1d2230;cursor:pointer}
+  .mkrow{padding:9px 2px;border-bottom:1px solid var(--line);cursor:pointer}
   .mkrow:last-child{border-bottom:0}
   .mkq{font-size:14px;line-height:1.3}
   .mkmeta{font-size:11.5px;color:var(--dim);margin-top:2px}
-  .warn{background:#2a1c14;border:1px solid #5a3a22;color:#ffd7ad;border-radius:10px;
+  /* ПОЛОСЫ В РЯДУ РЫНКА. ПОЙМАНО РЕНДЕРОМ: стили полос были объявлены только как `.row .barwrap`,
+     а экран острых денег строит их внутри `.mkrow` - высота не задавалась, и полос НЕ БЫЛО ВИДНО
+     ВООБЩЕ. Легенда при этом обещала два цвета: экран обещал сравнение и не показывал его. */
+  .mkrow .barwrap{height:8px;background:var(--card2);border-radius:5px;overflow:hidden;
+                  margin-top:3px}
+  .mkrow .bar{height:100%}
+  .warn{background:#3a2a10;border:1px solid #7a5a1a;color:#ffe2b0;border-radius:12px;
         padding:9px 11px;font-size:12.5px;margin:10px 0}
-  .bad{background:#2a1618;border:1px solid #5c2a2e;color:#ffc9cd}
+  .bad{background:#3a1526;border:1px solid #7a2540;color:#ffc9d6}
   /* ПЛАШКА РЕПЕТИЦИИ НЕСВОДИМА: она рисуется по полю ИЗ ОТВЕТА шлюза, а не по флагу
      страницы, и спрятать её нельзя, не правя код. В финальной записи репетиция запрещена,
      поэтому плашка в кадре означает «дубль переснять». */
-  .reh{position:sticky;top:52px;z-index:6;background:#3a2a06;border:1px solid #8a6a10;
-       color:#ffe9a8;border-radius:10px;padding:8px 11px;margin:8px 12px;font-size:12.5px;
+  .reh{position:sticky;top:52px;z-index:6;background:#4a3606;border:1px solid #b08a14;
+       color:#ffe9a8;border-radius:12px;padding:8px 11px;margin:8px 12px;font-size:12.5px;
        font-weight:600;text-align:center}
   table.feed{width:100%;border-collapse:collapse;font-size:11.5px}
-  table.feed td{padding:4px 3px;border-bottom:1px solid #1d2230;white-space:nowrap}
-  table.feed td.ep{white-space:normal;color:#b9c1cf}
+  table.feed td{padding:4px 3px;border-bottom:1px solid var(--line);white-space:nowrap}
+  table.feed td.ep{white-space:normal;color:#cfc4ee}
   .pill{display:inline-block;padding:1px 6px;border-radius:20px;font-size:10.5px}
-  .p-ok{background:#16341f;color:#8fe0a8} .p-cache{background:#2a2a14;color:#e4e08f}
-  .p-bad{background:#33191c;color:#ffb3ba}
+  .p-ok{background:#0d3b2c;color:#6ff0c2} .p-cache{background:#3a3410;color:#f0e58f}
+  .p-bad{background:#3d1220;color:#ffb3c4}
   .tot{display:flex;gap:8px;margin:2px 0 10px}
-  .tot div{flex:1;background:#11141a;border-radius:8px;padding:7px;text-align:center}
-  .tot b{display:block;font-size:17px;color:#fff}
+  .tot div{flex:1;background:var(--card2);border:1px solid var(--line);border-radius:10px;
+           padding:7px;text-align:center}
+  .tot b{display:block;font-size:17px;color:var(--nsn)}
+  /* ГРАФИКИ ТЯНУТСЯ НА ВСЮ ШИРИНУ КАРТОЧКИ - но только они. ПОЙМАНО РЕНДЕРОМ: это правило
+     было записано на ВСЕ svg, и знак в шапке (22×22 по атрибутам) растянулся на 380 пикселей,
+     разорвав ширину страницы. Атрибуты width/height у svg слабее любого CSS, поэтому знаку
+     нужен свой селектор С КЛАССОМ - `svg.mark` (0,1,1) перебивает `svg` (0,0,1) без !important. */
   svg{display:block;width:100%;height:auto;overflow:visible}
+  svg.mark{width:22px;height:22px;flex:0 0 22px}
 </style>
 </head>
 <body>
+
+<!--
+  ШАПКА. Слева чей это экран, справа - ЧЬИ ДАННЫЕ, и второе не украшение: экран показывают
+  судьям конкурса, и источник обязан быть виден без чтения подвала.
+
+  ЗНАК НАРИСОВАН НАМИ, А НЕ СКОПИРОВАН. Официального SVG Nansen в открытом виде под лицензией,
+  позволяющей положить файл в ПУБЛИЧНЫЙ репозиторий, найти не удалось, а тащить чужой logo-файл
+  со стороннего агрегатора «потому что похоже» - это ровно та тихая проблема, которую потом
+  находит не автор. Поэтому здесь геометрический знак в их зелёном плюс словесная марка и
+  ссылка на источник. Появится официальный файл (или разрешение) - меняется одна строка:
+  положить `nansen-logo.svg` рядом и подставить <img> вместо <svg> ниже.
+-->
+<div class="top">
+  <svg class="mark" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M12 2 L15.2 8.8 L22 12 L15.2 15.2 L12 22 L8.8 15.2 L2 12 L8.8 8.8 Z"
+          fill="none" stroke="#00d395" stroke-width="1.6" stroke-linejoin="round"/>
+    <circle cx="12" cy="12" r="2.1" fill="#00d395"/>
+  </svg>
+  <span class="ttl">Undertaker</span>
+  <a class="by" href="https://www.nansen.ai" target="_blank" rel="noopener noreferrer">
+    data by <b>NANSEN</b></a>
+</div>
 
 <div class="tabs">
   <div class="tab on" id="t_hero">🎭 Whose&nbsp;%</div>
@@ -290,8 +352,8 @@ function footer(env) {
   var cost = (env.cost_credits === null || env.cost_credits === undefined)
     ? ((env.cost_requests || 0) + ' request' + ((env.cost_requests === 1) ? '' : 's'))
     : ((env.cost_credits) + ' credits · ' + (env.cost_requests || 0) + ' requests');
-  var h = '<div class="foot">Source: ' + esc(env.source || 'Nansen') + ' · '
-        + esc(ago(env.freshness_seconds)) + ' · ' + esc(cost);
+  var h = '<div class="foot">Source: <span class="src">' + esc(env.source || 'Nansen')
+        + '</span> · ' + esc(ago(env.freshness_seconds)) + ' · ' + esc(cost);
   if (env.cost_credits === null || env.cost_credits === undefined) {
     h += '<br><span class="dim">Credit price is not published for these endpoints, so the '
        + 'cost is named in requests.</span>';
@@ -548,10 +610,14 @@ function sharpHTML(env) {
     var ww = max ? Math.max(2, Math.round(100 * Number(r.weak || 0) / max)) : 2;
     var ex = Number(r.examined || 0);
     var pct = ex ? Math.round(100 * Number(r.sharp || 0) / ex) : 0;
+    /* СКОЛЬКО ДЕРЖАТЕЛЕЙ РАЗОБРАНО - В САМОЙ СТРОКЕ, А НЕ ТОЛЬКО В ОГОВОРКАХ. Живой прогон:
+       на этом экране у рынка «$646.4K examined», а в hero того же рынка «$930.1K examined», и
+       это не расхождение - сравнение смотрит 3 держателя на рынок, разбор смотрит 5. Но человек
+       видит два числа и читает их как ошибку, если рядом не сказано, по скольким они считаны. */
     h += '<div class="mkmeta">' + (r.prob === null || r.prob === undefined
                                    ? '?' : (esc(r.prob) + '%'))
        + ' · sharp <b>$' + usd(r.sharp) + '</b> (' + pct + '% of $' + usd(ex)
-       + ' examined) vs weak $' + usd(r.weak) + '</div>'
+       + ' examined across ' + esc(p.holders) + ' holders) vs weak $' + usd(r.weak) + '</div>'
        + '<div class="barwrap"><div class="bar" style="width:' + sw
        + '%;background:var(--strong)"></div></div>'
        + '<div class="barwrap"><div class="bar" style="width:' + ww
@@ -731,6 +797,14 @@ function boardHTML(env) {
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
     h += '<div class="mkrow" data-btk="' + esc(r.tok) + '"><div class="mkq">' + esc(r.tok);
+    if (r.status === 'far') {
+      /* «НИЧЕГО В ОКНЕ» - СОСТОЯНИЕ, А НЕ БОЛЬШОЕ ЧИСЛО. Без этой ветки борд печатал
+         «2144.9% above the price»: арифметика верная, смысл - «цена туда не дойдёт». */
+      h += ' — <i>nothing liquidates near the price</i></div>'
+         + '<div class="mkmeta">$' + usd(r.total) + ' of leverage sits further out than the '
+         + 'map window</div></div>';
+      continue;
+    }
     if (r.status !== 'ok') {
       h += ' — <i>' + (r.status === 'norows' ? 'no open positions came back'
                                              : 'positions carry no liquidation price')
@@ -784,9 +858,11 @@ function liqRender() {
   /* СВОЙ ТИКЕР ВВОДОМ. Это НЕ то же, что ручной ввод market_id, который мы из hero убрали:
      там номер был служебным и человек искал бы его вне экрана, а тикер он и так знает. */
   h += '<div class="btns" style="margin-top:6px">'
-     + '<input id="tkin" placeholder="any ticker, e.g. ZEC" maxlength="12" '
-     + 'style="background:var(--bg);color:var(--ink);border:1px solid var(--line);'
-     + 'border-radius:8px;padding:6px 8px;width:140px;font:inherit">'
+     /* ШИРИНА 170: ПОЙМАНО РЕНДЕРОМ - при 140 подсказка обрезалась на «any ticker, e.g. ZE»,
+        и поле выглядело сломанным. Подсказка короче, поле шире. */
+     + '<input id="tkin" placeholder="ticker, e.g. ZEC" maxlength="12" '
+     + 'style="background:var(--card2);color:var(--ink);border:1px solid var(--line);'
+     + 'border-radius:10px;padding:7px 9px;width:170px;font:inherit">'
      + '<span class="btn" id="tkgo">show map</span></div>';
   h += '</div>';
   el.innerHTML = h + (BOARD.on ? boardHTML(BOARD.env) : '') + liqHTML(LIQ.env);
