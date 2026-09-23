@@ -60,6 +60,9 @@ TOKEN_SOL = 'So11111111111111111111111111111111111111112'
 #: WETH на Ethereum - публичный контракт. Нужен ручкам, которые просят именно `token_address` с
 #: сетью и на стейблкоине/солановом адресе отвечать не обязаны.
 TOKEN_ETH_WETH = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
+#: JUP (Jupiter) на Solana - НЕ нативный токен: `tgm/jup-dca` живой пробой 24.09 сказал, что
+#: нативные (WSOL) не поддерживает вовсе. Публичный mint, не адрес человека.
+TOKEN_SOL_JUP = 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN'
 PM_WALLET = WALLET
 #: МЕТКА-ЗАПОЛНИТЕЛЬ: её видит план, а живой id встаёт на её место перед отправкой.
 LIVE_PM_MARKET = '<живой id рынка со скринера>'
@@ -185,56 +188,59 @@ def _cases_new():
 
 
 def _cases_next():
-    """ВОСЕМЬ РУЧЕК СЛЕДУЮЩИХ ФИЧ. ПЕРВЫЙ КРУГ ПРОЙДЕН 24.09 - НИЖЕ ЕГО РЕЗУЛЬТАТЫ.
+    """СЛЕДУЮЩИЕ ФИЧИ. ДВА КРУГА ПРОЙДЕНО (24.09), НИЖЕ - ЧТО СКАЗАЛ ПРОВОД, СЛОВО В СЛОВО.
 
-    ЧТО СКАЗАЛ ПРОВОД (живой прогон 24.09, ключ Ren, остаток кредитов после прогона 57540):
-      * `smart-money/dcas` - ПОЛЕ `chains` НЕ СУЩЕСТВУЕТ («Field 'chains' is not recognized»),
-        а БЕЗ него ручка отдаёт 200 и строки. Схема снята, фича подключена (`smart_money_dcas`);
-      * `chains/chain-rank` - 200 и 37 строк на пустом теле с пагинацией. Схема снята,
-        подключено (`chain_rank`);
-      * `tgm/jup-dca` - поля `chain` не знает вовсе;
-      * `prediction-market/position-detail` - поля `address` не знает вовсе;
-      * `tgm/position-intelligence` - требует `token_address` (симвОл не подходит);
-      * `ra-agent/posts-by-user` - требует `date` в форме {"from","to"};
-      * `search/web-search` - требует `queries` (множественное число!), а не `query`;
-      * `portfolio/defi-holdings` - требует `wallet_address`, а не `address`.
-    Каждый из этих пяти отказов НАЗВАЛ имя поля, поэтому второй круг идёт не догадками, а по
-    словам площадки - ниже уже исправленные тела. Это и есть причина, по которой ремонт для
-    группы выключен: сырой отказ полезнее «успешного» 200 с выброшенным вопросом.
+    КРУГ 1 (тела по образцу соседей):
+      * `smart-money/dcas` - «Field 'chains' is not recognized»; БЕЗ chains 200 + строки;
+      * `chains/chain-rank` - 200 и 37 строк на пустом теле;
+      * `tgm/jup-dca` - «Field 'chain' is not recognized»;
+      * `prediction-market/position-detail` - «Field 'address' is not recognized»;
+      * `tgm/position-intelligence` - «Required field 'body -> token_address' is missing»;
+      * `ra-agent/posts-by-user` - «Required field 'body -> date' is missing»;
+      * `search/web-search` - «Required field 'body -> queries' is missing»;
+      * `portfolio/defi-holdings` - «Required field 'body -> wallet_address' is missing».
+
+    КРУГ 2 (исправлено по их словам) - и он дал ТРИ НОВЫХ ФАКТА и ДВЕ ПОБЕДЫ:
+      * `ra-agent/posts-by-user` -> 200, `{data:[],pagination:{...}}`: СХЕМА ВЕРНА, у этого
+        аккаунта постов за неделю нет. Пустота распознана, а не выдана за отказ;
+      * `portfolio/defi-holdings` -> 200 и ОБЪЕКТ `{summary:{...}, protocols:[]}`: схема верна,
+        у этого кошелька DeFi-позиций нет. ПОДКЛЮЧЕНО (`defi_holdings`, экран «💠 DeFi-часть»);
+      * `tgm/position-intelligence` и `search/web-search` - «Field 'pagination' is not
+        recognized»: им нельзя даже пагинацию. Тело должно быть МИНИМАЛЬНЫМ;
+      * `tgm/jup-dca` - «Native token ... is not supported ... does not support native tokens»:
+        WSOL не подходит ПО СМЫСЛУ, нужен НЕ нативный токен Solana;
+      * `prediction-market/position-detail` - `wallet_address` тоже «not recognized». Два имени
+        отвергнуты, третье НЕ УГАДЫВАЕМ: ниже стоят кандидаты из ответов соседних ручек
+        (`trader_address` у dcas, `address_list` у holders-подобных), по одному на запрос.
+
+    ПОЧЕМУ РЕМОНТ ВЫКЛЮЧЕН (группы нет в `FIX_DEFAULT`): на поиске ИМЕНИ поля ремонт выкидывает
+    сам вопрос и возвращает 200 с пустотой, которая читается как «данных нет».
     """
-
     _pg = {"pagination": {"page": 1, "per_page": 5}}
     return [
-        # ── СХЕМЫ, УЖЕ СНЯТЫЕ 24.09. Оставлены в пробе как эталон: если площадка их изменит,
-        #    следующий прогон это покажет, а не живой человек на экране.
-        ('smart-money/dcas', 'СНЯТО 24.09: без chains, 200 + строки', dict(_pg)),
-        ('chains/chain-rank', 'СНЯТО 24.09: пустое тело + пагинация, 200 + 37 строк', dict(_pg)),
-        # ── ВТОРОЙ КРУГ ПО СЛОВАМ ПЛОЩАДКИ ─────────────────────────────────────────────
-        # jup-dca: `chain` не знает. Пробуем БЕЗ него - по образцу dcas, где лишним оказался
-        # ровно признак сети (у Jupiter она одна, Solana, и указывать её незачем).
-        ('tgm/jup-dca', '24.09 сказал: chain не знает -> шлём только token_address',
-         dict(_pg, token_address=TOKEN_SOL)),
-        ('tgm/jup-dca', 'и вариант совсем без токена - вдруг это список программ', dict(_pg)),
-        # position-detail: `address` не знает. Соседи этого семейства принимают
-        # `wallet_address`, поэтому берём его, а не придумываем третье имя.
-        # `market_id` НАРОЧНО ПОДСТАВЛЯЕТСЯ ЖИВЫМ ПЕРЕД ОТПРАВКОЙ, а не при сборке плана: спроси
-        # мы скринер здесь - печать плана сама сделала бы сетевой вызов, и «ничего не отправлено»
-        # перестало бы быть правдой.
-        ('prediction-market/position-detail', '24.09 сказал: address не знает -> wallet_address',
-         {"wallet_address": PM_WALLET, "market_id": LIVE_PM_MARKET}),
-        # position-intelligence: требует `token_address` (симвОл не подходит) - значит и сеть
-        # почти наверняка обязательна, как у остальных tgm-ручек.
-        ('tgm/position-intelligence', '24.09 сказал: нужен token_address -> с сетью и адресом',
-         dict(_pg, chain="ethereum", token_address=TOKEN_ETH_WETH)),
-        # posts-by-user: требует `date` в форме {"from","to"}.
-        ('ra-agent/posts-by-user', '24.09 сказал: нужен date {from,to} -> с датой и username',
+        # ── СХЕМЫ СНЯТЫ И ПОДКЛЮЧЕНЫ. Остаются в пробе как эталон: изменится площадка -
+        #    покажет следующий прогон, а не человек на экране.
+        ('smart-money/dcas', 'СНЯТО: без chains, 200 + строки', dict(_pg)),
+        ('chains/chain-rank', 'СНЯТО: пустое тело + пагинация, 200 + 37 строк', dict(_pg)),
+        ('portfolio/defi-holdings', 'СНЯТО: wallet_address и БЕЗ пагинации',
+         {"wallet_address": WALLET}),
+        ('ra-agent/posts-by-user', 'СНЯТО: username + date {from,to}',
          dict(_pg, username="nansen_ai", date=N._date_range(7))),
-        # web-search: требует `queries` во МНОЖЕСТВЕННОМ числе.
-        ('search/web-search', '24.09 сказал: нужен queries (мн.ч.), а не query',
-         dict(_pg, queries=["smart money"])),
-        # defi-holdings: требует `wallet_address`.
-        ('portfolio/defi-holdings', '24.09 сказал: нужен wallet_address, а не address',
-         dict(_pg, wallet_address=WALLET)),
+        # ── КРУГ 3: ТЕЛО БЕЗ ПАГИНАЦИИ (площадка сказала, что не знает это поле) ──────────
+        ('tgm/position-intelligence', 'круг 3: БЕЗ пагинации, только сеть и адрес токена',
+         {"chain": "ethereum", "token_address": TOKEN_ETH_WETH}),
+        ('search/web-search', 'круг 3: БЕЗ пагинации, только queries',
+         {"queries": ["smart money"]}),
+        # ── КРУГ 3: НЕ НАТИВНЫЙ ТОКЕН SOLANA (нативный отвергнут по смыслу) ──────────────
+        ('tgm/jup-dca', 'круг 3: JUP вместо WSOL (нативные не поддерживаются)',
+         dict(_pg, token_address=TOKEN_SOL_JUP)),
+        # ── КРУГ 3: ТРЕТЬЕ ИМЯ ПОЛЯ АДРЕСА, ПО ОДНОМУ НА ЗАПРОС ─────────────────────────
+        # `trader_address` - имя из ОТВЕТА `smart-money/dcas`, то есть слово самой площадки, а
+        # не наша фантазия. Если и оно не подойдёт - следующий круг берёт `address_list`.
+        ('prediction-market/position-detail', 'круг 3: trader_address (имя из ответа dcas)',
+         {"trader_address": PM_WALLET, "market_id": LIVE_PM_MARKET}),
+        ('prediction-market/position-detail', 'круг 3: только market_id, без адреса вовсе',
+         {"market_id": LIVE_PM_MARKET}),
     ]
 
 

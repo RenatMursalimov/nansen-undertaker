@@ -10,7 +10,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 | Scenarios | Endpoints used | Telemetry scenes |
 |---|---|---|
-| 29: 27 user-facing on Nansen + 1 background + 1 local | 31 | 27 of 32 in registry |
+| 30: 28 user-facing on Nansen + 1 background + 1 local | 32 | 28 of 33 in registry |
 
 ## Three doors: where Nansen can be asked at all
 
@@ -53,6 +53,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [🔍 Free-form question to the Nansen agent](#agent) | — | exchange card → 🔍 Nansen<br>a question in DM or chat | 💬 👥🔘 👥🤖 | 200 credits (fast) or 750 (expert) — the MOST expensive path |
 | [🧊 Who buys on a schedule (smart money DCA)](#dca) | `dca` | 🧠 Nansen → 🧊 Buying on a schedule | 💬 | price not named in the official list · 1 request |
 | [🌐 Chain ranking: TVL, DEX volume, active addresses](#chains) | `chain rank` | 🧠 Nansen → 🌐 Chain ranking | 💬 | price not named in the official list · 1 request |
+| [💠 The DeFi part of a wallet: assets MINUS debts](#defi) | `defi 0x…` | 🧠 Nansen → 💠 DeFi part of a wallet | 💬 | price not named in the official list · 1 request |
 | [🎯 Where the money on Polymarket is sharp (market comparison)](#sharpmarkets) | `sharp money` | 🧠 Nansen → 🎯 Where money is sharp | 💬 | price not named in the official list · 1 + N + N×H requests (13 by default) |
 | [⚔️ Risk board: whose leverage is closest to the edge](#perprisk) | `risk board` | 🧠 Nansen → ⚔️ Perp risk board<br>liquidation map → ⚔️ Compare all four | 💬 👥🔘 | price not named in the official list · one request per token (4) |
 | [🧮 My contest tally](#tally) | `nansen stats` | 🧠 Nansen → 🧮 My contest tally | 💬 | free, reads its own log |
@@ -661,6 +662,30 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ---
 
+<a name="defi"></a>
+
+## 💠 The DeFi part of a wallet: assets MINUS debts
+
+**Say to the bot:** `defi 0x…`
+**By button:** 🧠 Nansen → 💠 DeFi part of a wallet
+**Where:** in DM · **not in a group**: the word command is parsed only by the DM router
+
+**What you get:** the net figure (assets minus debts), unclaimed rewards and the protocols by size
+
+**Price:** price not named in the official list · 1 request
+
+**Why:** a wallet holding $2M with no debt and one holding $2M against $1.7M of debt look identical in a token list, and they are not the same wallet
+
+**Endpoints:** `portfolio/defi-holdings`
+
+**Telemetry scene:** `defi_holdings` — this screen's spend is counted under it.
+
+**For a tweet (EN):**
+
+> A wallet holding two million with one and a half million of debt looks identical to a debt-free one in a token list. Here it does not.
+
+---
+
 <a name="sharpmarkets"></a>
 
 ## 🎯 Where the money on Polymarket is sharp (market comparison)
@@ -758,7 +783,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## Client routes with no ordinary user scenario
 
-The catalog above has 29 workflows that use 31 unique API routes. The client contains **55** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
+The catalog above has 30 workflows that use 32 unique API routes. The client contains **56** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
 
 This is not a claim that all work end-to-end: having a client is not the same as a ready scenario. The list is broken out precisely so as not to pass API coverage off as user-available functionality.
 

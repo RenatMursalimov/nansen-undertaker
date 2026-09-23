@@ -109,6 +109,7 @@ SCENES = (
     # существовало. Имена в реестре появляются ВМЕСТЕ с дверью, а не заранее «под будущее».
     'smart_dca',               # «dca»: кто покупает по расписанию (smart-money/dcas)
     'chain_rank',              # «рейтинг сетей» (chains/chain-rank)
+    'defi_holdings',           # «дефи 0x…» (portfolio/defi-holdings)
 )
 _SCENES = frozenset(SCENES)
 
@@ -157,7 +158,7 @@ _EP_UNKNOWN = frozenset((
     # Записаны здесь явно, чтобы экран говорил «цена не названа» и считал запросами, а не
     # подставлял «примерно 5» - придуманная цена в экране, по которому принимают решение, это
     # ложь в самом проверяемом месте.
-    'smart-money/dcas', 'chains/chain-rank',
+    'smart-money/dcas', 'chains/chain-rank', 'portfolio/defi-holdings',
     'profiler/address/labels', 'profiler/address/pnl-summary',
     'profiler/address/related-wallets', 'profiler/address/counterparties',
     'profiler/address/current-balance',

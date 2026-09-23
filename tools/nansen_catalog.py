@@ -305,6 +305,16 @@ SCENARIOS = [
             'уровне токена',
      'hook': 'Where to look today is a question about chains before it is a question about '
              'tokens: TVL, DEX volume and active addresses with their daily change.'},
+    {'id': 'defi', 'title': '💠 DeFi-часть кошелька: активы МИНУС долги',
+     'cmds': ['дефи 0x…'], 'btns': ['🧠 Nansen → 💠 DeFi-часть кошелька'],
+     'eps': ['portfolio/defi-holdings'], 'scene': 'defi_holdings', 'menu': 'nsn_defi',
+     'price': 'цена не названа в официальном списке · 1 запрос',
+     'gives': 'чистую величину (активы минус долги), незабранные награды и список протоколов '
+              'по размеру',
+     'why': 'кошелёк на $2M без долга и кошелёк на $2M с долгом $1.7M по списку токенов '
+            'выглядят одинаково, а это разные кошельки',
+     'hook': 'A wallet holding two million with one and a half million of debt looks identical '
+             'to a debt-free one in a token list. Here it does not.'},
     # ── СРАВНИТЕЛЬНЫЕ ЭКРАНЫ: не «что по этому объекту», а «какой из них выбрать» ────────
     {'id': 'sharpmarkets', 'app': True,
      'title': '🎯 Где на Polymarket деньги острые (сравнение рынков)',
@@ -531,6 +541,13 @@ _EN = {
                'gives': 'chains by TVL with their daily change, DEX volume and active addresses',
                'why': '"where to look today" is a question about chains before it is a question '
                       'about tokens'},
+    'defi': {'cmds': ['defi 0x…'], 'btns': ['🧠 Nansen → 💠 DeFi part of a wallet'],
+             'title': '💠 The DeFi part of a wallet: assets MINUS debts',
+             'price': 'price not named in the official list · 1 request',
+             'gives': 'the net figure (assets minus debts), unclaimed rewards and the protocols '
+                      'by size',
+             'why': 'a wallet holding $2M with no debt and one holding $2M against $1.7M of debt '
+                    'look identical in a token list, and they are not the same wallet'},
     'sharpmarkets': {'cmds': ['sharp money'],
                      'btns': ['🧠 Nansen → 🎯 Where money is sharp'],
                      'title': '🎯 Where the money on Polymarket is sharp (market comparison)',

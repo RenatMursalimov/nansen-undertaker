@@ -337,6 +337,12 @@ LIQ_MIN_USD = 1000.0
 #: то есть уровень, который человек может отличить от соседнего. Деньги за окном НЕ теряются:
 #: они считаются отдельной величиной и называются словом.
 LIQ_WINDOW = 0.5
+#: МАСШТАБЫ КАРТЫ, КОТОРЫЕ ЧЕЛОВЕК МОЖЕТ ВЫБРАТЬ (проценты вокруг цены; 0 = «весь размах»).
+#: Запрос владельца: «нельзя ли регулировать масштаб по уровням». Набор ЗАКРЫТЫЙ, а не любое
+#: число: во-первых, произвольный процент из клиента - это свободное значение в подписанном
+#: сигнале, во-вторых, четыре понятных ступени человек сравнивает между собой, а ползунок с
+#: 37% сравнить не с чем. По умолчанию - `LIQ_WINDOW`, то есть ровно то, что было.
+LIQ_ZOOMS = (10, 25, 50, 100, 0)
 
 
 def _price(v):
@@ -381,7 +387,21 @@ def _label_clean(s):
     return cut.rstrip(' ,;:-"\'') + '…'
 
 
-def liq_clusters(rows, mark=None):
+def liq_zoom_ok(z):
+    """Проверить масштаб по закрытому списку. -> int (проценты) | None.
+
+    None означает «человек масштаб не выбирал» и даёт умолчание. Чужое число НЕ подгоняется
+    к ближайшему разрешённому: тихая подмена значения - это ответ на вопрос, которого не
+    задавали (человек попросил 37%, получил 25% и не узнал об этом).
+    """
+    try:
+        z = int(z)
+    except (TypeError, ValueError):
+        return None
+    return z if z in LIQ_ZOOMS else None
+
+
+def liq_clusters(rows, mark=None, zoom=None):
     """Позиции -> скопления плеча по цене ликвидации. -> dict | None.
 
     Считает ОТДЕЛЬНО от рисования, и это принципиально: числа нужны и тексту (заголовок
@@ -460,9 +480,13 @@ def liq_clusters(rows, mark=None):
     off_usd, off_n, win = 0.0, 0, None
     _mk = _num(mark)
     _wl = _wh = None
-    if _mk and _mk > 0:
-        _wl, _wh = _mk * (1.0 - LIQ_WINDOW), _mk * (1.0 + LIQ_WINDOW)
-    elif len(pts) >= 8:
+    # МАСШТАБ: выбранный человеком или умолчание. Ноль - это «весь размах», и он НЕ равен
+    # «умолчанию»: человек мог попросить именно всё, и тогда окна не будет вовсе.
+    _z = liq_zoom_ok(zoom)
+    _wfrac = (float(_z) / 100.0) if _z else (None if _z == 0 else LIQ_WINDOW)
+    if _mk and _mk > 0 and _wfrac:
+        _wl, _wh = _mk * (1.0 - _wfrac), _mk * (1.0 + _wfrac)
+    elif _wfrac and len(pts) >= 8:
         # ЦЕНЫ НЕТ - ОКНО ОТ ЦЕНЫ НЕВОЗМОЖНО, и выдумывать её нельзя. Обрезаем по краевым
         # процентилям: это не «нормальное движение», а отсечение выбросов по самим данным.
         _srt = sorted(p[0] for p in pts)
@@ -507,7 +531,12 @@ def liq_clusters(rows, mark=None):
                 'named': _named_tot, 'named_n': _named_n, 'named_who': _who_top,
                 'window': win, 'off_usd': off_usd, 'off_n': off_n,
                 'win_empty': win_empty,
-                'win_pct': (LIQ_WINDOW * 100 if (_mk and win) else None)}
+                # ЧТО ПРОСИЛИ, а не что получилось: когда в окне пусто, окна в ответе нет,
+                # но назвать процент всё равно надо - иначе фраза «в пределах 50%» соврёт
+                # человеку, который просил 10%.
+                'req_pct': ((_wfrac * 100) if _wfrac else None),
+                'win_pct': ((_wfrac * 100) if (_mk and win and _wfrac) else None),
+                'zoom': _z}
     step = (hi - lo) / float(LIQ_BUCKETS)
     acc = {}
     for liq, val, sd, lbl in pts:
@@ -549,7 +578,8 @@ def liq_clusters(rows, mark=None):
             # ОКНО И ДЕНЬГИ ЗА ЕГО ПРЕДЕЛАМИ - ОБЯЗАТЕЛЬНЫЕ ПОЛЯ ОТВЕТА: карта по части позиций
             # и карта по всем - разные карты, и человек обязан знать, какую смотрит.
             'window': win, 'off_usd': off_usd, 'off_n': off_n, 'win_empty': win_empty,
-            'win_pct': (LIQ_WINDOW * 100 if (_mk and win) else None)}
+            'req_pct': ((_wfrac * 100) if _wfrac else None),
+            'win_pct': ((_wfrac * 100) if (_mk and win and _wfrac) else None), 'zoom': _z}
 
 
 def _dom_side(pts):
@@ -582,7 +612,7 @@ def liq_board(by_token):
     for tok, d in by_token.items():
         if not isinstance(d, dict):
             continue
-        cl = liq_clusters(d.get('rows'), d.get('mark'))
+        cl = liq_clusters(d.get('rows'), d.get('mark'), d.get('zoom'))
         if not cl:
             # ТОКЕН БЕЗ КАРТЫ НЕ ВЫБРАСЫВАЕТСЯ МОЛЧА: его строка остаётся со словом «карты
             # нет». Выброси мы её - борд выглядел бы полным, умалчивая, что по одному из
@@ -605,7 +635,8 @@ def liq_board(by_token):
                         'shorts': cl['shorts'], 'named': cl.get('named') or 0.0,
                         'top_usd': cl['top'][2], 'top_lo': cl['top'][0], 'top_hi': cl['top'][1],
                         'top_side': '', 'mark': cl.get('mark'), 'gap_pct': None,
-                        'shown': cl['shown'], 'no_liq': cl['no_liq'], 'status': 'far'})
+                        'shown': cl['shown'], 'no_liq': cl['no_liq'], 'status': 'far',
+                        'req_pct': cl.get('req_pct')})
             continue
         _lo, _hi, _sum = cl['top']
         _mark = cl.get('mark')
@@ -653,7 +684,8 @@ def liq_board_caption(d, lang='ru'):
                       'leverage sits further out' if en else
                       '%d. <b>%s</b> - в пределах %.0f%% от цены не ликвидируется ничего: $%s '
                       'плеча лежит дальше')
-                     % (i, r['tok'], LIQ_WINDOW * 100, _short(r['total'])))
+                     % (i, r['tok'], r.get('req_pct') or LIQ_WINDOW * 100,
+                        _short(r['total'])))
             continue
         if r.get('status') == 'norows':
             L.append(('%d. <b>%s</b> - no open positions came back for this token' if en else
@@ -709,7 +741,7 @@ def liq_board_caption(d, lang='ru'):
     return '\n'.join(L)
 
 
-def liq_map_png(rows, token='', mark=None, lang='ru', out_dir=None):
+def liq_map_png(rows, token='', mark=None, lang='ru', out_dir=None, zoom=None):
     """Карта ликвидаций: сумма плеча по уровням цены. -> (путь_к_png, подпись) | (None, причина).
 
     `rows` - строки `tgm/perp-positions` (те же, что показывает текстовый экран).
@@ -717,7 +749,7 @@ def liq_map_png(rows, token='', mark=None, lang='ru', out_dir=None):
     честной картой уровней, просто без отметки «мы здесь». Выдумывать цену нельзя - подпись
     «вот сюда осталось 3%» на выдуманной цене хуже отсутствия отметки.
     """
-    cl = liq_clusters(rows, mark)
+    cl = liq_clusters(rows, mark, zoom)
     if not cl:
         return None, 'empty'
 
@@ -874,7 +906,8 @@ def liq_caption(cl, token='', lang='ru'):
             L.append('Nansen has no label for a single wallet on this map.')
         if cl.get('win_empty'):
             L.append('Nothing liquidates within %.0f%% of the current price, so the map shows '
-                     'the full range: these levels are far away.' % (LIQ_WINDOW * 100))
+                     'the full range: these levels are far away.' % (cl.get('req_pct') or
+                                                                     LIQ_WINDOW * 100))
         if _off:
             L.append(('A further $%s (%d position(s)) liquidates more than %.0f%% away from the '
                       'price and is off this map.' % (_short(_off), _offn, _wp)) if _wp else
@@ -903,7 +936,8 @@ def liq_caption(cl, token='', lang='ru'):
             L.append('Ни у одного кошелька на этой карте метки Nansen нет.')
         if cl.get('win_empty'):
             L.append('В пределах %.0f%% от текущей цены не ликвидируется ничего, поэтому карта '
-                     'показывает весь размах: эти уровни далеко.' % (LIQ_WINDOW * 100))
+                     'показывает весь размах: эти уровни далеко.' % (cl.get('req_pct') or
+                                                                     LIQ_WINDOW * 100))
         if _off:
             L.append(('Ещё $%s (%d позиц(ий)) ликвидируется дальше %.0f%% от цены - этого на '
                       'карте НЕТ.' % (_short(_off), _offn, _wp)) if _wp else

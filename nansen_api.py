@@ -2328,6 +2328,84 @@ def sm_dca_block(rows, bot_un=None, lang='ru', top=10):
     return with_source('\n'.join(L), lang)
 
 
+def defi_holdings(address):
+    """DeFi-ЧАСТЬ ПОРТФЕЛЯ КОШЕЛЬКА: активы, долги, награды по протоколам. -> dict | None.
+
+    СХЕМА СНЯТА ЖИВОЙ ПРОБОЙ 24.09, и в ней ДВА урока, оба про то, чего в теле быть не должно:
+    поле называется `wallet_address` (не `address`), а `pagination` эта ручка не знает вовсе -
+    первый запрос с ней получил 422. Ответ - не список, а ОБЪЕКТ: {summary: {...}, protocols: []}.
+
+    ЗАЧЕМ ЭТО НУЖНО. Портфель по токенам у нас был, а DeFi-часть - нет, и именно в ней живёт
+    ДОЛГ: кошелёк на $2M с долгом $1.7M и кошелёк на $2M без долга - разные кошельки, а по
+    списку токенов они выглядят одинаково.
+    """
+    j = _post("portfolio/defi-holdings", {"wallet_address": str(address)},
+              ckey=f"defi:{address}")
+    if not isinstance(j, dict):
+        return None
+    if 'summary' in j or 'protocols' in j:
+        return j
+    # НЕПУСТОЙ 200 В НЕЗНАКОМОЙ ФОРМЕ - НЕ «у кошелька нет DeFi». Печатаем имена полей: так
+    # следующий фикс займёт один круг, а не три догадки.
+    print('[nansen] defi-holdings 200 НЕЗНАКОМОЙ ФОРМЫ: %s' % sorted(j.keys())[:20])
+    _tele.note('badreq', 200, 'portfolio/defi-holdings')
+    return None
+
+
+def defi_block(d, address='', lang='ru', top=6):
+    """DeFi-часть портфеля - текстом. -> str | None.
+
+    ВЕДЁМ ЧИСТОЙ ВЕЛИЧИНОЙ, А НЕ СУММОЙ АКТИВОВ. «$2.0M в DeFi» звучит одинаково у кошелька
+    без долга и у кошелька с долгом $1.7M, а это разные кошельки; поэтому первая строка -
+    активы МИНУС долги, и обе части названы рядом.
+    """
+    if not isinstance(d, dict):
+        return None
+    en = (lang == 'en')
+    s = d.get('summary') if isinstance(d.get('summary'), dict) else {}
+    _as = _num_or_none(s.get('total_assets_usd'))
+    _db = _num_or_none(s.get('total_debts_usd'))
+    _rw = _num_or_none(s.get('total_rewards_usd'))
+    _tv = _num_or_none(s.get('total_value_usd'))
+    _pc = s.get('protocol_count')
+    L = [('💠 <b>DeFi part of the wallet</b>' if en else '💠 <b>DeFi-часть кошелька</b>')]
+    if _as is None and _tv is None:
+        return None
+    # ПУСТОЙ, НО ЧЕСТНЫЙ ОТВЕТ: у кошелька просто нет DeFi-позиций. Это ЗНАНИЕ, а не сбой, и
+    # сказать это словом дешевле, чем показать ноль без объяснения.
+    if not (_as or _db or _rw or _tv):
+        L.append(('No DeFi positions: the response came back with zeros, which is an answer, '
+                  'not a failure.' if en else
+                  'DeFi-позиций нет: ответ приехал с нулями - это ответ, а не сбой.'))
+        return with_source('\n'.join(L), lang)
+    L.append((('💰 Net <b>$%s</b> = assets $%s minus debts $%s' if en else
+               '💰 Чистыми <b>$%s</b> = активы $%s минус долги $%s')
+              % (_usd((_as or 0) - (_db or 0)), _usd(_as or 0), _usd(_db or 0))))
+    if _rw:
+        L.append(('🎁 Unclaimed rewards $%s' if en else '🎁 Незабранные награды $%s')
+                 % _usd(_rw))
+    if _pc not in (None, ''):
+        L.append(('🏛 Protocols: %s' if en else '🏛 Протоколов: %s') % _esc(str(_pc)[:8]))
+    _pr = d.get('protocols') if isinstance(d.get('protocols'), list) else []
+    _rows = []
+    for p in _pr:
+        if not isinstance(p, dict):
+            continue
+        _nm = _first(p, ('protocol', 'protocol_name', 'name', 'project')) or '?'
+        _v = _usd_any(p, ('value_usd', 'total_value_usd', 'net_value_usd'))[0]
+        _rows.append((str(_nm)[:20], _num_or_none(_v)))
+    _rows.sort(key=lambda x: -(x[1] or 0))
+    if _rows:
+        L.append('')
+        for i, (_nm, _v) in enumerate(_rows[:int(top)], 1):
+            L.append('%d. %s%s' % (i, _esc(_nm),
+                                   (' · $%s' % _usd(_v)) if _v is not None else ''))
+        if len(_rows) > int(top):
+            L.append(('<i>and %d more protocol(s)</i>' if en else '<i>и ещё %d протокол(ов)</i>')
+                     % (len(_rows) - int(top)))
+    return with_source('\n'.join(L), lang)
+
+
 def chain_rank(per_page=20):
     """РЕЙТИНГ СЕТЕЙ: TVL, объём DEX, выручка, активные адреса и их изменение. -> [dict].
 
