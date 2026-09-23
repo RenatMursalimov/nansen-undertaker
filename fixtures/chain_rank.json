@@ -42,7 +42,7 @@
   "total": 3
  },
  "provenance": "synthetic",
- "recorded_at": "2026-09-23T11:51:50Z",
+ "recorded_at": "2026-09-23T17:32:48Z",
  "rehearsal": true,
  "rendered_text": "🌐 <b>Chains by TVL, and how they moved</b>\n1. <b>ethereum</b> · TVL $52.00B (+1.4%) · DEX $3.10B · 480.0K active addresses\n2. <b>solana</b> · TVL $9.40B (-2.1%) · DEX $5.20B · 1.20M active addresses\n3. <b>base</b> · TVL $3.10B · DEX $900.00M · 640.0K active addresses\n\n<i>Percent change is what the response carries, not our arithmetic.</i>\n\n<i>📡 Source: Nansen, freshness not measured</i>",
  "scene": "chain_rank",

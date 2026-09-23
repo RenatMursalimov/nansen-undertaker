@@ -350,10 +350,28 @@ function usd(v) {
   return n.toFixed(0);
 }
 function price(v) {
+  /* ЦЕНА МЕЛКОГО ТОКЕНА - ЗНАЧАЩИМИ ЦИФРАМИ, А НЕ ДВУМЯ ЗНАКАМИ ПОСЛЕ ЗАПЯТОЙ.
+     ЖИВОЕ ЗАМЕЧАНИЕ ВЛАДЕЛЬЦА: «в токенах где крупные единицы всё ок, а если PUMP - не
+     показывает после нуля единицы». Так и было: `toFixed(2)` на цене $0.00348 даёт «0.00», и
+     карта печатала «скопление между $0.00 и $0.00» - главная строка экрана переставала быть
+     диапазоном, а ось цен превращалась в столбик нулей.
+     ЛЕСТНИЦА ЗДЕСЬ ТА ЖЕ, ЧТО У БОТА (`oc_nansen_viz._price`), и это осознанная пара, а не
+     копия ради удобства: числа для ЭКРАНА форматирует экран, и обе реализации обязаны читаться
+     одинаково - иначе картинка в чате и картинка на телефоне назовут одну цену по-разному.
+     Тест сторожит обе. */
   var n = Number(v);
   if (!isFinite(n)) return '?';
-  if (Math.abs(n) >= 1000) return usd(n);
-  return n.toFixed(2);
+  var a = Math.abs(n);
+  if (a >= 1000) return usd(n);
+  if (a >= 1) return n.toFixed(2);
+  if (a > 0) {
+    /* три значащие цифры, где бы ни стоял нуль-разделитель; хвостовые нули убираем, иначе
+       «0.00348000» читается как выдуманная точность */
+    var dig = Math.max(2, 2 - Math.floor(Math.log(a) / Math.LN10) + 1);
+    var t = n.toFixed(Math.min(20, dig)).replace(/0+$/, '').replace(/\.$/, '');
+    return t || '0';
+  }
+  return '0';
 }
 function esc(s) {
   return String(s === null || s === undefined ? '' : s)
@@ -1043,14 +1061,39 @@ function liqSave() {
       var nm = 'liqmap-' + (LIQ.token || 'perp') + '-' + (LIQ.horiz ? 'h' : 'v') + '.png';
       c.toBlob(function (b) {
         if (!b) { liqSaveFail(); return; }
+        /* ═══ ПОРЯДОК ПОПЫТОК: СНАЧАЛА ТО, ЧТО РАБОТАЕТ ВНУТРИ TELEGRAM ═══
+           ЖИВОЙ ПРОГОН ВЛАДЕЛЬЦА: на компьютере Telegram отдал blob-ссылку ОПЕРАЦИОННОЙ
+           СИСТЕМЕ («не указана программа для открытия URL blob:…»), на телефоне не произошло
+           ничего. То есть скачивание файла страницей внутри встроенного браузера не работает -
+           и это не наш баг, а политика оболочки.
+           Что работает внутри Telegram - ШТАТНОЕ МЕНЮ «ПОДЕЛИТЬСЯ» системы: `navigator.share`
+           с файлом открывает его и оттуда картинка идёт и в «Фото», и в любой чат. Поэтому
+           сначала пробуем его, и только потом ссылку на скачивание (она нужна судье, который
+           откроет страницу обычным браузером).
+           И ГЛАВНОЕ - СТРОКА СТАТУСА БОЛЬШЕ НЕ ОБЕЩАЕТ УСПЕХ. Прежняя писала «Saved as …»
+           сразу после `click()`, то есть врала в том самом случае, который владелец и поймал. */
+        var f = null;
+        try { f = new File([b], nm, { type: 'image/png' }); } catch (e5) { f = null; }
+        if (f && navigator.canShare && navigator.canShare({ files: [f] })) {
+          navigator.share({ files: [f], title: nm }).then(function () {
+            liqNote('');
+          }).catch(function () {
+            /* человек мог просто закрыть меню - это не ошибка, и пугать его нечем */
+            liqNote('Sharing was cancelled. The bot also sends this map as a picture in chat: '
+                    + 'ask it for «карта ликвидаций ' + LIQ.token + '».');
+          });
+          return;
+        }
         var a = document.createElement('a');
+        if (!('download' in a)) { liqSaveFail(); return; }
         a.href = URL.createObjectURL(b);
         a.download = nm;
         document.body.appendChild(a);
         a.click();
-        liqNote('Saved as ' + nm + '. If nothing landed in your files, Telegram blocked the '
-                + 'download — ask the bot in chat for «карта ликвидаций ' + LIQ.token
-                + '» and it sends the same map as a picture.');
+        liqNote('Asked the browser to save ' + nm + '. Inside Telegram this often does nothing — '
+                + 'the app decides, not the page. If no file appeared, ask the bot in chat for '
+                + '«карта ликвидаций ' + LIQ.token + '»: it sends the same map as a picture, and '
+                + 'a picture in a chat can be saved and forwarded anywhere.');
         setTimeout(function () {
           try { URL.revokeObjectURL(a.href); a.parentNode.removeChild(a); } catch (e2) {}
         }, 2000);
@@ -1065,8 +1108,10 @@ function liqSave() {
 }
 
 function liqSaveFail() {
-  liqNote('This browser would not let the page write a file. The bot sends the same map as a '
-          + 'picture in chat: ask it for «карта ликвидаций ' + LIQ.token + '».');
+  liqNote('This app would not let the page hand over a file — that is the shell\'s decision, not '
+          + 'a fault of the map. The bot sends the same map as a picture in chat: ask it for '
+          + '«карта ликвидаций ' + LIQ.token + '». A picture in a chat can be saved and '
+          + 'forwarded anywhere, which is what saving was for.');
 }
 
 /* КОРОТКАЯ СТРОКА ОТ ЭКРАНА ЧЕЛОВЕКУ. Отдельным местом, а не alert: alert в мини-аппе
@@ -1128,10 +1173,18 @@ function liqHTML(env) {
        а повёрнутые числа и вылезали за рамку. Вертикальная оставлена ОПЦИЕЙ: её пунктир цены
        читается как на свечах. Ни одна из двух не «правильная», поэтому выбор у человека.
        Перерисовка БЕЗ СЕТИ: те же числа, другая раскладка. */
+  /* ТРЕТЬЯ КНОПКА - «ПРИСЛАТЬ В ЧАТ», И ОНА НАДЁЖНЕЕ ОСТАЛЬНЫХ ДВУХ.
+     Сохранение файла внутри Telegram зависит от оболочки и у владельца не сработало ни на
+     компьютере, ни на телефоне. Картинка, присланную ботом в чат, Telegram умеет сохранять и
+     пересылать сам - то есть выполняет ровно ту задачу, ради которой просили «сохранить».
+     Поэтому кнопка просит БОТА нарисовать ту же карту и отправить её в чат: одна дверь с
+     командой «карта ликвидаций BTC», без второй сборки картинки. Стоит она один запрос, и это
+     сказано человеку прямо на кнопке-ответе. */
   h += '<div class="btns">'
      + '<span class="btn" id="orbtn">' + (LIQ.horiz ? '↔ horizontal' : '↕ vertical')
      + '</span>'
-     + '<span class="btn" id="svbtn">💾 save image</span></div>';
+     + '<span class="btn" id="svbtn">💾 save image</span>'
+     + '<span class="btn" id="tgbtn">📩 send to chat</span></div>';
   /* ПОДРОБНОСТИ - ПОСЛЕ КАРТИНКИ И МЕЛКИМ. Просьба владельца, и она про порядок чтения: над
      картой остаётся ОДНА строка с главной величиной («самое плотное скопление»), а итоги по
      карте и чьи это деньги человек читает, уже увидев картинку. Раньше три абзаца стояли
@@ -1486,6 +1539,31 @@ function liqBindRes() {
   }
   var sv = document.getElementById('svbtn');
   if (sv) { sv.onclick = liqSave; }
+  var tg = document.getElementById('tgbtn');
+  if (tg) {
+    tg.onclick = function () {
+      if (REHEARSAL) {
+        /* В РЕПЕТИЦИИ НИЧЕГО НЕ ОТПРАВЛЯЕМ: это живое действие, а репетиция не имеет права
+           что-то делать в чате - иначе она перестанет быть репетицией. */
+        liqNote('Rehearsal mode: nothing is sent. In live mode the bot posts this map as a '
+                + 'picture in your chat.');
+        return;
+      }
+      liqNote('Asking the bot to post this map in the chat…');
+      var req = { sc: 'liq_png', tk: LIQ.token, lg: 'en' };
+      if (LIQ.zoom !== null && LIQ.zoom !== undefined) { req.zn = LIQ.zoom; }
+      askScene(req, function (env) {
+        if (env && env.outcome === 'ok') {
+          liqNote('Sent. The picture is in your chat with the bot — from there Telegram can save '
+                  + 'or forward it anywhere. That cost one request.');
+        } else {
+          liqNote('The bot could not post it: '
+                  + plain((env && env.refusal) || 'no reason given')
+                  + '. The chat command «карта ликвидаций ' + LIQ.token + '» does the same.');
+        }
+      });
+    };
+  }
   var brs = el.querySelectorAll('.mkrow[data-btk]');
   for (i = 0; i < brs.length; i++) {
     brs[i].onclick = (function (tk) {
