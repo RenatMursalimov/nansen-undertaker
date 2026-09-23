@@ -33,6 +33,7 @@ SELF = os.path.basename(os.path.abspath(__file__))
 #: чей он, до того как он уедет в git навсегда.
 ALLOWED_ADDR = {
     '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',   # USDC на Base, контракт
+    '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',   # WETH на Ethereum, контракт
     '0x1f9090aae28b8a3dceadf281b0f12828e676c326',   # публичный билдер блоков Ethereum
     '0x0000000000000000000000000000000000000000',   # нулевой адрес в примерах и тестах
     '0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb',   # pUSD, контракт

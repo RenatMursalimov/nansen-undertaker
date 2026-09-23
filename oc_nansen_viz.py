@@ -29,7 +29,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #: надо различать между собой.
 _SEGMENTS = (
     ('smart_trader',  'Smart Money', 'Smart Money', '#2ea043'),
-    ('whale',         'Киты',        'Whales',      '#58a6ff'),
+    ('whale',         'Киты',        'Whales',      '#49c8ff'),
     ('top_pnl',       'Топ по PnL',  'Top PnL',     '#a371f7'),
     ('public_figure', 'Публ. фигуры', 'Public figs', '#d29922'),
     ('exchange',      'Биржи',       'Exchanges',   '#f85149'),
@@ -330,6 +330,13 @@ def bought_sold_png(buys, sells, symbol='', lang='ru', out_dir=None, top=5):
 LIQ_BUCKETS = 14
 #: минимальная сумма в корзине, ниже которой это пыль, а не скопление
 LIQ_MIN_USD = 1000.0
+#: ОКНО КАРТЫ ВОКРУГ ТЕКУЩЕЙ ЦЕНЫ: ±50%. Дальше лежат позиции с крошечным плечом, чья
+#: ликвидация в обозримом движении не сработает, зато размах они растягивают в тысячи раз - и
+#: тогда все корзины сливаются в одну (разбор TAO/NEAR, вопрос Ren). Половина цены - не догадка
+#: о «нормальном» движении, а граница ЧИТАЕМОСТИ карты: при ±50% и 14 корзинах шаг ~7% цены,
+#: то есть уровень, который человек может отличить от соседнего. Деньги за окном НЕ теряются:
+#: они считаются отдельной величиной и называются словом.
+LIQ_WINDOW = 0.5
 
 
 def _price(v):
@@ -439,6 +446,51 @@ def liq_clusters(rows, mark=None):
             sides[_sd] = sides.get(_sd, 0.0) + val
     if not pts:
         return None
+    # ═══ ОКНО ВОКРУГ ЦЕНЫ: БЕЗ НЕГО КАРТА МЕНЕЕ ЛИКВИДНОГО ТОКЕНА БЕССМЫСЛЕННА ═══
+    # Живой разбор (вопрос Ren по TAO и NEAR): у TAO при цене $316 крайние цены ликвидации
+    # приехали от $0.48 до $17.3K. Четырнадцать РАВНЫХ корзин на таком размахе дают первую
+    # корзину «от $0.48 до $1.2K», и заголовок читался как «самое плотное скопление между
+    # $0.48 и $1.2K» - то есть диапазон в две тысячи раз, внутри которого лежит и текущая цена,
+    # и всё остальное. Это не свойство данных Nansen: строки честные, крайние позиции реальны
+    # (крошечное плечо ликвидируется почти в нуле). Это наша арифметика: равные корзины по всему
+    # размаху. У BTC размах естественно узкий, поэтому дефект и не был виден.
+    # ЛЕЧЕНИЕ: считаем внутри окна ±LIQ_WINDOW от текущей цены, а деньги ЗА окном НЕ выбрасываем
+    # молча - считаем отдельной величиной и называем словом. Цены нет - окна нет (выдуманное
+    # окно от выдуманной цены было бы хуже), тогда обрезаем по краевым процентилям.
+    off_usd, off_n, win = 0.0, 0, None
+    _mk = _num(mark)
+    _wl = _wh = None
+    if _mk and _mk > 0:
+        _wl, _wh = _mk * (1.0 - LIQ_WINDOW), _mk * (1.0 + LIQ_WINDOW)
+    elif len(pts) >= 8:
+        # ЦЕНЫ НЕТ - ОКНО ОТ ЦЕНЫ НЕВОЗМОЖНО, и выдумывать её нельзя. Обрезаем по краевым
+        # процентилям: это не «нормальное движение», а отсечение выбросов по самим данным.
+        _srt = sorted(p[0] for p in pts)
+        _q = max(1, int(len(_srt) * 0.05))
+        _wl, _wh = _srt[_q], _srt[-1 - _q]
+    win_empty = False
+    if _wl is not None and _wh is not None and _wh > _wl:
+        _in = [p for p in pts if _wl <= p[0] <= _wh]
+        # НИ ОДНОЙ ПОЗИЦИИ В ОКНЕ - карту рисуем по всему размаху и ГОВОРИМ ОБ ЭТОМ СЛОВОМ.
+        # Пустая карта читалась бы как «плеча нет», а оно есть, просто далеко; а молча
+        # нарисованный полный размах даёт «скопление в 2144% выше цены» - число, которое
+        # выглядит как измерение, но означает «сюда цена не дойдёт никогда».
+        win_empty = not _in
+        if _in:
+            win = (_wl, _wh)
+            off_n = len(pts) - len(_in)
+            off_usd = sum(p[1] for p in pts) - sum(p[1] for p in _in)
+            pts = _in
+    # СТОРОНЫ И МЕТКИ ПЕРЕСЧИТЫВАЮТСЯ ПО ОКНУ, А НЕ ПО ВСЕМ СТРОКАМ. Иначе «лонги + шорты»
+    # оказались бы БОЛЬШЕ, чем «всего на карте», и человек не смог бы сложить экран в голове -
+    # худший вид расхождения: каждое число по отдельности верное.
+    sides = {'LONG': 0.0, 'SHORT': 0.0}
+    named_who = {}
+    for _liq, _val, _sd2, _lbl2 in pts:
+        if _sd2:
+            sides[_sd2] = sides.get(_sd2, 0.0) + _val
+        if _lbl2:
+            named_who[_lbl2] = named_who.get(_lbl2, 0.0) + _val
     _named_tot = sum(v for v in named_who.values())
     _named_n = sum(1 for p in pts if p[3])
     _who_top = sorted(named_who.items(), key=lambda kv: -kv[1])[:3]
@@ -452,7 +504,10 @@ def liq_clusters(rows, mark=None):
                 'total': _s, 'top': (lo, hi, _s),
                 'longs': sides.get('LONG', 0.0), 'shorts': sides.get('SHORT', 0.0),
                 'no_liq': no_liq, 'shown': len(pts), 'mark': _num(mark),
-                'named': _named_tot, 'named_n': _named_n, 'named_who': _who_top}
+                'named': _named_tot, 'named_n': _named_n, 'named_who': _who_top,
+                'window': win, 'off_usd': off_usd, 'off_n': off_n,
+                'win_empty': win_empty,
+                'win_pct': (LIQ_WINDOW * 100 if (_mk and win) else None)}
     step = (hi - lo) / float(LIQ_BUCKETS)
     acc = {}
     for liq, val, sd, lbl in pts:
@@ -490,7 +545,11 @@ def liq_clusters(rows, mark=None):
             # `LIQ_MIN_USD` в карту не попадает, и её метки тоже не попадают - иначе итог по
             # меткам оказался бы больше, чем сумма нарисованного, и человек не смог бы сверить.
             'named': sum(b[4] for b in buckets), 'named_n': drawn_named_n,
-            'named_who': sorted(drawn_who.items(), key=lambda kv: -kv[1])[:3]}
+            'named_who': sorted(drawn_who.items(), key=lambda kv: -kv[1])[:3],
+            # ОКНО И ДЕНЬГИ ЗА ЕГО ПРЕДЕЛАМИ - ОБЯЗАТЕЛЬНЫЕ ПОЛЯ ОТВЕТА: карта по части позиций
+            # и карта по всем - разные карты, и человек обязан знать, какую смотрит.
+            'window': win, 'off_usd': off_usd, 'off_n': off_n, 'win_empty': win_empty,
+            'win_pct': (LIQ_WINDOW * 100 if (_mk and win) else None)}
 
 
 def _dom_side(pts):
@@ -537,6 +596,17 @@ def liq_board(by_token):
                         # ответа, и чинятся они по-разному.
                         'status': 'norows' if not d.get('rows') else 'nomap'})
             continue
+        if cl.get('win_empty'):
+            # НИЧЕГО НЕ ЛИКВИДИРУЕТСЯ В ПРЕДЕЛАХ ОКНА - ЭТО ОТДЕЛЬНОЕ СОСТОЯНИЕ, А НЕ БОЛЬШОЕ
+            # ЧИСЛО. Иначе борд печатает «скопление в 2144% выше цены»: арифметически верно,
+            # по смыслу - «сюда цена не дойдёт», и в сортировке по близости такой токен не
+            # участвует вовсе. Поймано рендером борда на несогласованных данных.
+            out.append({'tok': str(tok)[:12], 'total': cl['total'], 'longs': cl['longs'],
+                        'shorts': cl['shorts'], 'named': cl.get('named') or 0.0,
+                        'top_usd': cl['top'][2], 'top_lo': cl['top'][0], 'top_hi': cl['top'][1],
+                        'top_side': '', 'mark': cl.get('mark'), 'gap_pct': None,
+                        'shown': cl['shown'], 'no_liq': cl['no_liq'], 'status': 'far'})
+            continue
         _lo, _hi, _sum = cl['top']
         _mark = cl.get('mark')
         _gap = None
@@ -578,6 +648,13 @@ def liq_board_caption(d, lang='ru'):
               'разные ситуации.'))
     L.append('')
     for i, r in enumerate(d['rows'], 1):
+        if r.get('status') == 'far':
+            L.append(('%d. <b>%s</b> - nothing liquidates within %.0f%% of the price: $%s of '
+                      'leverage sits further out' if en else
+                      '%d. <b>%s</b> - в пределах %.0f%% от цены не ликвидируется ничего: $%s '
+                      'плеча лежит дальше')
+                     % (i, r['tok'], LIQ_WINDOW * 100, _short(r['total'])))
+            continue
         if r.get('status') == 'norows':
             L.append(('%d. <b>%s</b> - no open positions came back for this token' if en else
                       '%d. <b>%s</b> - открытых позиций по этому токену не отдали')
@@ -670,7 +747,7 @@ def liq_map_png(rows, token='', mark=None, lang='ru', out_dir=None):
         # ПУНКТИР ТЕКУЩЕЙ ЦЕНЫ (ниже, `axhline`). Первый прогон дал полосу и пунктир одного
         # цвета - две разные величины стали читаться как одна, а легенда объясняла обе одним
         # словом. Один цвет = один смысл на картинке.
-        ax.barh(list(ys), _named, color='#58a6ff', height=0.34, zorder=3)
+        ax.barh(list(ys), _named, color='#49c8ff', height=0.34, zorder=3)
         _wide = max(_named) if _named else 0.0
         for i, b in enumerate(cl['buckets']):
             _lbl = (b[5] if len(b) > 5 else '') or ''
@@ -740,7 +817,7 @@ def liq_map_png(rows, token='', mark=None, lang='ru', out_dir=None):
              color='#2ea043', fontsize=8, fontproperties=fp)
     if any(_named):
         fig.text(0.15, 0.02, ('с меткой Nansen' if lang != 'en' else 'named by Nansen'),
-                 ha='left', color='#58a6ff', fontsize=8, fontproperties=fp)
+                 ha='left', color='#49c8ff', fontsize=8, fontproperties=fp)
     fig.text(0.99, 0.02, 'Nansen', ha='right', color='#8b949e', fontsize=8, fontproperties=fp)
     fig.tight_layout()
 
@@ -773,6 +850,9 @@ def liq_caption(cl, token='', lang='ru'):
     # Метки не нашлось ни у кого - говорим это прямо: молчание читалось бы как «не смотрели».
     _nmd, _nn, _who = cl.get('named') or 0.0, cl.get('named_n') or 0, cl.get('named_who') or []
     _names = ', '.join(k for k, _v in _who)
+    # ДЕНЬГИ ЗА ОКНОМ НАЗЫВАЕМ ВСЕГДА, КОГДА ОНИ ЕСТЬ. Карта показывает уровни вокруг цены, и
+    # умолчать про остальное значило бы сказать «всего на карте $X» там, где плеча больше.
+    _off, _offn, _wp = cl.get('off_usd') or 0.0, cl.get('off_n') or 0, cl.get('win_pct')
     if lang == 'en':
         L = ['%s liquidation map. Biggest cluster: $%s between $%s and $%s.'
              % (token or 'Token', _short(_sum), _price(_lo), _price(_hi)),
@@ -792,6 +872,14 @@ def liq_caption(cl, token='', lang='ru'):
                      % (_short(_nmd), _nn))
         else:
             L.append('Nansen has no label for a single wallet on this map.')
+        if cl.get('win_empty'):
+            L.append('Nothing liquidates within %.0f%% of the current price, so the map shows '
+                     'the full range: these levels are far away.' % (LIQ_WINDOW * 100))
+        if _off:
+            L.append(('A further $%s (%d position(s)) liquidates more than %.0f%% away from the '
+                      'price and is off this map.' % (_short(_off), _offn, _wp)) if _wp else
+                     ('A further $%s (%d position(s)) sits outside the plotted range and is off '
+                      'this map.' % (_short(_off), _offn)))
         if _no:
             L.append('%d position(s) had no liquidation price and are NOT on the map.' % _no)
         L.append('This is where other people stop out, not a forecast. Source: Nansen.')
@@ -813,6 +901,14 @@ def liq_caption(cl, token='', lang='ru'):
                      % (_short(_nmd), _nn))
         else:
             L.append('Ни у одного кошелька на этой карте метки Nansen нет.')
+        if cl.get('win_empty'):
+            L.append('В пределах %.0f%% от текущей цены не ликвидируется ничего, поэтому карта '
+                     'показывает весь размах: эти уровни далеко.' % (LIQ_WINDOW * 100))
+        if _off:
+            L.append(('Ещё $%s (%d позиц(ий)) ликвидируется дальше %.0f%% от цены - этого на '
+                      'карте НЕТ.' % (_short(_off), _offn, _wp)) if _wp else
+                     ('Ещё $%s (%d позиц(ий)) лежит вне нарисованного диапазона - этого на '
+                      'карте НЕТ.' % (_short(_off), _offn)))
         if _no:
             # ЧЕСТНАЯ ОГОВОРКА, А НЕ МЕЛКИЙ ШРИФТ: карта по 8 позициям из 20 и карта по 20 из
             # 20 - разные карты, и человек обязан знать, какую смотрит.

@@ -8,8 +8,8 @@
 
 | Area | Status | Evidence / next action |
 |---|---|---|
-| Core Nansen integration | ✅ Complete | 53 API routes in one client; 27 documented workflows |
-| Server endpoint sweep | ✅ Ready | all 53 routes declared; 47 structural reads + safe trade reads, Agent tier, hard budgets |
+| Core Nansen integration | ✅ Complete | 55 API routes in one client; 29 documented workflows |
+| Server endpoint sweep | ✅ Ready | all 55 routes declared; 49 structural reads + safe trade reads, Agent tier, hard budgets |
 | Hero: Polymarket holder reputation | ✅ Live PASS | primary `1130012`, backup `4323345`; 3 known histories, 0 failures each |
 | Liquidation map | ✅ Complete | button + command + visualization + honest missing-data handling |
 | Smart Money trade as % of market cap | ✅ Complete | no extra request; value, market cap and token age from one response |
@@ -60,17 +60,17 @@ hard-coded to create an alarming conclusion.
 
 ## Technical inventory
 
-- **53** unique Nansen API routes in the client.
-- **27** documented workflows:
-  - 25 user-facing workflows that call Nansen;
+- **55** unique Nansen API routes in the client.
+- **29** documented workflows:
+  - 27 user-facing workflows that call Nansen;
   - 1 background digest workflow;
   - 1 local contribution-tally workflow.
 - **29** unique API routes directly drive those documented workflows.
-- **30** telemetry scenes, including separate `pm_reputation`, `pm_orderbook`, `pm_chart`,
+- **32** telemetry scenes, including separate `pm_reputation`, `pm_orderbook`, `pm_chart`,
   `liq_map`, `sharp_markets` and `perp_risk` evidence.
 - **8** user-visible failure states.
-- Private Nansen suite: **787 PASS / 0 FAIL** after all-route sweep and credit-safety checks.
-- Public suite: **126 PASS / 0 FAIL**; scrub clean; latest published CI green.
+- Private Nansen suite: **817 PASS / 0 FAIL** after all-route sweep and credit-safety checks.
+- Public suite: **156 PASS / 0 FAIL**; scrub clean; latest published CI green.
 
 ## What is finished
 

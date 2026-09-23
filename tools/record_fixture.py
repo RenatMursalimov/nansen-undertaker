@@ -89,7 +89,7 @@ def _synthetic(scene):
     _spec.loader.exec_module(BL)
     _keep = (N._post_fix, N.pm_address_summary, N.perp_positions, N.sm_dex_trades, N._key,
              N.pm_market_screener)
-    _keep_mark = G._mark_price
+    _keep_mark = (G._mark_price, G._hl_universe)
     try:
         N._key = lambda: 'synthetic'
         N._post_fix = lambda p, b, **k: (list(BL.PM_HOLDERS)
@@ -104,6 +104,15 @@ def _synthetic(scene):
         # выдуманных позиций с настоящей ценой хуже чистой выдумки: она выглядит как замер.
         G._mark_price = lambda tok: (BL.PERP_MARK if str(tok).upper() == 'BTC'
                                      else (3000.0 if str(tok).upper() == 'ETH' else None))
+        # ВСЕЛЕННУЮ ПЕРПОВ ТОЖЕ ПОДМЕНЯЕМ. ПОЙМАНО РЕНДЕРОМ ФИКСТУРЫ: борд стал брать цены и
+        # состав токенов из ЖИВОГО Hyperliquid, и в «полностью синтетическую» фикстуру приехали
+        # настоящие тикеры с настоящими ценами - вместе с синтетическими ценами ликвидации от
+        # BTC. Итог: «скопление в 64065% выше цены». Смесь выдуманного с измеренным хуже чистой
+        # выдумки: она выглядит как замер.
+        G._hl_universe = lambda: {'BTC': {'mark': BL.PERP_MARK, 'vol24': 9e9},
+                                  'ETH': {'mark': 3000.0, 'vol24': 5e9},
+                                  'SOL': {'mark': 150.0, 'vol24': 2e9},
+                                  'HYPE': {'mark': 40.0, 'vol24': 1e9}}
         req = {'sc': scene, 'lg': 'en'}
         if scene == 'pm_reputation':
             req['mk'] = '654412'
@@ -113,7 +122,7 @@ def _synthetic(scene):
     finally:
         (N._post_fix, N.pm_address_summary, N.perp_positions,
          N.sm_dex_trades, N._key, N.pm_market_screener) = _keep
-        G._mark_price = _keep_mark
+        G._mark_price, G._hl_universe = _keep_mark
     env['recorded_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
     env['rehearsal'] = True
     env['provenance'] = 'synthetic'

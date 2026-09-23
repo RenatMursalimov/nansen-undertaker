@@ -46,9 +46,9 @@
   "wr_weak": 40.0
  },
  "provenance": "synthetic",
- "recorded_at": "2026-09-22T23:02:53Z",
+ "recorded_at": "2026-09-23T04:39:39Z",
  "rehearsal": true,
- "rendered_text": "🎯 <b>Where the money on Polymarket is sharp</b>\nSharp = wallets with a lifetime win rate at or above 60%, weak = below 40%. Both thresholds are ours, and that is why they are printed.\n\n<b>1. Will the Fed cut rates in September? — 90%</b>\n   sharp <b>$630.0K</b> (33% of $1.94M examined) vs weak $1.30M\n   biggest sharp holder: 0xbbbb…0002\n<b>2. Government shutdown before October? — 31%</b>\n   sharp <b>$630.0K</b> (33% of $1.94M examined) vs weak $1.30M\n   biggest sharp holder: 0xbbbb…0002\n\n<i>Compared 2 market(s), 3 holder(s) each; 1 market(s) came without an id and cannot be compared at all. Requests spent: 9.</i>\n<i>Past win rate does not promise the future: this is the composition of the money, not a forecast or advice.</i>\n\n<i>📡 Source: Nansen, freshness not measured</i>",
+ "rendered_text": "🎯 <b>Where the money on Polymarket is sharp</b>\nSharp = wallets with a lifetime win rate at or above 60%, weak = below 40%. Both thresholds are ours, and that is why they are printed.\n\n<b>1. Will the Fed cut rates in September? — 90%</b>\n   sharp <b>$630.0K</b> (33% of $1.94M examined across 3 holders) vs weak $1.30M\n   biggest sharp holder: 0xbbbb…0002\n<b>2. Government shutdown before October? — 31%</b>\n   sharp <b>$630.0K</b> (33% of $1.94M examined across 3 holders) vs weak $1.30M\n   biggest sharp holder: 0xbbbb…0002\n\n<i>Compared 2 market(s), 3 holder(s) each; 1 market(s) came without an id and cannot be compared at all. Requests spent: 9.</i>\n<i>Past win rate does not promise the future: this is the composition of the money, not a forecast or advice.</i>\n\n<i>📡 Source: Nansen, freshness not measured</i>",
  "scene": "sharp_markets",
  "source": "Nansen",
  "surface": "miniapp",

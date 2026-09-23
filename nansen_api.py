@@ -2245,6 +2245,142 @@ def pm_wallet_trades(address, per_page=20):
                        ckey=f"pmwtr:{address}:{per_page}"))
 
 
+def smart_money_dcas(per_page=20):
+    """ПРОГРАММЫ DCA УМНЫХ ДЕНЕГ: кто набирает равными кусками. -> [dict].
+
+    СХЕМА СНЯТА ЖИВОЙ ПРОБОЙ 24.09, И ГЛАВНОЕ В НЕЙ - ЧЕГО В ТЕЛЕ БЫТЬ НЕ ДОЛЖНО: поля
+    `chains` эта ручка НЕ ЗНАЕТ («Field 'chains' is not recognized»), и первый запрос с ним
+    получил 422. Без него - 200 и строки. Поэтому здесь обычный `_post` и пустое тело с
+    пагинацией: любое «на всякий случай» поле тут ломает запрос, а не уточняет его.
+
+    Поля ответа (тоже сняты пробой, не угаданы): dca_created_at, dca_status, dca_updated_at,
+    dca_vault_address, deposit_token_amount, deposit_value_usd, input_token_address,
+    input_token_symbol, output_token_address, output_token_redeemed_amount, output_token_symbol,
+    token_spent_amount, trader_address, trader_address_label, transaction_hash.
+
+    ЗАЧЕМ ЭТО ОТДЕЛЬНЫЙ СИГНАЛ, А НЕ ЧАСТЬ «СМАРТ-СДЕЛОК». Разовая сделка на $2M и программа
+    DCA на $2M - разные утверждения о намерении: первая может быть входом «по рынку», вторая
+    означает, что кошелёк СОБИРАЕТСЯ покупать дальше, по расписанию, и уже поставил на это
+    деньги. Это единственный сигнал в наборе, который говорит о БУДУЩИХ покупках, а не о
+    прошлых.
+    """
+    return _rows(_post("smart-money/dcas",
+                       {"pagination": {"page": 1, "per_page": int(per_page)}},
+                       ckey=f"smdca:{per_page}"))
+
+
+def sm_dca_block(rows, bot_un=None, lang='ru', top=10):
+    """Программы DCA умных денег - текстом. -> str | None.
+
+    ВЕДЁМ ВЕЛИЧИНОЙ И ДОЛЕЙ ИСПОЛНЕНИЯ. «$2M в программе» - половина ответа; вторая половина -
+    сколько уже потрачено: программа, отработавшая на 5%, означает, что покупки ЕЩЁ ВПЕРЕДИ, а
+    отработавшая на 95% - что они уже в цене.
+    """
+    if not rows:
+        return None
+    en = (lang == 'en')
+    L = [('🧊 <b>Smart money buying on a schedule (DCA)</b>' if en
+          else '🧊 <b>Умные деньги покупают по расписанию (DCA)</b>')]
+    L.append(('A DCA program is a commitment to keep buying, not a single trade: the share '
+              'already spent says how much of it is still ahead.' if en else
+              'Программа DCA - это обещание продолжать покупать, а не одна сделка: доля уже '
+              'потраченного говорит, сколько покупок ещё впереди.'))
+    L.append('')
+    _shown, _with_val, _first_row = 0, 0, None
+    for r in rows[:int(top)]:
+        if not isinstance(r, dict):
+            continue
+        _shape('sm-dcas', r)
+        if _first_row is None:
+            _first_row = r
+        _shown += 1
+        who = _who(r)
+        _in = str(r.get('input_token_symbol') or '?')[:12]
+        _out = str(r.get('output_token_symbol') or '?')[:12]
+        _dep = _num_or_none(r.get('deposit_value_usd'))
+        if _dep is not None:
+            _with_val += 1
+        _spent = _num_or_none(r.get('token_spent_amount'))
+        _size = _num_or_none(r.get('deposit_token_amount'))
+        seg = []
+        if _dep is not None:
+            seg.append('$%s' % _usd(_dep))
+        # ДОЛЯ ИСПОЛНЕНИЯ СЧИТАЕТСЯ ТОЛЬКО КОГДА ЕСТЬ ОБА ЧИСЛА. Из одного «потрачено» доли не
+        # выведешь, а показать «5%» от неизвестного целого - выдумать знаменатель.
+        if _spent is not None and _size:
+            try:
+                _pc = 100.0 * float(_spent) / float(_size)
+                seg.append(('spent %.0f%%' if en else 'потрачено %.0f%%') % max(0.0, min(_pc, 100.0)))
+            except (TypeError, ValueError, ZeroDivisionError):
+                pass
+        _st = str(r.get('dca_status') or '').strip()[:14]
+        if _st:
+            seg.append(_esc(_st))
+        _tok = ('%s → %s' % (_esc(_in), _esc(_out)))
+        L.append('%d. %s · <b>%s</b>%s' % (_shown, who, _tok,
+                                           (' · ' + ' · '.join(seg)) if seg else ''))
+    if _shown == 0:
+        return None
+    if not _with_val:
+        L.append('')
+        L.append(schema_gap_note(_first_row, 'Размер программы' if not en
+                                else 'Program size', lang))
+    return with_source('\n'.join(L), lang)
+
+
+def chain_rank(per_page=20):
+    """РЕЙТИНГ СЕТЕЙ: TVL, объём DEX, выручка, активные адреса и их изменение. -> [dict].
+
+    СХЕМА СНЯТА ЖИВОЙ ПРОБОЙ 24.09: тело - только пагинация, ответ 200 и 37 строк. Поля (тоже
+    из пробы): chain, tvl_usd, total_dex_volume_usd, revenue_usd, total_gas_used_usd,
+    transaction_count, successful_transaction_count, active_address_count_txs,
+    active_address_count_traces и `*_percent_change` к каждому.
+    """
+    return _rows(_post("chains/chain-rank",
+                       {"pagination": {"page": 1, "per_page": int(per_page)}},
+                       ckey=f"chrank:{per_page}"))
+
+
+def chain_rank_block(rows, lang='ru', top=8, by='tvl_usd'):
+    """Рейтинг сетей - текстом. -> str | None.
+
+    СОРТИРУЕМ ПО ИЗМЕРЕННОЙ ВЕЛИЧИНЕ, А ПОКАЗЫВАЕМ ЕЁ ИЗМЕНЕНИЕ. «TVL $50B» - состояние;
+    «TVL $50B, +12% за сутки» - величина, по которой принимают решение, куда смотреть сегодня.
+    """
+    if not rows:
+        return None
+    en = (lang == 'en')
+    _key = by if by in ('tvl_usd', 'total_dex_volume_usd', 'revenue_usd') else 'tvl_usd'
+    _rows2 = [r for r in rows if isinstance(r, dict)]
+    if not _rows2:
+        return None
+    _shape('chain-rank', _rows2[0])
+    _rows2.sort(key=lambda r: -(_num_or_none(r.get(_key)) or 0))
+    L = [('🌐 <b>Chains by TVL, and how they moved</b>' if en
+          else '🌐 <b>Сети по TVL, и как они сдвинулись</b>')]
+    for i, r in enumerate(_rows2[:int(top)], 1):
+        _ch = _esc(str(r.get('chain') or '?')[:18])
+        _tvl = _num_or_none(r.get('tvl_usd'))
+        _chg = _num_or_none(r.get('tvl_usd_percent_change'))
+        _vol = _num_or_none(r.get('total_dex_volume_usd'))
+        seg = []
+        if _tvl is not None:
+            seg.append('TVL $%s%s' % (_usd(_tvl),
+                                      ('' if _chg is None else (' (%+.1f%%)' % _chg))))
+        if _vol is not None:
+            seg.append(('DEX $%s' if en else 'DEX $%s') % _usd(_vol))
+        _aa = _num_or_none(r.get('active_address_count_txs'))
+        if _aa is not None:
+            seg.append(('%s active addresses' if en else '%s активных адресов')
+                       % _usd(_aa).rstrip('0').rstrip('.') if _aa < 1000 else
+                       (('%s active addresses' if en else '%s активных адресов') % _usd(_aa)))
+        L.append('%d. <b>%s</b> · %s' % (i, _ch, ' · '.join(seg) or '?'))
+    L.append('')
+    L.append(('<i>Percent change is what the response carries, not our arithmetic.</i>' if en
+              else '<i>Процент изменения приехал в ответе, это не наш пересчёт.</i>'))
+    return with_source('\n'.join(L), lang)
+
+
 def pm_top_holders(market_id, per_page=10):
     """Крупнейшие держатели позиций рынка. -> [dict].
 
@@ -3393,10 +3529,14 @@ def sharp_markets_block(d, lang='ru'):
         _sh, _wk = r.get('sharp') or 0.0, r.get('weak') or 0.0
         _ex = r.get('examined') or 0.0
         _pct = (100.0 * _sh / _ex) if _ex else 0.0
-        L.append('   ' + (('sharp <b>$%s</b> (%.0f%% of $%s examined) vs weak $%s'
-                           if en else
-                           'острые <b>$%s</b> (%.0f%% от разобранных $%s) против слабых $%s')
-                          % (_usd(_sh), _pct, _usd(_ex), _usd(_wk))))
+        # «РАЗОБРАНО $X ПО N ДЕРЖАТЕЛЯМ» - ЧИСЛО ДЕРЖАТЕЛЕЙ В ТОЙ ЖЕ СТРОКЕ. Иначе человек
+        # сравнивает эту сумму с суммой из экрана репутации того же рынка (там разбирают пять
+        # держателей, здесь три) и читает разницу как ошибку.
+        L.append('   ' + (('sharp <b>$%s</b> (%.0f%% of $%s examined across %d holders) vs '
+                           'weak $%s' if en else
+                           'острые <b>$%s</b> (%.0f%% от разобранных $%s по %d держателям) '
+                           'против слабых $%s')
+                          % (_usd(_sh), _pct, _usd(_ex), int(d.get('holders') or 0), _usd(_wk))))
         if r.get('who'):
             L.append('   ' + (('biggest sharp holder: %s' if en
                                else 'крупнейший острый держатель: %s') % _esc(r['who'])))
