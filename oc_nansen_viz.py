@@ -376,6 +376,19 @@ def _price(v):
 LABEL_MAX = 22
 
 
+def _h(s):
+    """Текст ИЗ ОТВЕТА ПЛОЩАДКИ - в HTML-подпись. -> str.
+
+    ПОЯВИЛОСЬ ВМЕСТЕ С РАЗМЕТКОЙ В ПОДПИСИ, И ЭТО НЕ ФОРМАЛЬНОСТЬ. Пока подпись уходила
+    сплошным текстом, метка кошелька вида `A & B <fund>` была просто некрасивой; с
+    `parse_mode=HTML` один такой символ делает разметку невалидной, и Telegram отвергает
+    сообщение ЦЕЛИКОМ - вместо карты человек не получает ничего. Метки приходят от Nansen,
+    то есть снаружи, а всё, что приходит снаружи, экранируется.
+    """
+    return (str(s if s is not None else '')
+            .replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+
+
 def _label_clean(s):
     """Метка кошелька в пригодный для строки вид. -> str.
 
@@ -887,15 +900,32 @@ def liq_map_png(rows, token='', mark=None, lang='ru', out_dir=None, zoom=None):
         plt.close(fig)
         return None, 'http'
     plt.close(fig)
-    return path, liq_caption(cl, token, lang)
+    # ПОДПИСЬ ЗНАЕТ, ЧТО ЕДЕТ ПОД КАРТИНКОЙ: источник на самой картинке (марка «Nansen» в углу,
+    # она же остаётся при пересылке файла), и повторять его текстом в том же сообщении незачем.
+    return path, liq_caption(cl, token, lang, on_image=True)
 
 
-def liq_caption(cl, token='', lang='ru'):
-    """Подпись к карте: ВЕЛИЧИНА, потом оговорки. -> str.
+def liq_caption(cl, token='', lang='ru', on_image=False):
+    """Подпись к карте: ВЕЛИЧИНА, потом оговорки. -> str (HTML, по строке на утверждение).
 
     Отдельной функцией, потому что ту же строку показывает текстовый экран, когда картинка не
     собралась (нет matplotlib). Две копии этой фразы разошлись бы на первой правке, и человек
     получал бы разные числа на одних данных в зависимости от того, нарисовалось ли.
+
+    ПОЧЕМУ ЭТО БОЛЬШЕ НЕ ОДИН АБЗАЦ. Живое замечание владельца по группе: «почему сплошным
+    текстом, без форматирования». Так и было: строки склеивались через пробел, и подпись к
+    картинке уезжала кирпичом из восьми предложений. Плохо здесь не только глазу - подпись
+    несёт РАЗНЫЕ утверждения (величина скопления, итог по карте, чьи это деньги, что НЕ попало
+    на карту), и слепленные в абзац они читаются как один поток, в котором оговорку «этого на
+    карте НЕТ» человек пропускает. Одна строка - одно утверждение; у оговорок свой значок,
+    потому что они меняют смысл главного числа.
+
+    `on_image=True` - подпись едет ПОД КАРТИНКОЙ, и тогда источник в тексте НЕ повторяется:
+    на самой картинке стоит марка «Nansen» (`fig.text` в правом нижнем углу), и она остаётся
+    при пересылке файла, то есть уже выполняет то, ради чего строка про источник существует.
+    Второй раз называть источник в том же сообщении - шум, и владелец его заметил («зачем
+    ниже это, если в начале Nansen»). В тексте БЕЗ картинки источник обязателен: там его не
+    несёт ничто другое.
     """
     if not cl:
         return ''
@@ -905,71 +935,82 @@ def liq_caption(cl, token='', lang='ru'):
     # $300M одного фонда с именем - разные карты; метка приезжает полем `address_label`.
     # Метки не нашлось ни у кого - говорим это прямо: молчание читалось бы как «не смотрели».
     _nmd, _nn, _who = cl.get('named') or 0.0, cl.get('named_n') or 0, cl.get('named_who') or []
-    _names = ', '.join(k for k, _v in _who)
+    _names = ', '.join(_h(k) for k, _v in _who)
     # ДЕНЬГИ ЗА ОКНОМ НАЗЫВАЕМ ВСЕГДА, КОГДА ОНИ ЕСТЬ. Карта показывает уровни вокруг цены, и
     # умолчать про остальное значило бы сказать «всего на карте $X» там, где плеча больше.
     _off, _offn, _wp = cl.get('off_usd') or 0.0, cl.get('off_n') or 0, cl.get('win_pct')
     if lang == 'en':
-        L = ['%s liquidation map. Biggest cluster: $%s between $%s and $%s.'
-             % (token or 'Token', _short(_sum), _price(_lo), _price(_hi)),
-             'Total on the map: $%s across %d position(s).' % (_short(_tot), _shown)]
+        L = ['🗺 <b>%s</b> · liquidation map' % (_h(token) or 'Token'),
+             '💥 Densest level: <b>$%s</b> between $%s and $%s'
+             % (_short(_sum), _price(_lo), _price(_hi)),
+             '📊 On the map: <b>$%s</b> across %d position(s)'
+             % (_short(_tot), _shown)]
         if cl['longs'] or cl['shorts']:
-            L.append('Longs $%s vs shorts $%s.' % (_short(cl['longs']), _short(cl['shorts'])))
+            L.append('⚖️ Longs $%s vs shorts $%s'
+                     % (_short(cl['longs']), _short(cl['shorts'])))
         if _nmd and _names and _nmd >= _tot * 0.999:
             # ВСЯ КАРТА ИМЕНОВАНА - ТАК И СКАЖЕМ. Живой HYPE: метка есть у всех 45 позиций, и
             # фраза «$1.01B из $1.01B» заставляет человека сверять два одинаковых числа глазами.
-            L.append('Every position on this map sits on a wallet Nansen has a name for; the '
-                     'biggest: %s.' % _names)
+            L.append('🏷 Every position on this map sits on a wallet Nansen has a '
+                     'name for; biggest: %s' % _names)
         elif _nmd and _names:
-            L.append('$%s of it sits on wallets Nansen has a name for (%d position(s)): %s.'
-                     % (_short(_nmd), _nn, _names))
+            L.append('🏷 $%s of it sits on wallets Nansen has a name for '
+                     '(%d position(s)): %s' % (_short(_nmd), _nn, _names))
         elif _nmd:
-            L.append('$%s of it sits on labelled wallets (%d position(s)).'
+            L.append('🏷 $%s of it sits on labelled wallets (%d position(s))'
                      % (_short(_nmd), _nn))
         else:
-            L.append('Nansen has no label for a single wallet on this map.')
+            L.append('🏷 Nansen has no label for a single wallet on this map')
         if cl.get('win_empty'):
-            L.append('Nothing liquidates within %.0f%% of the current price, so the map shows '
-                     'the full range: these levels are far away.' % (cl.get('req_pct') or
-                                                                     LIQ_WINDOW * 100))
+            L.append('⚠️ Nothing liquidates within %.0f%% of the current price, so '
+                     'the map shows the full range: these levels are far away'
+                     % (cl.get('req_pct') or LIQ_WINDOW * 100))
         if _off:
-            L.append(('A further $%s (%d position(s)) liquidates more than %.0f%% away from the '
-                      'price and is off this map.' % (_short(_off), _offn, _wp)) if _wp else
-                     ('A further $%s (%d position(s)) sits outside the plotted range and is off '
-                      'this map.' % (_short(_off), _offn)))
+            L.append(('⚠️ A further $%s (%d position(s)) liquidates more than %.0f%% '
+                      'away from the price and is NOT on this map'
+                      % (_short(_off), _offn, _wp)) if _wp else
+                     ('⚠️ A further $%s (%d position(s)) sits outside the plotted '
+                      'range and is NOT on this map' % (_short(_off), _offn)))
         if _no:
-            L.append('%d position(s) had no liquidation price and are NOT on the map.' % _no)
-        L.append('This is where other people stop out, not a forecast. Source: Nansen.')
+            L.append('⚠️ %d position(s) had no liquidation price and are NOT on the '
+                     'map' % _no)
+        L.append('<i>This is where other people stop out, not a forecast.%s</i>'
+                 % ('' if on_image else ' Source: Nansen.'))
     else:
-        L = ['%s: карта ликвидаций. Самое плотное скопление: $%s между $%s и $%s.'
-             % (token or 'Токен', _short(_sum), _price(_lo), _price(_hi)),
-             'Всего на карте $%s по %d позици(ям).' % (_short(_tot), _shown)]
+        L = ['🗺 <b>%s</b> · карта ликвидаций' % (_h(token) or 'Токен'),
+             '💥 Плотнее всего: <b>$%s</b> между $%s и $%s'
+             % (_short(_sum), _price(_lo), _price(_hi)),
+             '📊 На карте: <b>$%s</b> по %d позици(ям)' % (_short(_tot), _shown)]
         if cl['longs'] or cl['shorts']:
-            L.append('Лонги $%s против шортов $%s.' % (_short(cl['longs']),
-                                                       _short(cl['shorts'])))
+            L.append('⚖️ Лонги $%s против шортов $%s'
+                     % (_short(cl['longs']), _short(cl['shorts'])))
         if _nmd and _names and _nmd >= _tot * 0.999:
-            L.append('Все позиции этой карты - на кошельках, которых Nansen знает по имени; '
-                     'крупнейшие: %s.' % _names)
+            L.append('🏷 Все позиции этой карты - на кошельках, которых Nansen знает '
+                     'по имени; крупнейшие: %s' % _names)
         elif _nmd and _names:
-            L.append('Из них $%s висит на кошельках, которых Nansen знает по имени '
-                     '(%d позици(й)): %s.' % (_short(_nmd), _nn, _names))
+            L.append('🏷 Из них $%s висит на кошельках, которых Nansen знает по имени '
+                     '(%d позици(й)): %s' % (_short(_nmd), _nn, _names))
         elif _nmd:
-            L.append('Из них $%s висит на кошельках с меткой (%d позици(й)).'
+            L.append('🏷 Из них $%s висит на кошельках с меткой (%d позици(й))'
                      % (_short(_nmd), _nn))
         else:
-            L.append('Ни у одного кошелька на этой карте метки Nansen нет.')
+            L.append('🏷 Ни у одного кошелька на этой карте метки Nansen нет')
         if cl.get('win_empty'):
-            L.append('В пределах %.0f%% от текущей цены не ликвидируется ничего, поэтому карта '
-                     'показывает весь размах: эти уровни далеко.' % (cl.get('req_pct') or
-                                                                     LIQ_WINDOW * 100))
+            L.append('⚠️ В пределах %.0f%% от текущей цены не ликвидируется ничего, '
+                     'поэтому карта показывает весь размах: эти уровни далеко'
+                     % (cl.get('req_pct') or LIQ_WINDOW * 100))
         if _off:
-            L.append(('Ещё $%s (%d позиц(ий)) ликвидируется дальше %.0f%% от цены - этого на '
-                      'карте НЕТ.' % (_short(_off), _offn, _wp)) if _wp else
-                     ('Ещё $%s (%d позиц(ий)) лежит вне нарисованного диапазона - этого на '
-                      'карте НЕТ.' % (_short(_off), _offn)))
+            L.append(('⚠️ Ещё $%s (%d позиц(ий)) ликвидируется дальше %.0f%% от цены '
+                      '- этого на карте НЕТ' % (_short(_off), _offn, _wp)) if _wp else
+                     ('⚠️ Ещё $%s (%d позиц(ий)) лежит вне нарисованного диапазона - '
+                      'этого на карте НЕТ' % (_short(_off), _offn)))
         if _no:
             # ЧЕСТНАЯ ОГОВОРКА, А НЕ МЕЛКИЙ ШРИФТ: карта по 8 позициям из 20 и карта по 20 из
             # 20 - разные карты, и человек обязан знать, какую смотрит.
-            L.append('У %d позиц(ий) цены ликвидации не было - их на карте НЕТ.' % _no)
-        L.append('Это уровни чужих стопов, а не прогноз. Источник: Nansen.')
-    return ' '.join(L)
+            L.append('⚠️ У %d позиц(ий) цены ликвидации не было - их на карте НЕТ'
+                     % _no)
+        L.append('<i>Это уровни чужих стопов, а не прогноз.%s</i>'
+                 % ('' if on_image else ' Источник: Nansen.'))
+    # ПО СТРОКЕ НА УТВЕРЖДЕНИЕ. Абзац из тех же предложений Telegram покажет кирпичом, и
+    # оговорка «этого на карте НЕТ» потеряется внутри него.
+    return '\n'.join(L)

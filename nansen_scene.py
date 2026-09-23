@@ -56,7 +56,12 @@ SCENES = ('pm_markets', 'pm_reputation', 'liq_map', 'smart_trades',
           # принимают МЕЖДУ объектами: из десяти разогретых рынков выбрать тот, где против
           # тебя стоят не случайные люди, и из четырёх перпов - тот, у кого путь до плотного
           # уровня короче. Руками это никто не собирает: там 13-17 запросов на экран.
-          'sharp_markets', 'perp_risk')
+          'sharp_markets', 'perp_risk',
+          # ТРИ ЭКРАНА, ПРИШЕДШИЕ В МИНИ-АПП ПОСЛЕ ЖИВОГО ВОПРОСА ВЛАДЕЛЬЦА («а на холст не
+          # стал добавлять другие вкладки с фичами?»). Все три уже работали в чате - здесь они
+          # получили ПОВЕРХНОСТЬ, а не второй счёт: словарь тот же, имя сцены телеметрии то же,
+          # значит расход мини-аппа складывается с расходом чата по одной строке.
+          'smart_dca', 'chain_rank', 'pm_positions')
 
 #: ПОВЕРХНОСТИ. 'chat' - ответ в Telegram-чате, 'miniapp' - экран мини-аппа.
 SURFACES = ('chat', 'miniapp')
@@ -512,6 +517,159 @@ def _perp_risk_caveats(d, lang):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# СЦЕНА 6. smart_dca - кто покупает по расписанию (единственный сигнал про БУДУЩЕЕ)
+#
+# ЗАЧЕМ ЭТОТ ЭКРАН В МИНИ-АППЕ, А НЕ ТОЛЬКО В ЧАТЕ. Живой вопрос владельца: «а на холст не стал
+# добавлять другие вкладки с фичами?» - и он прав по существу. Все прежние экраны отвечают про
+# ПРОШЛОЕ: кто уже держит, где уже висит плечо, кто уже торговал. Программа DCA - единственное,
+# что говорит о будущих покупках: кошелёк поставил деньги на то, что БУДЕТ покупать дальше.
+# Такому сигналу место там, куда человек смотрит глазами, а не только в строке чата.
+# ═══════════════════════════════════════════════════════════════════════════════
+def smart_dca_data(lang='ru', top=10, rows=None):
+    """Программы DCA умных денег. -> конверт.
+
+    Числа целиком считает `nansen_api.sm_dca_data` - тот же словарь читает и текст бота.
+    """
+    N = _n()
+    if rows is None:
+        rows = N.smart_money_dcas(20)
+    _what = ('программ DCA у smart money' if lang != 'en' else 'smart money DCA programs')
+    _cr = _credits_for(('smart-money/dcas',))
+    d = N.sm_dca_data(rows, int(top)) if rows else None
+    if not d:
+        return _envelope('smart_dca', None, N.fail_reason('empty'), lang, cost_requests=1,
+                         cost_credits=_cr, refusal_what=_what)
+    return _envelope('smart_dca', d, 'ok', lang, cost_requests=1, cost_credits=_cr,
+                     freshness_seconds=_tele().age(), caveats=_dca_caveats(d, lang))
+
+
+def _dca_caveats(d, lang):
+    """Оговорки DCA величинами. -> [str]."""
+    en = (lang == 'en')
+    out = []
+    if d.get('shown') and not d.get('with_val'):
+        out.append('no program in the response carries a dollar size: this is a schema gap, '
+                   'not a property of the programs' if en else
+                   'ни у одной программы в ответе нет размера в долларах: это расхождение '
+                   'схемы, а не свойство программ')
+    _nopc = sum(1 for r in d['rows'] if r.get('spent_pct') is None)
+    if _nopc:
+        out.append(('%d program(s) have no execution share: the response is missing one of the '
+                    'two numbers it needs, and a share from one number would be invented'
+                    if en else
+                    'у %d программ(ы) доля исполнения не посчитана: в ответе нет одного из двух '
+                    'нужных чисел, а доля из одного числа была бы выдумана') % _nopc)
+    if d.get('more'):
+        out.append(('%d more program(s) came back and are not shown: this screen shows %d'
+                    if en else
+                    'ещё %d программ(ы) приехали и не показаны: экран показывает %d')
+                   % (int(d['more']), int(d.get('shown') or 0)))
+    out.append('a DCA program is a commitment to buy, not a purchase: part of it may never be '
+               'executed' if en else
+               'программа DCA - обещание покупать, а не покупка: часть её может так и не '
+               'исполниться')
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# СЦЕНА 7. chain_rank - где вообще идут деньги (единственный экран НЕ про кошелёк)
+# ═══════════════════════════════════════════════════════════════════════════════
+def chain_rank_data(lang='ru', top=8, rows=None):
+    """Рейтинг сетей по TVL и его изменение. -> конверт."""
+    N = _n()
+    if rows is None:
+        rows = N.chain_rank(20)
+    _what = ('рейтинга сетей' if lang != 'en' else 'the chain ranking')
+    _cr = _credits_for(('chains/chain-rank',))
+    d = N.chain_rank_data(rows, int(top)) if rows else None
+    if not d:
+        return _envelope('chain_rank', None, N.fail_reason('empty'), lang, cost_requests=1,
+                         cost_credits=_cr, refusal_what=_what)
+    return _envelope('chain_rank', d, 'ok', lang, cost_requests=1, cost_credits=_cr,
+                     freshness_seconds=_tele().age(), caveats=_chain_caveats(d, lang))
+
+
+def _chain_caveats(d, lang):
+    """Оговорки рейтинга сетей величинами. -> [str]."""
+    en = (lang == 'en')
+    out = []
+    _nochg = sum(1 for r in d['rows'] if r.get('tvl_chg') is None)
+    if _nochg:
+        out.append(('%d chain(s) came without a change in TVL: their stillness on the screen '
+                    'is OUR missing number, not a quiet chain' if en else
+                    'у %d сет(ей) не приехало изменение TVL: их неподвижность на экране - это '
+                    'НАШЕ отсутствующее число, а не спокойная сеть') % _nochg)
+    if int(d.get('total') or 0) > int(d.get('shown') or 0):
+        out.append(('%d chain(s) are in the response and not on the screen: it shows the top %d '
+                    'by TVL' if en else
+                    'ещё %d сет(ей) есть в ответе и нет на экране: он показывает топ-%d по TVL')
+                   % (int(d['total']) - int(d['shown']), int(d.get('shown') or 0)))
+    out.append('the order is by TVL, and TVL is money parked, not money moving: a chain can be '
+               'busier than a bigger one' if en else
+               'порядок по TVL, а TVL - это припаркованные деньги, а не движущиеся: сеть '
+               'меньше по TVL может быть оживлённее крупной')
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# СЦЕНА 8. pm_positions - кто в этом рынке и с каким PnL
+#
+# ЗАЧЕМ ОТДЕЛЬНО ОТ hero. Hero отвечает «чьи это деньги» (винрейт держателей ПО ВСЕЙ истории),
+# а этот экран - «как у них идёт ИМЕННО ЗДЕСЬ»: по какой цене вошли и сколько уже в плюсе или в
+# минусе. Вместе они отвечают на вопрос, который одним числом не отвечается: кто здесь умеет, а
+# кто просто пока в плюсе.
+#
+# И ГЛАВНОЕ - ВХОД. В чате этот экран требовал НОМЕР РЫНКА РУКАМИ («позиции рынка 654412»), и
+# владелец поймал это дважды: «я смотрю опять идентификатор маркет заставляешь искать юзера».
+# Номер служебный, человеку его негде взять, кроме чужого сайта - то есть экран требовал работы
+# ВНЕ себя. Здесь номер приезжает из уже открытой карточки рынка, а в чате - кнопкой «🧾 N» под
+# списком рынков. Тот же дефект и то же лечение, что было с графиком и стаканом.
+# ═══════════════════════════════════════════════════════════════════════════════
+def pm_positions_data(market_id, lang='ru', top=10, rows=None):
+    """Держатели рынка с их PnL по этому рынку. -> конверт."""
+    N = _n()
+    _mid = str(market_id or '')[:40]
+    if rows is None:
+        rows = N.pm_positions(_mid, 20)
+    _what = ('держателей этого рынка' if lang != 'en' else 'holders of this market')
+    _cr = _credits_for(('prediction-market/position-detail',))
+    d = N.pm_positions_data(rows, int(top)) if rows else None
+    if not d:
+        return _envelope('pm_positions', None, N.fail_reason('empty'), lang, cost_requests=1,
+                         cost_credits=_cr, refusal_what=_what,
+                         extra={'market_id': _mid})
+    return _envelope('pm_positions', d, 'ok', lang, cost_requests=1, cost_credits=_cr,
+                     freshness_seconds=_tele().age(),
+                     caveats=_pm_pos_caveats(d, lang),
+                     extra={'market_id': _mid})
+
+
+def _pm_pos_caveats(d, lang):
+    """Оговорки экрана держателей рынка величинами. -> [str]."""
+    en = (lang == 'en')
+    out = []
+    _nopnl = int(d.get('shown') or 0) - int(d.get('with_pnl') or 0)
+    if _nopnl:
+        out.append(('%d holder(s) came without a PnL: they are NOT in the net total below'
+                    if en else
+                    'у %d держател(ей) не приехал PnL: в сумму ниже они НЕ посчитаны') % _nopnl)
+    if int(d.get('total') or 0) > int(d.get('shown') or 0):
+        out.append(('%d more holder(s) are in the response and not on the screen: it shows the '
+                    '%d largest by absolute PnL' if en else
+                    'ещё %d держател(ей) есть в ответе и нет на экране: он показывает %d '
+                    'крупнейших по абсолютному PnL')
+                   % (int(d['total']) - int(d['shown']), int(d.get('shown') or 0)))
+    if d.get('resolved') is True:
+        out.append('the market is resolved: these numbers are final, not open risk' if en else
+                   'рынок разрешён: это итоговые числа, а не открытый риск')
+    out.append('this is their result in THIS market, not their lifetime record: a wallet in '
+               'profit here may be losing everywhere else' if en else
+               'это их результат В ЭТОМ рынке, а не история вообще: кошелёк в плюсе здесь может '
+               'быть в минусе везде остальном')
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # ДИСПЕТЧЕР И РЕНДЕР
 # ═══════════════════════════════════════════════════════════════════════════════
 #: КАКИЕ ПАРАМЕТРЫ ЖДЁТ СЦЕНА. Нужен шлюзу, чтобы отказать по форме ДО любого вызова Nansen.
@@ -525,6 +683,11 @@ SCENE_PARAMS = {
     # бы ВНЕ экрана, как с ручным вводом market_id.
     'sharp_markets': (),
     'perp_risk': (),
+    'smart_dca': (),
+    'chain_rank': (),
+    # НОМЕР РЫНКА ЗДЕСЬ ОБЯЗАТЕЛЕН, НО ЧЕЛОВЕК ЕГО НЕ ВВОДИТ: он приезжает из уже открытой
+    # карточки рынка (тап в списке) - ровно как у экрана репутации.
+    'pm_positions': ('market',),
 }
 
 
@@ -558,6 +721,15 @@ def rendered_text(env, bot_un=None):
         return N.sharp_markets_block(p, lang)
     if sc == 'perp_risk':
         return _viz().liq_board_caption(p, lang)
+    # ТРИ НОВЫХ ЭКРАНА ОТДАЮТ РЕНДЕРУ ГОТОВЫЙ СЛОВАРЬ, а не сырые строки площадки: так текст
+    # бота и картинка физически читают одни и те же числа. Сырых строк тут уже нет - шлюз их
+    # вычищает перед отправкой в браузер, и это правильный порядок.
+    if sc == 'smart_dca':
+        return N.sm_dca_block(p, bot_un, lang)
+    if sc == 'chain_rank':
+        return N.chain_rank_block(p, lang)
+    if sc == 'pm_positions':
+        return N.pm_positions_block(p, env.get('market_id') or '', lang)
     return None
 
 
@@ -587,6 +759,12 @@ def scene_data(scene, params=None, lang='ru', bot_un=None, with_text=True):
     elif scene == 'perp_risk':
         env = perp_risk_data(params.get('tokens'), params.get('marks'), lang,
                              params.get('by_token'))
+    elif scene == 'smart_dca':
+        env = smart_dca_data(lang, int(params.get('top') or 10))
+    elif scene == 'chain_rank':
+        env = chain_rank_data(lang, int(params.get('top') or 8))
+    elif scene == 'pm_positions':
+        env = pm_positions_data(params.get('market'), lang, int(params.get('top') or 10))
     else:
         env = smart_trades_data(lang, int(params.get('top') or 12))
     if with_text:

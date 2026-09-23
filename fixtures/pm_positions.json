@@ -1,0 +1,56 @@
+{
+ "caveats": [
+  "1 holder(s) came without a PnL: they are NOT in the net total below",
+  "this is their result in THIS market, not their lifetime record: a wallet in profit here may be losing everywhere else"
+ ],
+ "cost_credits": null,
+ "cost_requests": 1,
+ "freshness_seconds": null,
+ "lang": "en",
+ "market_id": "654412",
+ "outcome": "ok",
+ "payload": {
+  "net_pnl": 47000.0,
+  "resolved": false,
+  "rows": [
+   {
+    "entry": 42.0,
+    "i": 1,
+    "open_usd": 302000.0,
+    "pnl": 128000.0,
+    "px": 61.0,
+    "side": "Yes",
+    "who": "0x5555…0055"
+   },
+   {
+    "entry": 55.00000000000001,
+    "i": 2,
+    "open_usd": 0.0,
+    "pnl": -81000.0,
+    "px": 39.0,
+    "side": "No",
+    "who": "0x6666…0066"
+   },
+   {
+    "entry": null,
+    "i": 3,
+    "open_usd": 4100.0,
+    "pnl": null,
+    "px": null,
+    "side": "Yes",
+    "who": "0x7777…0077"
+   }
+  ],
+  "shown": 3,
+  "title": "Will the Fed cut rates in September?",
+  "total": 3,
+  "with_pnl": 2
+ },
+ "provenance": "synthetic",
+ "recorded_at": "2026-09-23T09:54:13Z",
+ "rehearsal": true,
+ "rendered_text": "🧾 <b>Who is in this market, and how it is going for them</b>\n<code>654412</code>\n<i>Will the Fed cut rates in September?</i>\n\n1. 0x5555…0055 [Yes] · PnL +$128.0K · entry 42¢ → 61¢ · open $302.0K\n2. 0x6666…0066 [No] · PnL -$81.0K · entry 55¢ → 39¢\n3. 0x7777…0077 [Yes] · open $4.1K\n\n<i>Net PnL of the 3 holder(s) shown: +$47.0K. This is their result in THIS market, not their lifetime record.</i>\n\n<i>📡 Source: Nansen, freshness not measured</i>",
+ "scene": "pm_positions",
+ "source": "Nansen",
+ "surface": "miniapp"
+}

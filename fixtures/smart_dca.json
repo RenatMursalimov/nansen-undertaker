@@ -1,0 +1,53 @@
+{
+ "caveats": [
+  "1 program(s) have no execution share: the response is missing one of the two numbers it needs, and a share from one number would be invented",
+  "a DCA program is a commitment to buy, not a purchase: part of it may never be executed"
+ ],
+ "cost_credits": null,
+ "cost_requests": 1,
+ "freshness_seconds": null,
+ "lang": "en",
+ "outcome": "ok",
+ "payload": {
+  "more": 0,
+  "rows": [
+   {
+    "i": 1,
+    "inp": "USDC",
+    "outp": "WETH",
+    "spent_pct": 20.0,
+    "status": "active",
+    "usd": 2000000.0,
+    "who": "Smart Whale 1"
+   },
+   {
+    "i": 2,
+    "inp": "USDT",
+    "outp": "SOL",
+    "spent_pct": 95.0,
+    "status": "active",
+    "usd": 350000.0,
+    "who": "Smart Whale 2"
+   },
+   {
+    "i": 3,
+    "inp": "USDC",
+    "outp": "AAA",
+    "spent_pct": null,
+    "status": "closed",
+    "usd": 90000.0,
+    "who": "0x4444…0044"
+   }
+  ],
+  "shown": 3,
+  "total_usd": 2440000.0,
+  "with_val": 3
+ },
+ "provenance": "synthetic",
+ "recorded_at": "2026-09-23T09:54:13Z",
+ "rehearsal": true,
+ "rendered_text": "🧊 <b>Smart money buying on a schedule (DCA)</b>\nA DCA program is a commitment to keep buying, not a single trade: the share already spent says how much of it is still ahead.\n\n1. Smart Whale 1 · <b>USDC → WETH</b> · $2.00M · spent 20% · active\n2. Smart Whale 2 · <b>USDT → SOL</b> · $350.0K · spent 95% · active\n3. 0x4444…0044 · <b>USDC → AAA</b> · $90.0K · closed\n\n<i>📡 Source: Nansen, freshness not measured</i>",
+ "scene": "smart_dca",
+ "source": "Nansen",
+ "surface": "miniapp"
+}

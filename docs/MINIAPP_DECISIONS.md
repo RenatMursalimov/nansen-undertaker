@@ -181,3 +181,164 @@ gateway (“no positions came back”), not a guess from the page about what exi
 
 The risk board follows the same measured order (top four), instead of comparing whatever four were
 frozen into the code.
+
+
+## A slider that "worked with a delay" was a slider being deleted and rebuilt
+
+The owner's words: *“when you move the slider it works with a delay, and it disappears together with
+the detail; the sliders should stay and be easy to move with the mouse, and the maps should redraw.”*
+
+The instinct is to blame the network, and it would have been wrong. The handler set `LIQ.env = null`
+and the sliders were rendered **from the envelope** — so while the request was in flight the page
+deleted its own controls and put them back a second later. The knob jumped and lost focus because the
+`input` node was being recreated under the finger, not because the answer was slow. Tapping a bar did
+the same thing: it rebuilt the entire screen, which is why the detail line “disappeared with the
+sliders”.
+
+Three separate operations now, instead of one rebuild for every event:
+
+| what happens | what is rebuilt |
+|---|---|
+| first answer, ticker change, orientation change | controls + result |
+| tap on a bar, board toggle, "updating…" | result only |
+| answer for the same ticker | nothing — knob values and labels are *set*, not recreated |
+
+The law that the active step is marked **from the answer** (not from the tap) survived; it is now
+enforced by setting values on live nodes. One thing had to be corrected on the render harness: the
+first version called that sync while the request was still in flight, which rewound the knob to the
+*previous* answer the moment the finger let go — visually “the slider jumps by itself”, the very
+complaint being fixed. During a request the controls are not touched at all.
+
+Each request carries a sequence number. Two quick drags used to mean the first answer could repaint
+the screen while the second was still in flight — showing a setting the person had already changed
+their mind about.
+
+## Two orientations, and the horizontal one is the default again
+
+*“Why did you rebuild it vertical, it was horizontal.”* Correct twice over: the picture the bot sends
+to chat is horizontal (`barh`), and horizontal labels need **no rotated text** — and rotated numbers
+were exactly what escaped the card's frame. The vertical layout is kept as an option, because its
+dashed price line reads like a candlestick chart. Neither is “right”, so the choice belongs to the
+person: `↔ / ↕` redraws the same numbers with **zero** requests.
+
+The row order matches the chat image: cheap levels at the bottom, expensive at the top. Drawn the
+other way the map would be numerically correct and semantically upside down, and two different
+pictures of one dataset read as an error.
+
+**Numbers are clamped into the canvas, and a label that does not fit is not drawn at all.** An
+amount cut in half looks like real data; a missing one sends the reader to the detail line under the
+chart, where the number is in full. Verified by measurement rather than by eye: the render harness
+compares every `<text>` rectangle with the `<svg>` rectangle in both orientations at 8/14/20/28
+levels — currently zero escapes.
+
+The slider says “14 levels” while the map may show five bars, and that needed one sentence rather
+than a fix: detail is how many equal slices the window is **cut into**, and a slice with no money in
+it is not drawn. Without that sentence the screen looks like it cannot count.
+
+## Save as an image: the colours had to leave the CSS
+
+`💾 save image` serialises the chart's SVG into a canvas and writes a PNG at ×3 scale (320 px is a
+phone width; the labels would be unreadable in a file). Two details are load-bearing:
+
+* the chart's fills used to be `var(--long)` / `var(--short)`. CSS custom properties **do not exist**
+  inside an extracted SVG, so the saved file would have come out colourless. Hardcoding the hex
+  values in the script would have created a second palette that silently drifts from the first, so
+  the colours are read from the page itself (`getComputedStyle`) and written into the markup as
+  numbers;
+* Telegram's in-app browser does not always allow a page to write a file. The button therefore
+  **does not promise success**: if the download does not land, the screen says so and names the path
+  that always works — the bot sends the same map as a picture in chat.
+
+## The “➕ More” tab, and why this is not the fourth screen that was refused
+
+*“Didn't you add other tabs with features to the canvas?”* Two signals moved onto the canvas, chosen
+by what the existing screens could **not** answer:
+
+* **scheduled buying (DCA)** — the only forward-looking signal in the set. Every other screen reports
+  the past: who already holds, where leverage already hangs. A DCA program is money committed to
+  buying *later*, and the bar shows how much of it is already spent;
+* **chain ranking** — the only screen that is about neither a wallet nor a market, but about where the
+  money is at all. It answers “where to look today” before an object is picked.
+
+This does not contradict Part C above. That refusal was about a screen whose central field
+(`language`) the platform does not return. These two run on endpoints whose schemas were **measured**
+by live probes on 2026-09-24, and both already worked in chat — the canvas gave them a surface, not a
+second implementation: same dictionary, same telemetry scene name, so app and chat spend adds up on
+one row.
+
+## “Who is in this market” is attached to the market card, not to a tab of its own
+
+The owner caught the same defect for the second time: *“I look and you are again making the user hunt
+for the market identifier.”* The screen existed only as the command `позиции рынка <id>`, and there
+is nowhere to get that id except someone else's website — the command required work **outside** the
+bot.
+
+A tab of its own would have reproduced the bug, because on entering a tab no market is selected yet,
+so it would have to ask. The screen is therefore a button on the already-open market card in the app,
+and the row **🧾 N** under the market list in chat — the id rides in the callback, next to 📈, 📖 and
+🎭, which were fixed the same way earlier. The command stays as the fast path for whoever already has
+an id, and the menu hint now points at the button instead of teaching a number by example.
+
+## A number quietly damaged by a stray `.rstrip`
+
+Found while splitting the chain ranking into numbers and words: the active-address count was formatted
+and then passed through `.rstrip('0').rstrip('.')`, so **500 active addresses printed as “5”**. A
+truncated figure is worse than a missing one, because it still looks like a measurement. The
+formatting now prints what was measured, and the number goes through the same dictionary the mini-app
+draws.
+
+
+## The caption under the picture was a brick of plain text, and it said "Nansen" twice
+
+Spotted by the owner in a group: *“why is it solid text with no formatting”* and *“why write this
+below if Nansen is at the start”*. Both were true, and both were in the same three lines of code.
+
+**Plain text.** `liq_caption` joined its sentences with a space, and `send_photo` was called without
+`parse_mode`. So eight statements arrived as one paragraph. The cost is not only visual: the caption
+carries *different* statements — the size of the densest cluster, the total on the map, whose money it
+is, and **what is not on the map at all** — and glued into a paragraph the last of those is the one a
+reader skips. One line per statement now, with the qualifiers marked, because a qualifier changes the
+meaning of the number above it.
+
+**The source twice.** The picture already carries a `Nansen` mark burnt into the canvas (bottom right,
+`fig.text`), and that mark survives being forwarded as a file — which is exactly what the source line
+is *for*. Repeating it in the caption of the same message is noise. The caption therefore takes
+`on_image=True` from `liq_map_png` and omits the source; the **text-only** fallback (no picture, no
+canvas, no mark) still names it, because there nothing else does. The rule: *one source claim per
+object, on the part of the object that survives sharing.*
+
+This is guarded by tests rather than by care: the caption must be multi-line, its markup must be
+balanced, the text-only variant must name Nansen, the on-image variant must not, **and** the canvas
+mark must exist in the drawing code — without that last check, removing the line would be removing
+the claim.
+
+Two consequences that are easy to miss:
+
+* **markup means escaping.** Wallet labels come from Nansen, and one `&` or `<` in a label makes the
+  markup invalid — Telegram then rejects the whole message and the person gets *nothing* instead of a
+  map. Anything from the provider is escaped now (`_h`), and a test feeds a label containing both;
+* **the caption is trimmed by Telegram's own measure** (`tg_html.fit`), not by `cap[:1024]`. A blind
+  slice lands inside a tag and produces the same total rejection. The token card was fixed this way
+  earlier; the map was still on the naive slice.
+
+The single-line captions of the other pictures (flows, probability) still repeat the source, and that
+is left as it is for now rather than swept silently — a one-line caption does not have the problem
+that was reported, and a test currently *requires* the source in those captions.
+
+## A collision the frame check could not see
+
+With the horizontal layout the price marker `now $67.3K` is drawn at the right edge — and so are the
+per-bar amounts. On the live render the marker landed on top of `$11.80M`: two different numbers read
+as one string. Nothing was outside the canvas, so the "everything inside the frame" measurement was
+green, and the defect was visible only in the picture.
+
+**Resolution rule: the dashed price line wins.** The amount of the row the marker sits on is not
+drawn — that number is still on the money axis and in the detail line under the chart, while the price
+marker is unique and has nowhere else to go. Same "if it does not fit, do not draw it" rule, except
+what crowds the label is another label rather than the frame.
+
+The render harness now compares every pair of `<text>` rectangles for overlap, in both orientations,
+in addition to comparing each one with the canvas. Currently zero overflows and zero collisions. This
+is the second time in this project that a chart defect was found by measuring the rendered page rather
+than by reading the code (the first was the invisible bars on the sharp-money screen), which is why
+the check is in the harness and not in a reviewer's eye.

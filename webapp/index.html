@@ -188,7 +188,8 @@
        заголовок экрана, который и объясняет, что это. -->
   <div class="tab on" id="t_hero">🎭&nbsp;Whose&nbsp;%</div>
   <div class="tab" id="t_sharp">🎯&nbsp;Sharp</div>
-  <div class="tab" id="t_liq">🗺&nbsp;Liq.&nbsp;map</div>
+  <div class="tab" id="t_liq">🗺&nbsp;Map</div>
+  <div class="tab" id="t_more">➕&nbsp;More</div>
   <div class="tab" id="t_feed">📡&nbsp;Live</div>
 </div>
 
@@ -198,6 +199,7 @@
   <div id="scr_hero"></div>
   <div id="scr_sharp" style="display:none"></div>
   <div id="scr_liq" style="display:none"></div>
+  <div id="scr_more" style="display:none"></div>
   <div id="scr_feed" style="display:none"></div>
 </div>
 
@@ -349,6 +351,25 @@ function esc(s) {
   return String(s === null || s === undefined ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+/* ЦВЕТ ЧИТАЕТСЯ ИЗ CSS, А НЕ ДУБЛИРУЕТСЯ ШЕСТНАДЦАТИРИЧНЫМ ЧИСЛОМ В КОДЕ.
+   ЗАЧЕМ ВООБЩЕ. Графики раньше красились через `fill="var(--long)"`, и на экране это работает.
+   Но карту теперь можно СОХРАНИТЬ КАРТИНКОЙ (просьба владельца), а внутри отдельного файла
+   переменных страницы уже нет: `var(--long)` в вынутом SVG превращается в «цвета нет», и
+   сохранённый файл вышел бы чёрно-белым. Вписать числа руками значило бы завести ВТОРОЙ
+   источник палитры и однажды нарисовать лонги одним цветом на экране и другим в файле -
+   ровно тот класс молчаливого расхождения, против которого Закон 0. Поэтому цвет берётся
+   у самой страницы и попадает в разметку числом. */
+var _CSSV = {};
+function cssv(name, fb) {
+  if (_CSSV[name] !== undefined) return _CSSV[name];
+  var v = '';
+  try {
+    v = getComputedStyle(document.documentElement).getPropertyValue(name) || '';
+  } catch (e) { v = ''; }
+  v = String(v).trim();
+  _CSSV[name] = v || fb;
+  return _CSSV[name];
+}
 /* ФРАЗА БОТА ПОКАЗЫВАЕТСЯ ТЕКСТОМ, А НЕ РАЗМЕТКОЙ: теги Telegram (<b>, <code>, <i>)
    снимаем, содержимое оставляем. Вставлять чужую разметку в DOM незачем. */
 function plain(s) {
@@ -405,7 +426,68 @@ function loading(what) {
    ЭКРАН 1. «ЧЬИ ЭТО ДЕНЬГИ» — состав убеждённости рынка
    ═══════════════════════════════════════════════════════════════════════════ */
 var HERO = { market: (qp('market') || qp('mk') || ''), env: null, open: -1, list: null,
-             pick: null };
+             pick: null,
+             /* «КТО В РЫНКЕ И С КАКИМ PnL» ЖИВЁТ ЗДЕСЬ, А НЕ ОТДЕЛЬНЫМ ТАБОМ, И ЭТО ГЛАВНОЕ В
+                НЁМ. Экрану нужен номер рынка, и единственный честный способ его получить -
+                взять у УЖЕ ОТКРЫТОЙ карточки. Живое замечание владельца: «я смотрю опять
+                идентификатор маркет заставляешь искать юзера». Отдельный таб неизбежно снова
+                спрашивал бы номер, потому что при входе в него рынок не выбран. */
+             pos: null, posOn: false, posBusy: false };
+
+/* СБРОС РАЗБОРА ПРИ СМЕНЕ РЫНКА - ОДНОЙ ФУНКЦИЕЙ, А НЕ ТРЕМЯ КОПИЯМИ. В hero приходят из трёх
+   мест (список рынков, экран острых денег, кнопка «назад»), и забыть обнулить один экран из
+   двух - значит показать держателей ПРОШЛОГО рынка под вопросом нового. Класс бага: состояние
+   сбрасывается в нескольких местах, и одно из них однажды отстаёт. */
+function heroReset() {
+  HERO.env = null; HERO.open = -1; HERO.pos = null; HERO.posOn = false;
+}
+
+function posHTML(env) {
+  if (!env) return loading('Reading who is in this market…');
+  if (env.outcome !== 'ok' || !env.payload) return refuse(env);
+  var p = env.payload, rows = p.rows || [];
+  var h = '<div class="card"><h1>Who is in it, and how it is going for them</h1>'
+        + '<div class="dim">The screen above is whose money this is — lifetime win rate. This '
+        + 'one is what is happening to them HERE: entry price, and how much they are up or '
+        + 'down in THIS market.</div>';
+  if (p.title) { h += '<div class="dim"><i>' + esc(p.title) + '</i></div>'; }
+  if (p.resolved === true) {
+    h += '<div class="warn">This market is RESOLVED: the numbers are final, not open risk.'
+       + '</div>';
+  }
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var pnl = (r.pnl === null || r.pnl === undefined) ? null : Number(r.pnl);
+    h += '<div class="mkrow"><div class="mkq">' + esc(r.who)
+       + ' <span class="dim">[' + esc(r.side) + ']</span>'
+       + (pnl === null ? ''
+          : (' · <b style="color:' + (pnl >= 0 ? 'var(--strong)' : 'var(--weak)') + '">'
+             + (pnl >= 0 ? '+$' : '−$') + usd(Math.abs(pnl)) + '</b>'))
+       + '</div>';
+    h += '<div class="mkmeta">'
+       + (pnl === null ? 'PnL did not arrive for this holder — NOT counted in the total below'
+          : 'PnL in this market')
+       + (r.entry !== null && r.entry !== undefined && r.px !== null && r.px !== undefined
+          ? (' · entry ' + Math.round(r.entry) + '¢ → ' + Math.round(r.px) + '¢') : '')
+       + (r.open_usd ? (' · open $' + usd(r.open_usd)) : '')
+       + '</div></div>';
+  }
+  /* ИТОГ - ВЕЛИЧИНОЙ, И СЧИТАЕТ ЕГО БОТ. Страница печатает `net_pnl` из словаря: сложи она
+     сама, и «в сумме» в чате разошлось бы с «в сумме» на картинке. */
+  var np = Number(p.net_pnl || 0);
+  h += '<div class="dim" style="margin-top:6px">Net PnL of the ' + (p.shown || 0)
+     + ' holder(s) shown: <b>' + (np >= 0 ? '+$' : '−$') + usd(Math.abs(np))
+     + '</b>. This is their result in THIS market, not their lifetime record.</div>';
+  h += footer(env) + '</div>';
+  return h;
+}
+
+function posLoad() {
+  HERO.posBusy = true;
+  askScene({ sc: 'pm_positions', mk: HERO.market, lg: 'en' }, function (env) {
+    HERO.pos = env; HERO.posBusy = false; showReh(env); heroRender();
+  });
+}
 
 /* ЧЕМ НАЗЫВАТЬ ВЫБРАННЫЙ РЫНОК. Строка берётся ИЗ УЖЕ ПРИЕХАВШЕГО СЛОВАРЯ списка (сцена
    `pm_markets`), а не сочиняется: вопрос рынка и его процент - измеренные поля, и других у
@@ -552,23 +634,37 @@ function heroRender() {
   var head = '<div class="card"><h1>' + h1 + '</h1>'
     + '<div class="dim">' + sub + '</div>'
     + (HERO.market
-       ? '<div class="btns"><span class="btn" id="mkback">« back to markets</span></div>'
+       ? ('<div class="btns"><span class="btn" id="mkback">« back to markets</span>'
+          /* НОМЕР РЫНКА У ЭТОЙ КНОПКИ УЖЕ ЕСТЬ - ОН В СОСТОЯНИИ ЭКРАНА. Человеку его вводить
+             не надо и видеть незачем: служебное поле ездит между экранами, а не через глаза. */
+          + '<span class="btn' + (HERO.posOn ? ' on' : '') + '" id="posbtn">'
+          + '🧾 who is in it, with PnL</span></div>')
        : '')
     + '</div>';
   // НИ ОДНОГО «Asking Nansen…» БЕЗ ЗАПРОСА. Раньше пустой экран показывал строку загрузки,
   // хотя ничего не спрашивал: человек ждал ответа, которого никто не просил.
-  el.innerHTML = head + (HERO.market ? heroHTML(HERO.env) : marketsHTML());
+  el.innerHTML = head
+    + (HERO.market ? (heroHTML(HERO.env) + (HERO.posOn ? posHTML(HERO.pos) : ''))
+                   : marketsHTML());
   var bk = document.getElementById('mkback');
   if (bk) {
     bk.onclick = function () {
-      HERO.market = ''; HERO.env = null; HERO.open = -1; heroRender();
+      HERO.market = ''; heroReset(); heroRender();
+    };
+  }
+  var pb = document.getElementById('posbtn');
+  if (pb) {
+    pb.onclick = function () {
+      HERO.posOn = !HERO.posOn;
+      heroRender();
+      if (HERO.posOn && !HERO.pos && !HERO.posBusy) posLoad();
     };
   }
   var mk = el.querySelectorAll('.mkrow[data-mk]');
   for (var j = 0; j < mk.length; j++) {
     mk[j].onclick = (function (id) {
       return function () {
-        HERO.market = id; HERO.env = null; HERO.open = -1;
+        HERO.market = id; heroReset();
         HERO.pick = heroRowById(HERO.list, id);
         heroRender();
         askScene({ sc: 'pm_reputation', mk: id, lg: 'en' }, function (env) {
@@ -662,7 +758,7 @@ function sharpRender() {
     mk[j].onclick = (function (id) {
       /* ТАП ВЕДЁТ В HERO, А НЕ В СВОЙ РАЗБОР: разбор рынка на странице ОДИН. */
       return function () {
-        HERO.market = id; HERO.env = null; HERO.open = -1;
+        HERO.market = id; heroReset();
         HERO.pick = heroRowById(SHARP.env, id);
         show('t_hero'); heroRender();
         askScene({ sc: 'pm_reputation', mk: id, lg: 'en' }, function (env) {
@@ -684,123 +780,297 @@ function sharpLoad() {
 /* ═══════════════════════════════════════════════════════════════════════════
    ЭКРАН 2. КАРТА ЛИКВИДАЦИЙ — где висит чужое плечо
    ═══════════════════════════════════════════════════════════════════════════ */
+/* СОСТОЯНИЕ КАРТЫ.
+   ДВА ПОЛЯ ЗДЕСЬ - ПРЯМОЕ ЛЕЧЕНИЕ ЖИВОГО ЗАМЕЧАНИЯ ВЛАДЕЛЬЦА («двигаешь ползунок - он
+   пропадает вместе с деталью и работает с задержкой»). Причина была не в скорости сети:
+   обработчик ползунка ставил `LIQ.env = null`, а ползунки рисовались ИЗ КОНВЕРТА - то есть
+   страница сама стирала свои ручки на время запроса и возвращала их через секунду. Ощущалось
+   это именно «задержкой», хотя терялся не ответ, а органы управления.
+     `busy`   - идёт ли запрос. Экран при этом НЕ пустеет: прежняя карта и ползунки стоят, а
+                над картой появляется строка «обновляю».
+     `zooms`/`bsteps` - ПОСЛЕДНИЕ ИЗВЕСТНЫЕ ступени. Список ступеней всё равно приезжает из
+                слоя чисел (никакой второй лестницы в разметке), но ЗАПОМНИТЬ приехавшее -
+                не то же, что придумать своё: иначе один отказ шлюза уносил бы ползунки
+                вообще, и человеку было бы нечем повторить попытку.
+     `seq`    - номер запроса. Палец успевает дёрнуть ручку дважды, и ответ на ПЕРВОЕ
+                движение не имеет права перерисовать экран, когда в пути уже второе. */
 var LIQ = { token: (qp('token') || 'BTC').toUpperCase(), env: null, pick: -1, zoom: null,
-            buckets: null };
+            buckets: null, busy: false, horiz: true, zooms: [], bsteps: [], seq: 0,
+            msg: '' };
 var LIQ_TOKENS = ['BTC', 'ETH', 'SOL', 'HYPE'];
 var BOARD = { on: false, env: null, busy: false };
 
 function boardLoad() {
   BOARD.busy = true;
-  liqRender();
+  liqPaint();
   askScene({ sc: 'perp_risk', lg: 'en' }, function (env) {
-    BOARD.env = env; BOARD.busy = false; showReh(env); liqRender();
+    BOARD.env = env; BOARD.busy = false; showReh(env); liqPaint();
   });
 }
 
 function liqSVG(p) {
+  /* КАРТА В ДВУХ ОРИЕНТАЦИЯХ, И ГОРИЗОНТАЛЬНАЯ - ПО УМОЛЧАНИЮ.
+     ЖИВОЕ ЗАМЕЧАНИЕ ВЛАДЕЛЬЦА: «зачем в вертикальное переделал, было же горизонтальное».
+     Он прав дважды. Во-первых, картинка в чате горизонтальная, и две ориентации у ОДНИХ данных
+     заставляют человека каждый раз заново искать, где тут цена. Во-вторых, на горизонтальной
+     подпись уровня («$72.1K - $80.1K») и подпись суммы читаются БЕЗ ПОВОРОТА текста, а
+     повёрнутые числа - это то, из-за чего цифры вылезали за рамку карточки.
+     Вертикальная оставлена опцией: у неё своё достоинство - пунктир текущей цены читается как
+     на свечах. Выбор помнится в `LIQ.horiz`.
+
+     ГЛАВНОЕ ПРО РАМКИ: все подписи считаются ВНУТРЬ поля, и если число не влезает - оно не
+     рисуется вовсе (а сумма всё равно доступна в строке детали под графиком). Обрезанное или
+     вылезшее за карточку число хуже отсутствующего: оно выглядит настоящим. */
   var b = p.buckets || [];
   if (!b.length) return '';
-  /* ДВЕ ОСИ ВМЕСТО ДВУХ ЦИФР ПО КРАЯМ (замечание владельца: «никаких осей не видно ценовых»).
-     Слева - ДЕНЬГИ: без неё столбик был высотой без величины, и сумму приходилось угадывать
-     или тапать. Снизу - ЦЕНА: пять засечек по диапазону, а не только края.
-     ЛЕВОЕ ПОЛЕ ШИРЕ ПРАВОГО НАРОЧНО: там стоят подписи вида «$1.4B», и на 22 пикселях они
-     обрезались бы - обрезанное число хуже отсутствующего, потому что выглядит как настоящее. */
-  var W = 320, H = 150, padL = 44, padR = 10, padB = 16, n = b.length;
-  var max = 0, i;
+  var n = b.length, i, max = 0;
   for (i = 0; i < n; i++) max = Math.max(max, Number(b[i][2] || 0));
-  var plotW = W - padL - padR;
-  var bw = plotW / n;
-  var pad = padL;                      /* дальше в коде «pad» = левая граница поля графика */
   var lo = Number(b[0][0]), hi = Number(b[n - 1][1]);
-  var s = '<svg viewBox="0 0 ' + W + ' ' + (H + padB + 10) + '" role="img">';
-  /* ОСЬ ДЕНЕГ: три линии сетки и подписи. Считается из max, то есть из тех же чисел, что
-     столбики - своей арифметики у страницы нет. */
+  var mark = (p.mark === null || p.mark === undefined) ? null : Number(p.mark);
+  var W = 320;
+  var s = '';
+  /* ЦВЕТА - ЧИСЛАМИ ИЗ CSS (см. `cssv`): карту можно сохранить файлом, а в файле переменных
+     страницы нет. `xmlns` тоже не украшение: без него вынутый SVG не открывается как
+     картинка. `id` нужен кнопке сохранения, чтобы взять ИМЕННО карту, а не знак Nansen в
+     шапке - он тоже svg. */
+  var C_L = cssv('--long', '#ff6b81'), C_S = cssv('--short', '#00d395');
+  var C_N = cssv('--named', '#49c8ff'), C_BG = cssv('--card', '#221244');
+  var SVG_OPEN = '<svg id="liqsvg" xmlns="http://www.w3.org/2000/svg" role="img" viewBox="0 0 ';
+
+  if (!LIQ.horiz) {
+    /* ═══ ВЕРТИКАЛЬНАЯ: цена по горизонтали, деньги вверх ═══ */
+    var H = 150, padL = 46, padR = 12, padB = 18, padT = 26;
+    var plotW = W - padL - padR, plotH = H - padT;
+    var bw = plotW / n;
+    s = SVG_OPEN + W + ' ' + (H + padB) + '">'
+      + '<rect x="0" y="0" width="' + W + '" height="' + (H + padB) + '" fill="' + C_BG
+      + '"/>';
+    for (i = 0; i <= 2; i++) {
+      var gv = max * (i / 2.0), gy = H - plotH * (i / 2.0);
+      s += '<line x1="' + padL + '" y1="' + gy.toFixed(1) + '" x2="' + (W - padR)
+         + '" y2="' + gy.toFixed(1) + '" stroke="#3a2168" stroke-width="0.7"/>'
+         + '<text x="' + (padL - 4) + '" y="' + (gy - 2).toFixed(1)
+         + '" text-anchor="end" fill="#b4a3dd" font-size="8">$' + esc(usd(gv)) + '</text>';
+    }
+    for (i = 0; i < n; i++) {
+      var v = Number(b[i][2] || 0);
+      var hgt = max ? Math.max(2, plotH * v / max) : 2;
+      var x = padL + i * bw, y = H - hgt;
+      var side = String(b[i][3] || '');
+      var col = side === 'SHORT' ? C_S : (side === 'LONG' ? C_L : '#6b7280');
+      s += '<rect data-b="' + i + '" x="' + (x + 1).toFixed(1) + '" y="' + y.toFixed(1)
+         + '" width="' + Math.max(1, bw - 2).toFixed(1) + '" height="' + hgt.toFixed(1)
+         + '" fill="' + col + '" opacity="' + (LIQ.pick === i ? '1' : '0.82') + '" rx="1"/>';
+      var nmd = Number(b[i][4] || 0);
+      if (nmd > 0 && v > 0) {
+        var nh = Math.max(1, hgt * Math.min(1, nmd / v));
+        var nw = Math.max(1.5, (bw - 2) * 0.42);
+        s += '<rect x="' + (x + 1 + ((bw - 2) - nw) / 2).toFixed(1)
+           + '" y="' + (H - nh).toFixed(1) + '" width="' + nw.toFixed(1)
+           + '" height="' + nh.toFixed(1)
+           + '" fill="' + C_N + '" opacity="0.95" rx="1" pointer-events="none"/>';
+      }
+      /* ПОДПИСЬ СУММЫ ТОЛЬКО ЕСЛИ ОНА ЦЕЛИКОМ ВЛЕЗАЕТ В ПОЛЕ. Оценка длины повёрнутого текста -
+         по числу символов; не влезло - не рисуем. Именно это вылезало за карточку. */
+      var lbl = '$' + usd(v), lblLen = lbl.length * 4.4;
+      if (max && v >= max * 0.2 && bw >= 9 && (y - 3 - lblLen) > 2) {
+        s += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (y - 3).toFixed(1)
+           + '" fill="#f3eeff" font-size="7.5" text-anchor="start" pointer-events="none"'
+           + ' transform="rotate(-90 ' + (x + bw / 2).toFixed(1) + ' ' + (y - 3).toFixed(1)
+           + ')">' + esc(lbl) + '</text>';
+      }
+    }
+    /* ЗАСЕЧЕК ТРИ, А НЕ ПЯТЬ: на пяти подписи вида «$748.04» и «$40.4K» наезжали друг на друга -
+       видно на живом скриншоте. Три по краям и центру читаются всегда. */
+    if (hi > lo) {
+      for (i = 0; i <= 2; i++) {
+        var tx = padL + plotW * (i / 2.0), tv = lo + (hi - lo) * (i / 2.0);
+        s += '<line x1="' + tx.toFixed(1) + '" y1="' + H + '" x2="' + tx.toFixed(1)
+           + '" y2="' + (H + 3) + '" stroke="#4a2c82" stroke-width="0.8"/>'
+           + '<text x="' + tx.toFixed(1) + '" y="' + (H + 13) + '" text-anchor="'
+           + (i === 0 ? 'start' : (i === 2 ? 'end' : 'middle'))
+           + '" fill="#b4a3dd" font-size="8">$' + esc(price(tv)) + '</text>';
+      }
+    }
+    if (mark !== null && hi > lo) {
+      var mx = padL + plotW * (mark - lo) / (hi - lo);
+      if (mx >= padL && mx <= W - padR) {
+        s += '<line x1="' + mx.toFixed(1) + '" y1="' + (padT - 14) + '" x2="' + mx.toFixed(1)
+           + '" y2="' + H + '" stroke="#e8eaee" stroke-width="1" stroke-dasharray="3 3"/>'
+           + '<text x="' + Math.min(W - padR, Math.max(padL + 2, mx + 3)).toFixed(1)
+           + '" y="' + (padT - 16) + '" text-anchor="'
+           + (mx > W - 80 ? 'end' : 'start')
+           + '" fill="#e8eaee" font-size="9">now $' + esc(price(mark)) + '</text>';
+      }
+    }
+    s += '<line x1="' + padL + '" y1="' + H + '" x2="' + (W - padR) + '" y2="' + H
+       + '" stroke="#4a2c82"/></svg>';
+    return s;
+  }
+
+  /* ═══ ГОРИЗОНТАЛЬНАЯ (по умолчанию): цена по вертикали, деньги вправо ═══
+     Ровно как картинка в чате, и подписи не поворачиваются: уровень слева, сумма справа от
+     столбика. Высота растёт с числом уровней, поэтому 28 уровней не слипаются. */
+  var rowH = n > 20 ? 9 : (n > 14 ? 11 : 13);
+  var padTop = 16, padBot = 6, padLeftH = 52, padRightH = 54;
+  var Hh = padTop + rowH * n + padBot;
+  var plotWH = W - padLeftH - padRightH;
+  /* ГДЕ ПРОЙДЁТ ПУНКТИР ТЕКУЩЕЙ ЦЕНЫ - СЧИТАЕМ ДО СТОЛБИКОВ, А НЕ ПОСЛЕ.
+     ЗАЧЕМ ЗАРАНЕЕ. Подпись «now $67.3K» стоит у правого края, и там же стоят подписи сумм.
+     На живом рендере они наложились друг на друга: два разных числа слиплись в одну строку -
+     ровно тот дефект, который уже ловили на картинке в чате (золотое по синему). Рамку при
+     этом не нарушал никто, поэтому проверка «всё внутри холста» его не видела.
+     ПРАВИЛО РАЗРЕШЕНИЯ СПОРА: побеждает ПУНКТИР. Отметка цены на карте одна и уникальна, а
+     сумма строки есть и на оси денег, и в строке детали под графиком. Поэтому подпись суммы
+     той строки, куда садится «now», не рисуется вовсе - то же правило «не влезло - не рисуем»,
+     только теснит не рамка, а другое число. */
+  var _mySlot = (mark !== null && hi > lo) ? ((hi - mark) / (hi - lo)) * n : null;
+  var _myY = (_mySlot === null) ? null : (padTop + _mySlot * rowH);
+  s = SVG_OPEN + W + ' ' + Hh + '">'
+    + '<rect x="0" y="0" width="' + W + '" height="' + Hh + '" fill="' + C_BG + '"/>';
+  /* ОСЬ ДЕНЕГ - СВЕРХУ, ТРИ ЗАСЕЧКИ. Она же объясняет длину столбика. */
   for (i = 0; i <= 2; i++) {
-    var gv = max * (i / 2.0);
-    var gy = H - (H - 24) * (i / 2.0);
-    s += '<line x1="' + padL + '" y1="' + gy.toFixed(1) + '" x2="' + (W - padR)
-       + '" y2="' + gy.toFixed(1) + '" stroke="#3a2168" stroke-width="0.7"/>'
-       + '<text x="' + (padL - 4) + '" y="' + (gy - 2).toFixed(1)
-       + '" text-anchor="end" fill="#b4a3dd" font-size="8">$' + esc(usd(gv)) + '</text>';
+    var gx = padLeftH + plotWH * (i / 2.0), gvh = max * (i / 2.0);
+    s += '<line x1="' + gx.toFixed(1) + '" y1="' + padTop + '" x2="' + gx.toFixed(1)
+       + '" y2="' + (Hh - padBot) + '" stroke="#3a2168" stroke-width="0.7"/>'
+       + '<text x="' + gx.toFixed(1) + '" y="' + (padTop - 5)
+       + '" text-anchor="' + (i === 0 ? 'start' : (i === 2 ? 'end' : 'middle'))
+       + '" fill="#b4a3dd" font-size="8">$' + esc(usd(gvh)) + '</text>';
   }
   for (i = 0; i < n; i++) {
-    var v = Number(b[i][2] || 0);
-    var hgt = max ? Math.max(2, (H - 24) * v / max) : 2;
-    var x = pad + i * bw, y = H - hgt;
-    var side = String(b[i][3] || '');
-    var col = side === 'SHORT' ? 'var(--short)' : (side === 'LONG' ? 'var(--long)' : '#6b7280');
-    s += '<rect data-b="' + i + '" x="' + (x + 1).toFixed(1) + '" y="' + y.toFixed(1)
-       + '" width="' + Math.max(1, bw - 2).toFixed(1) + '" height="' + hgt.toFixed(1)
-       + '" fill="' + col + '" opacity="' + (LIQ.pick === i ? '1' : '0.82') + '" rx="1"/>';
-    /* ДЕНЬГИ С МЕТКОЙ NANSEN - ДОЛЕЙ ВНУТРИ СТОЛБИКА. Доля считается НЕ ТУТ: из словаря
-       приезжают обе суммы (вся корзина b[2] и её часть с меткой b[4]), страница переводит их
-       в пиксели - это формат, а не смысл. Значок «тут есть SM» рядом со столбиком сказал бы
-       только «кто-то есть», а высота полосы говорит СКОЛЬКО. `pointer-events=none`, иначе
-       полоса съедала бы тап по столбику и деталь корзины не открывалась. */
-    /* ПОЛОСА «С МЕТКОЙ» - УЗКАЯ, ПО ЦЕНТРУ СТОЛБИКА, А НЕ НА ВСЮ ЕГО ШИРИНУ.
-       ЖИВОЙ ПРОМАХ (скриншот Ren, HYPE): у Nansen метка есть У ВСЕХ 45 позиций, синяя полоса
-       заняла 100% каждого столбика - и карта стала ОДНОЦВЕТНОЙ. Лонги и шорты, то есть главный
-       смысл этой карты, пропали с экрана, а легенда продолжала обещать красный и зелёный.
-       Класс ошибки: дополнительная величина затёрла основную. Узкая полоса по центру оставляет
-       сторону видимой по краям при любой доле, включая 100%. */
-    var nmd = Number(b[i][4] || 0);
-    if (nmd > 0 && v > 0) {
-      var nh = Math.max(1, hgt * Math.min(1, nmd / v));
-      var nw = Math.max(1.5, (bw - 2) * 0.42);
-      var nx = x + 1 + ((bw - 2) - nw) / 2;
-      s += '<rect x="' + nx.toFixed(1) + '" y="' + (H - nh).toFixed(1)
-         + '" width="' + nw.toFixed(1) + '" height="' + nh.toFixed(1)
-         + '" fill="var(--named)" opacity="0.95" rx="1" pointer-events="none"/>';
+    var vh = Number(b[i][2] || 0);
+    var wid = max ? Math.max(2, plotWH * vh / max) : 2;
+    /* ДЕШЁВЫЙ УРОВЕНЬ - ВНИЗУ, ДОРОГОЙ - ВВЕРХУ, КАК В ЧАТЕ И КАК НА ЛЮБОМ ГРАФИКЕ ЦЕНЫ.
+       Корзины приезжают по возрастанию цены, поэтому строка считается от КОНЦА списка:
+       нулевая корзина (самая дешёвая) садится в нижнюю строку. Нарисуй наоборот - и карта
+       будет верной по числам, но перевёрнутой по смыслу относительно картинки из чата, а
+       два разных изображения одних данных человек читает как ошибку. */
+    var yy = padTop + (n - 1 - i) * rowH;
+    var sideh = String(b[i][3] || '');
+    var colh = sideh === 'SHORT' ? C_S : (sideh === 'LONG' ? C_L : '#6b7280');
+    s += '<rect data-b="' + i + '" x="' + padLeftH + '" y="' + (yy + 1).toFixed(1)
+       + '" width="' + wid.toFixed(1) + '" height="' + Math.max(3, rowH - 2).toFixed(1)
+       + '" fill="' + colh + '" opacity="' + (LIQ.pick === i ? '1' : '0.82') + '" rx="1"/>';
+    var nmdh = Number(b[i][4] || 0);
+    if (nmdh > 0 && vh > 0) {
+      var nwh = Math.max(1, wid * Math.min(1, nmdh / vh));
+      var nhh = Math.max(2, (rowH - 2) * 0.45);
+      s += '<rect x="' + padLeftH + '" y="' + (yy + 1 + ((rowH - 2) - nhh) / 2).toFixed(1)
+         + '" width="' + nwh.toFixed(1) + '" height="' + nhh.toFixed(1)
+         + '" fill="' + C_N + '" opacity="0.95" rx="1" pointer-events="none"/>';
     }
-    /* СУММА ПОДПИСАНА НА САМОМ СТОЛБИКЕ (просьба владельца: «а так удобно было бы суммы
-       видеть»). Подписываем только заметные столбики: на мелких подпись перекрыла бы соседей,
-       а обрезанное или наложенное число хуже отсутствующего. Остальные по-прежнему отвечают
-       на тап - деталь под графиком. Текст ПОВЁРНУТ: в столбик шириной ~18 пикселей «$364.3M»
-       по горизонтали не влезает ни при каком размере шрифта. */
-    if (max && v >= max * 0.18 && bw >= 9) {
-      s += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (y - 3).toFixed(1)
-         + '" fill="#f3eeff" font-size="7.5" text-anchor="start" pointer-events="none"'
-         + ' transform="rotate(-90 ' + (x + bw / 2).toFixed(1) + ' ' + (y - 3).toFixed(1)
-         + ')">$' + esc(usd(v)) + '</text>';
+    /* ПОДПИСЬ УРОВНЯ СЛЕВА - середина корзины. Цена как ось: у каждой строки своя. */
+    if (rowH >= 9) {
+      s += '<text x="' + (padLeftH - 4) + '" y="' + (yy + rowH / 2 + 2.6).toFixed(1)
+         + '" text-anchor="end" fill="#b4a3dd" font-size="' + (rowH >= 11 ? 8 : 7)
+         + '">$' + esc(price((Number(b[i][0]) + Number(b[i][1])) / 2)) + '</text>';
     }
-  }
-  /* ОСЬ ЦЕНЫ: засечки по диапазону, а не только его края. Пять штук - столько подписей
-     умещается на 320 пикселях, не наезжая друг на друга. */
-  if (hi > lo) {
-    for (i = 0; i <= 4; i++) {
-      var tx = padL + plotW * (i / 4.0);
-      var tv = lo + (hi - lo) * (i / 4.0);
-      var anch = (i === 0) ? 'start' : (i === 4 ? 'end' : 'middle');
-      s += '<line x1="' + tx.toFixed(1) + '" y1="' + H + '" x2="' + tx.toFixed(1)
-         + '" y2="' + (H + 3) + '" stroke="#4a2c82" stroke-width="0.8"/>'
-         + '<text x="' + tx.toFixed(1) + '" y="' + (H + 12)
-         + '" text-anchor="' + anch + '" fill="#b4a3dd" font-size="8">$'
-         + esc(price(tv)) + '</text>';
+    /* СУММА СПРАВА ОТ СТОЛБИКА, БЕЗ ПОВОРОТА, И ТОЛЬКО ЕСЛИ ВЛЕЗАЕТ В ПРАВОЕ ПОЛЕ И НЕ
+       СПОРИТ С ПОДПИСЬЮ ТЕКУЩЕЙ ЦЕНЫ (см. про спор выше). */
+    var lblh = '$' + usd(vh);
+    var _yTxt = yy + rowH / 2 + 2.6;
+    var _clash = (_myY !== null) && Math.abs(_yTxt - (_myY - 3)) < rowH;
+    if (max && vh >= max * 0.06 && !_clash
+        && (padLeftH + wid + 3 + lblh.length * 4.6) <= W) {
+      s += '<text x="' + (padLeftH + wid + 3).toFixed(1) + '" y="'
+         + (yy + rowH / 2 + 2.6).toFixed(1) + '" fill="#f3eeff" font-size="'
+         + (rowH >= 11 ? 8 : 7) + '" pointer-events="none">' + esc(lblh) + '</text>';
     }
   }
-  /* ПУНКТИР ТЕКУЩЕЙ ЦЕНЫ. Нет цены - НЕТ И ОТМЕТКИ: выдуманная цена дала бы «осталось 3%»,
-     которого никто не мерил. Карта без отметки остаётся честной картой уровней. */
-  var mark = p.mark;
-  if (mark !== null && mark !== undefined && hi > lo) {
-    var mx = padL + plotW * (Number(mark) - lo) / (hi - lo);
-    if (mx >= padL && mx <= W - padR) {
-      s += '<line x1="' + mx.toFixed(1) + '" y1="4" x2="' + mx.toFixed(1) + '" y2="' + H
-         + '" stroke="#e8eaee" stroke-width="1" stroke-dasharray="3 3"/>'
-         + '<text x="' + Math.min(W - 46, mx + 3).toFixed(1)
-         + '" y="12" fill="#e8eaee" font-size="9">now $' + esc(price(mark)) + '</text>';
+  /* ТЕКУЩАЯ ЦЕНА - ГОРИЗОНТАЛЬНЫЙ ПУНКТИР МЕЖДУ СТРОКАМИ, в той же логике, что в чате.
+     Считается ОТ ВЕРХА ВНИЗ, потому что дорогие уровни наверху: та же перевёрнутая шкала,
+     что у строк, и считать её надо в одном месте с ними, иначе пунктир окажется на чужом
+     уровне - самая опасная из возможных здесь ошибок, ведь по нему человек читает, куда
+     цене идти. */
+  if (mark !== null && hi > lo) {
+    var my = _myY;
+    if (my >= padTop && my <= Hh - padBot) {
+      s += '<line x1="' + padLeftH + '" y1="' + my.toFixed(1) + '" x2="' + (W - 4)
+         + '" y2="' + my.toFixed(1) + '" stroke="#e8eaee" stroke-width="1"'
+         + ' stroke-dasharray="3 3"/>'
+         + '<text x="' + (W - 4) + '" y="' + Math.max(padTop + 8, my - 3).toFixed(1)
+         + '" text-anchor="end" fill="#e8eaee" font-size="8">now $'
+         + esc(price(mark)) + '</text>';
     }
   }
-  s += '<line x1="' + padL + '" y1="' + H + '" x2="' + (W - padR) + '" y2="' + H
-     + '" stroke="#4a2c82"/>';
   s += '</svg>';
   return s;
 }
 
+/* СОХРАНИТЬ КАРТУ КАРТИНКОЙ - просьба владельца: «чтобы юзеры могли расшарить».
+   ЧТО ЗДЕСЬ ВАЖНО ПОНИМАТЬ ПРО ЧЕСТНОСТЬ. Внутри встроенного браузера Telegram скачивание
+   файла разрешено НЕ ВСЕГДА, и это не наш баг - это политика оболочки. Поэтому кнопка не
+   обещает успех: не получилось - страница прямо говорит, что тот же самый рисунок бот
+   присылает картинкой в чат по команде, и это путь, который работает всегда.
+   ПОЧЕМУ ×3. Карта считается в 320 точек по ширине (под телефон), а файл смотрят на большом
+   экране: без увеличения подписи в сохранённом PNG были бы нечитаемы. Увеличиваем именно
+   СЕТКУ, а не шрифт - SVG масштабируется без потери, и цифры остаются на своих местах. */
+function liqSave() {
+  var svg = document.getElementById('liqsvg');
+  if (!svg) { liqNote('There is no map on screen to save yet.'); return; }
+  var vb = String(svg.getAttribute('viewBox') || '0 0 320 200').split(/\s+/);
+  var w = Number(vb[2]) || 320, h = Number(vb[3]) || 200, k = 3;
+  var src;
+  try { src = new XMLSerializer().serializeToString(svg); } catch (e) { src = ''; }
+  if (!src) { liqSaveFail(); return; }
+  var img = new Image();
+  img.onload = function () {
+    try {
+      var c = document.createElement('canvas');
+      c.width = Math.round(w * k); c.height = Math.round(h * k);
+      var g = c.getContext('2d');
+      g.fillStyle = cssv('--card', '#221244');
+      g.fillRect(0, 0, c.width, c.height);
+      g.drawImage(img, 0, 0, c.width, c.height);
+      var nm = 'liqmap-' + (LIQ.token || 'perp') + '-' + (LIQ.horiz ? 'h' : 'v') + '.png';
+      c.toBlob(function (b) {
+        if (!b) { liqSaveFail(); return; }
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(b);
+        a.download = nm;
+        document.body.appendChild(a);
+        a.click();
+        liqNote('Saved as ' + nm + '. If nothing landed in your files, Telegram blocked the '
+                + 'download — ask the bot in chat for «карта ликвидаций ' + LIQ.token
+                + '» and it sends the same map as a picture.');
+        setTimeout(function () {
+          try { URL.revokeObjectURL(a.href); a.parentNode.removeChild(a); } catch (e2) {}
+        }, 2000);
+      }, 'image/png');
+    } catch (e3) { liqSaveFail(); }
+  };
+  img.onerror = function () { liqSaveFail(); };
+  try {
+    img.src = 'data:image/svg+xml;base64,'
+            + btoa(unescape(encodeURIComponent(src)));
+  } catch (e4) { liqSaveFail(); }
+}
+
+function liqSaveFail() {
+  liqNote('This browser would not let the page write a file. The bot sends the same map as a '
+          + 'picture in chat: ask it for «карта ликвидаций ' + LIQ.token + '».');
+}
+
+/* КОРОТКАЯ СТРОКА ОТ ЭКРАНА ЧЕЛОВЕКУ. Отдельным местом, а не alert: alert в мини-аппе
+   перекрывает экран и его нельзя прочитать рядом с тем, о чём он говорит. */
+function liqNote(t) {
+  LIQ.msg = String(t || '');
+  var el = document.getElementById('liqmsg');
+  if (el) { el.innerHTML = LIQ.msg ? '<div class="warn">' + esc(LIQ.msg) + '</div>' : ''; }
+}
+
 function liqHTML(env) {
+  /* ПОКА ИДЁТ ЗАПРОС, ПРЕЖНЯЯ КАРТА ОСТАЁТСЯ НА ЭКРАНЕ. Замена карты на слово «загружаю» -
+     это и есть то «мигание», на которое жаловался владелец: человек двигает ручку, а экран
+     на секунду становится пустым, и непонятно, сломалось или считается. */
   if (!env) return loading('Asking Nansen…');
   if (env.outcome !== 'ok' || !env.payload) return refuse(env);
   var p = env.payload;
   var h = '<div class="card">';
+  if (LIQ.busy) {
+    h += '<div class="dim">↻ redrawing at the new setting — the map below is the previous '
+       + 'one until the answer arrives.</div>';
+  }
   var top = p.top || [];
   h += '<p class="lead">Biggest cluster: <b>$' + usd(top[2]) + '</b> between $'
      + price(top[0]) + ' and $' + price(top[1]) + '.</p>';
@@ -912,72 +1182,140 @@ function liqTokens() {
   return list;
 }
 
-function liqRender() {
-  var el = document.getElementById('scr_liq');
+/* ЭКРАН КАРТЫ СОБИРАЕТСЯ ИЗ ТРЁХ САМОСТОЯТЕЛЬНЫХ ЧАСТЕЙ, И ЭТО НЕ КРАСОТА КОДА, А ЛЕЧЕНИЕ
+   ЖИВОЙ ЖАЛОБЫ ВЛАДЕЛЬЦА: «двигаешь ползунок - он с задержкой работает, он вместе с деталью
+   пропадает; ползунки должны оставаться и мышкой хорошо регулироваться, а карта -
+   перерисовываться».
+   ПРИЧИНА БЫЛА НЕ В СЕТИ. Любое действие (тап по столбику, движение ручки, приход ответа)
+   пересобирало ВСЮ разметку экрана целиком, а ползунки рисовались из приехавшего конверта -
+   значит, на время запроса страница сама стирала свои органы управления и возвращала их
+   через секунду. Ручка «дёргалась» и теряла фокус потому, что узел input создавался заново
+   под пальцем, а не потому, что ответ шёл долго.
+   ТЕПЕРЬ ТРИ РАЗНЫЕ ОПЕРАЦИИ:
+     `liqCtrlHTML` - ручки. Пересобираются РЕДКО: первый ответ, смена токена, смена ориентации;
+     `liqPaint`    - только область результата. Сюда идут тап по столбику и «обновляю…»;
+     `liqSyncCtrl` - положение ручек ПО ОТВЕТУ, БЕЗ пересборки узлов.
+   Закон «активная ступень отмечается по ОТВЕТУ, а не по нажатию» остался на месте - его
+   исполняет `liqSyncCtrl`. Изменилась только цена его исполнения: раньше она равнялась
+   перерисовке всего экрана. */
+
+/* КАКОЙ МАСШТАБ И КАКУЮ ДЕТАЛИЗАЦИЮ ВЕРНУЛ ОТВЕТ. Именно ответ, а не наше нажатие: если шлюз
+   ответил другим окном (а так бывает, пока Воркер не переложен), человек обязан увидеть это
+   подсветкой и строкой, а не поверить своему тапу. */
+function liqAnsZoom() {
+  var e = LIQ.env, p = (e && e.payload) || null;
+  if (e && (e.zoom === 0 || e.zoom)) return Number(e.zoom);
+  if (p && p.win_pct) return Math.round(Number(p.win_pct));
+  if (p && p.req_pct) return Math.round(Number(p.req_pct));
+  return null;
+}
+
+function liqAnsBuckets() {
+  var e = LIQ.env, p = (e && e.payload) || null;
+  if (p && p.buckets_n) return Number(p.buckets_n);
+  if (e && e.buckets) return Number(e.buckets);
+  return null;
+}
+
+function liqZidx(zs, ans) {
+  var i = zs.indexOf(ans);
+  if (i < 0) { i = zs.indexOf(50); }
+  if (i < 0) { i = 0; }
+  return i;
+}
+
+/* ЧЕСТНАЯ СТРОКА ПРО РАСХОЖДЕНИЕ «ПОПРОСИЛИ - ОТВЕТИЛИ». Почти всегда это значит, что Воркер
+   ещё не переложен и поля масштаба/детализации до бота не доезжают. Молчать нельзя: человек
+   будет дёргать ручку и думать, что сломан экран. */
+function liqWarnHTML() {
+  if (LIQ.busy) return '';
+  var za = liqAnsZoom(), ba = liqAnsBuckets();
+  var zBad = (LIQ.zoom !== null && LIQ.zoom !== undefined && za !== LIQ.zoom);
+  var bBad = (LIQ.buckets !== null && LIQ.buckets !== undefined && ba !== LIQ.buckets);
+  if (!zBad && !bBad) return '';
+  /* ФРАЗА СОБИРАЕТСЯ ИЗ ЧАСТЕЙ, А НЕ СКЛЕИВАЕТСЯ УСЛОВИЯМИ. Первая редакция выдавала «asked
+     for these settings, 28 levels, the answer came back with others 14 levels» - поймано
+     рендером: текст про расхождение сам оказался невнятным, а он и нужен-то ровно в тот
+     момент, когда человек уже подозревает, что экран врёт. */
+  var ask = [], got = [];
+  if (zBad) {
+    ask.push(LIQ.zoom ? ('±' + LIQ.zoom + '%') : 'the full range');
+    got.push(za ? ('±' + za + '%') : 'the full range');
+  }
+  if (bBad) {
+    ask.push(LIQ.buckets + ' levels');
+    got.push((ba === null ? '?' : ba) + ' levels');
+  }
+  /* ФРАЗУ ПРО ВОРКЕР НЕ РАЗРЫВАТЬ ПЕРЕНОСОМ СТРОКИ: её ищет тест по подстроке, и он прав -
+     склеенная из двух литералов подсказка однажды пропадёт из разметки, а тест этого не
+     заметит. Поймано на прогоне: 844 PASS / 1 FAIL ровно из-за переноса. */
+  return '<div class="warn">You asked for ' + ask.join(' and ') + ', the answer came back '
+       + 'with ' + got.join(' and ')
+       + '. The setting is not reaching the bot yet — the Worker needs redeploying.</div>';
+}
+
+/* РУЧКИ. Строятся из ЗАПОМНЕННЫХ ступеней (`LIQ.zooms`/`LIQ.bsteps`), а они приехали из слоя
+   чисел - второй лестницы в разметке по-прежнему нет. Но ЗАПОМНИТЬ приехавшее и придумать
+   своё - разные вещи: без памяти один отказ шлюза уносил бы ползунки вообще, и человеку было
+   бы нечем повторить попытку. */
+function liqCtrlHTML() {
   var h = '<div class="card"><h1>Where other people\'s leverage hangs</h1>'
         + '<div class="dim">Capital grouped by liquidation price. The tickers below are the '
         + 'most traded perps by 24h volume — measured, not a list we keep by hand. Any other '
         + 'ticker works too: type it.</div><div class="btns">';
-  var toks = liqTokens();
-  for (var i = 0; i < toks.length; i++) {
+  var toks = liqTokens(), i;
+  for (i = 0; i < toks.length; i++) {
     h += '<span class="btn' + (toks[i] === LIQ.token ? ' on' : '') + '" data-tk="'
        + esc(toks[i]) + '">' + esc(toks[i]) + '</span>';
   }
   h += '<span class="btn' + (BOARD.on ? ' on' : '') + '" id="bdbtn">⚔️ compare top four</span>';
   h += '</div>';
-  /* МАСШТАБ КАРТЫ. Ступени приезжают В КОНВЕРТЕ (`zooms`) - список ступеней живёт в слое
-     чисел, и второй список в разметке разъехался бы с первым. АКТИВНАЯ СТУПЕНЬ ОТМЕЧАЕТСЯ ПО
-     ОТВЕТУ (`win_pct`/`zoom`), А НЕ ПО НАЖАТИЮ: если шлюз почему-то ответил другим окном,
-     человек увидит это подсветкой, а не поверит своему тапу. */
   /* ═══ МАСШТАБ ПОЛЗУНКОМ, КАК ГРОМКОСТЬ (просьба владельца) ═══
-     Значения всё равно из ЗАКРЫТОЙ лестницы (`zooms` в конверте): ползунок двигает НОМЕР
-     ступени, а не проценты. Свободный процент из клиента - это произвольное значение в
-     подписанном сигнале, и сравнивать «37%» не с чем; лестница же сравнима и повторяема.
-     ПОДПИСЬ ПОД ПОЛЗУНКОМ ПОКАЗЫВАЕТ ФАКТ ИЗ ОТВЕТА, А НЕ ПОЛОЖЕНИЕ РУЧКИ. Первая редакция
-     читала `env.win_pct`, а оно лежит В PAYLOAD - поэтому подсветка не двигалась вовсе, и
-     выглядело это как «кнопки не работают». Ровно тот случай, когда экран обещал обратную
-     связь и не давал её. */
-  var zs = (LIQ.env && LIQ.env.zooms) || [];
+     Значения из ЗАКРЫТОЙ лестницы: ползунок двигает НОМЕР ступени, а не проценты. Свободный
+     процент из клиента - произвольное значение в подписанном сигнале, и сравнивать «37%» не с
+     чем; лестница сравнима и повторяема. */
+  var zs = LIQ.zooms || [];
   if (zs.length) {
-    var _p0 = (LIQ.env && LIQ.env.payload) || {};
-    var zAns = (LIQ.env && (LIQ.env.zoom === 0 || LIQ.env.zoom)) ? Number(LIQ.env.zoom)
-               : (_p0.win_pct ? Math.round(_p0.win_pct) : null);
-    var zIdx = zs.indexOf(zAns);
-    if (zIdx < 0) { zIdx = zs.indexOf(50); }
-    if (zIdx < 0) { zIdx = 0; }
+    var za = liqAnsZoom(), zi = liqZidx(zs, za);
     h += '<div class="btns" style="margin-top:8px;align-items:center">'
        + '<span class="dim">scale</span>'
        + '<input id="znrange" type="range" min="0" max="' + (zs.length - 1) + '" step="1"'
-       + ' value="' + zIdx + '" style="flex:1;min-width:120px;accent-color:#00d395">'
-       + '<span class="btn on" id="znlbl">' + (zAns ? ('±' + zAns + '%') : 'all') + '</span>'
-       + '</div>';
-    /* ВТОРОЙ ПОЛЗУНОК - ЧИСЛО КЛАСТЕРОВ («количество и масштаб», как просил владелец).
-       Масштаб решает, КАКОЙ участок цены смотрим; детализация - на сколько уровней его резать.
-       Две разные величины, поэтому две ручки, а не одна «умная». */
-    var bs = (LIQ.env && LIQ.env.buckets_steps) || [];
+       + ' value="' + zi + '" style="flex:1;min-width:120px;accent-color:#00d395">'
+       + '<span class="btn on" id="znlbl">'
+       + (za === null ? '±?' : (za ? ('±' + za + '%') : 'all')) + '</span></div>';
+    /* ВТОРОЙ ПОЛЗУНОК - ЧИСЛО УРОВНЕЙ. Масштаб решает, КАКОЙ участок цены смотрим;
+       детализация - на сколько уровней его резать. Две разные величины, поэтому две ручки, а
+       не одна «умная». */
+    var bs = LIQ.bsteps || [];
     if (bs.length) {
-      var bAns = _p0.buckets_n || (LIQ.env && LIQ.env.buckets) || 14;
-      var bIdx = bs.indexOf(Number(bAns));
-      if (bIdx < 0) { bIdx = Math.floor(bs.length / 2); }
+      var ba = liqAnsBuckets(), bi = bs.indexOf(Number(ba));
+      if (bi < 0) { bi = Math.floor(bs.length / 2); }
       h += '<div class="btns" style="margin-top:4px;align-items:center">'
          + '<span class="dim">detail</span>'
          + '<input id="bkrange" type="range" min="0" max="' + (bs.length - 1) + '" step="1"'
-         + ' value="' + bIdx + '" style="flex:1;min-width:120px;accent-color:#00d395">'
-         + '<span class="btn on" id="bklbl">' + esc(bs[bIdx]) + ' levels</span></div>';
+         + ' value="' + bi + '" style="flex:1;min-width:120px;accent-color:#00d395">'
+         + '<span class="btn on" id="bklbl">' + esc(bs[bi]) + ' levels</span></div>';
     }
     h += '<div class="dim">Levels are bucketed inside this window around the current price. '
-       + 'Money outside it is counted and named, not dropped.</div>';
-    /* ЧЕСТНАЯ СТРОКА ПРО РАСХОЖДЕНИЕ. Если попросили одно окно, а ответ пришёл с другим -
-       почти всегда это значит, что Воркер ещё не переложен и поле масштаба не доезжает.
-       Молчать тут нельзя: человек будет двигать ручку и думать, что сломан экран. */
-    if (LIQ.zoom !== null && LIQ.zoom !== undefined && zAns !== LIQ.zoom) {
-      h += '<div class="warn">You asked for '
-         + (LIQ.zoom ? ('±' + LIQ.zoom + '%') : 'the full range')
-         + ', the gateway answered with '
-         + (zAns ? ('±' + zAns + '%') : 'the full range')
-         + '. The scale field is not reaching the bot yet — the Worker needs redeploying.</div>';
-    }
+       + 'Money outside it is counted and named, not dropped. '
+       /* ПОЧЕМУ СТОЛБИКОВ БЫВАЕТ МЕНЬШЕ, ЧЕМ УРОВНЕЙ НА РУЧКЕ. Ручка задаёт, на сколько равных
+          ломтей режем окно, а ломти без денег не рисуются вовсе. Без этой фразы «14 levels» над
+          пятью столбиками читается как ошибка счёта - то есть экран сам себя опровергает. */
+       + 'Detail is how many equal slices the window is cut into; a slice with no money in it '
+       + 'is not drawn, so the bars can be fewer than the levels.</div>';
   }
+  h += '<div id="liqwarn">' + liqWarnHTML() + '</div>';
+  /* ═══ ОРИЕНТАЦИЯ И СОХРАНЕНИЕ КАРТИНКИ ═══
+     ГОРИЗОНТАЛЬНАЯ ВЕРНУЛАСЬ УМОЛЧАНИЕМ (замечание владельца: «зачем в вертикальное
+     переделал, было же горизонтальное»). Она совпадает с картинкой, которую бот присылает в
+     чат, и её подписи не требуют поворота текста - а повёрнутые числа и были тем, что вылезало
+     за рамку карточки. Вертикальная оставлена ОПЦИЕЙ, а не выкинута: у неё своё достоинство -
+     пунктир текущей цены читается как на свечах. Ни одна из двух не «правильная», поэтому
+     выбор отдан человеку, а не зашит. Перерисовка тут БЕЗ СЕТИ: те же числа, другая раскладка. */
+  h += '<div class="btns" style="margin-top:8px">'
+     + '<span class="btn" id="orbtn">' + (LIQ.horiz ? '↔ horizontal' : '↕ vertical')
+     + '</span>'
+     + '<span class="btn" id="svbtn">💾 save image</span></div>';
   /* СВОЙ ТИКЕР ВВОДОМ. Это НЕ то же, что ручной ввод market_id, который мы из hero убрали:
      там номер был служебным и человек искал бы его вне экрана, а тикер он и так знает. */
   h += '<div class="btns" style="margin-top:6px">'
@@ -988,20 +1326,44 @@ function liqRender() {
      + 'border-radius:10px;padding:7px 9px;width:170px;font:inherit">'
      + '<span class="btn" id="tkgo">show map</span></div>';
   h += '</div>';
-  el.innerHTML = h + (BOARD.on ? boardHTML(BOARD.env) : '') + liqHTML(LIQ.env);
+  return h;
+}
+
+function liqResHTML() {
+  return (BOARD.on ? boardHTML(BOARD.env) : '') + liqHTML(LIQ.env);
+}
+
+/* ПОЛОЖЕНИЕ РУЧЕК И ПОДПИСИ - ПО ОТВЕТУ, БЕЗ ПЕРЕСБОРКИ УЗЛОВ. Ровно этим и лечится
+   «дёргается и пропадает»: узел input живёт, меняется только его значение. */
+function liqSyncCtrl() {
+  var zs = LIQ.zooms || [], bs = LIQ.bsteps || [];
+  var zr = document.getElementById('znrange'), zl = document.getElementById('znlbl');
+  if (zr && zs.length) {
+    var za = liqAnsZoom();
+    zr.value = String(liqZidx(zs, za));
+    if (zl) { zl.textContent = (za === null ? '±?' : (za ? ('±' + za + '%') : 'all')); }
+  }
+  var br = document.getElementById('bkrange'), bl = document.getElementById('bklbl');
+  if (br && bs.length) {
+    var ba = Number(liqAnsBuckets()), bi = bs.indexOf(ba);
+    if (bi < 0) { bi = Math.floor(bs.length / 2); }
+    br.value = String(bi);
+    if (bl) { bl.textContent = bs[bi] + ' levels'; }
+  }
+  var w = document.getElementById('liqwarn');
+  if (w) { w.innerHTML = liqWarnHTML(); }
+}
+
+function liqBindCtrl() {
+  var el = document.getElementById('scr_liq'), i;
   var bd = document.getElementById('bdbtn');
   if (bd) {
     bd.onclick = function () {
       BOARD.on = !BOARD.on;
-      liqRender();
+      bd.className = 'btn' + (BOARD.on ? ' on' : '');
+      liqPaint();
       if (BOARD.on && !BOARD.env && !BOARD.busy) boardLoad();
     };
-  }
-  var brs = el.querySelectorAll('.mkrow[data-btk]');
-  for (i = 0; i < brs.length; i++) {
-    brs[i].onclick = (function (tk) {
-      return function () { LIQ.token = tk; LIQ.env = null; LIQ.pick = -1; liqLoad(); };
-    })(brs[i].getAttribute('data-btk'));
   }
   /* ПОЛЗУНКИ СПРАШИВАЮТ СЕТЬ НА `change` (палец отпустили), А НЕ НА `input` (каждый пиксель):
      иначе одно движение ручки = десяток запросов к площадке. Подпись же двигается сразу, на
@@ -1009,28 +1371,37 @@ function liqRender() {
   var zr = document.getElementById('znrange');
   var zl = document.getElementById('znlbl');
   if (zr) {
-    var zsv = (LIQ.env && LIQ.env.zooms) || [];
     zr.oninput = function () {
-      var v = Number(zsv[Number(zr.value)]);
+      var v = Number((LIQ.zooms || [])[Number(zr.value)]);
       if (zl) { zl.textContent = v ? ('±' + v + '%') : 'all'; }
     };
     zr.onchange = function () {
-      LIQ.zoom = Number(zsv[Number(zr.value)]);
-      LIQ.env = null; LIQ.pick = -1; liqLoad();
+      LIQ.zoom = Number((LIQ.zooms || [])[Number(zr.value)]);
+      LIQ.pick = -1; liqLoad();
     };
   }
   var br = document.getElementById('bkrange');
   var bl = document.getElementById('bklbl');
   if (br) {
-    var bsv = (LIQ.env && LIQ.env.buckets_steps) || [];
     br.oninput = function () {
-      if (bl) { bl.textContent = bsv[Number(br.value)] + ' levels'; }
+      var v = (LIQ.bsteps || [])[Number(br.value)];
+      if (bl) { bl.textContent = v + ' levels'; }
     };
     br.onchange = function () {
-      LIQ.buckets = Number(bsv[Number(br.value)]);
-      LIQ.env = null; LIQ.pick = -1; liqLoad();
+      LIQ.buckets = Number((LIQ.bsteps || [])[Number(br.value)]);
+      LIQ.pick = -1; liqLoad();
     };
   }
+  var ob = document.getElementById('orbtn');
+  if (ob) {
+    ob.onclick = function () {
+      /* СМЕНА ОРИЕНТАЦИИ НЕ СТОИТ НИ ОДНОГО ЗАПРОСА: числа те же, раскладка другая. */
+      LIQ.horiz = !LIQ.horiz;
+      liqRender();
+    };
+  }
+  var sv = document.getElementById('svbtn');
+  if (sv) { sv.onclick = liqSave; }
   var tkin = document.getElementById('tkin');
   var tkgo = document.getElementById('tkgo');
   if (tkin && tkgo) {
@@ -1040,35 +1411,199 @@ function liqRender() {
          вернуться ОТКАЗОМ шлюза («позиций не отдали»), а не нашим догадочным «нет такого». */
       var v = (tkin.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
       if (!v) return;
-      LIQ.token = v; LIQ.env = null; LIQ.pick = -1; liqLoad();
+      LIQ.token = v; LIQ.pick = -1; LIQ.msg = ''; liqLoad(true);
     };
     tkgo.onclick = _go;
     tkin.onkeydown = function (e) { if (e && e.keyCode === 13) _go(); };
   }
-  var bs = el.querySelectorAll('.btn[data-tk]');
-  for (i = 0; i < bs.length; i++) {
-    bs[i].onclick = (function (tk) {
-      return function () { LIQ.token = tk; LIQ.env = null; LIQ.pick = -1; liqLoad(); };
-    })(bs[i].getAttribute('data-tk'));
+  var bs2 = el.querySelectorAll('.btn[data-tk]');
+  for (i = 0; i < bs2.length; i++) {
+    bs2[i].onclick = (function (tk) {
+      return function () { LIQ.token = tk; LIQ.pick = -1; LIQ.msg = ''; liqLoad(true); };
+    })(bs2[i].getAttribute('data-tk'));
+  }
+}
+
+function liqBindRes() {
+  var el = document.getElementById('liqres');
+  if (!el) return;
+  var i;
+  var brs = el.querySelectorAll('.mkrow[data-btk]');
+  for (i = 0; i < brs.length; i++) {
+    brs[i].onclick = (function (tk) {
+      return function () { LIQ.token = tk; LIQ.pick = -1; LIQ.msg = ''; liqLoad(true); };
+    })(brs[i].getAttribute('data-btk'));
   }
   var rects = el.querySelectorAll('rect[data-b]');
   for (i = 0; i < rects.length; i++) {
     rects[i].onclick = (function (n) {
-      return function () { LIQ.pick = (LIQ.pick === n ? -1 : n); liqRender(); };
+      /* ТАП ПО СТОЛБИКУ ПЕРЕРИСОВЫВАЕТ ТОЛЬКО РЕЗУЛЬТАТ. Раньше он пересобирал экран целиком
+         вместе с ползунками - отсюда и «деталь пропадает вместе с ручками». */
+      return function () { LIQ.pick = (LIQ.pick === n ? -1 : n); liqPaint(); };
     })(Number(rects[i].getAttribute('data-b')));
   }
 }
 
-function liqLoad() {
-  liqRender();
+function liqRender() {
+  var el = document.getElementById('scr_liq');
+  el.innerHTML = liqCtrlHTML() + '<div id="liqmsg"></div>'
+               + '<div id="liqres">' + liqResHTML() + '</div>';
+  liqBindCtrl();
+  liqBindRes();
+  liqNote(LIQ.msg);
+}
+
+function liqPaint() {
+  var el = document.getElementById('liqres');
+  if (!el) { liqRender(); return; }
+  el.innerHTML = liqResHTML();
+  liqBindRes();
+}
+
+function liqLoad(full) {
+  /* НОМЕР ЗАПРОСА. Палец успевает дёрнуть ручку дважды, и ответ на ПЕРВОЕ движение не имеет
+     права перерисовать экран, когда в пути уже второе: иначе карта показала бы настройку,
+     которую человек уже передумал спрашивать. */
+  LIQ.seq += 1;
+  var my = LIQ.seq;
+  LIQ.busy = true;
+  /* ПОКА ЗАПРОС В ПУТИ, РУЧКИ НЕ ТРОГАЕМ ВООБЩЕ. ПОЙМАНО РЕНДЕРОМ: здесь стоял `liqSyncCtrl()`,
+     и он честно выставлял ручку по ПОСЛЕДНЕМУ ОТВЕТУ - то есть отматывал её назад в тот самый
+     момент, когда человек её отпустил. Со стороны это выглядит как «ползунок сам прыгает», и
+     это ровно та жалоба, которую мы лечим. Подпись уже показывает выбранную ступень (её ставит
+     `oninput`), а факт из ответа встанет на место, когда ответ придёт.
+     Предупреждение о расхождении при этом гасим: старое относится к прошлому запросу. */
+  if (full) {
+    liqRender();
+  } else {
+    liqPaint();
+    var _w0 = document.getElementById('liqwarn');
+    if (_w0) { _w0.innerHTML = ''; }
+  }
   var req = { sc: 'liq_map', tk: LIQ.token, lg: 'en' };
   /* МАСШТАБ ЕДЕТ ТОЛЬКО ЕСЛИ ЕГО ВЫБРАЛИ. Ноль - это ЗНАЧЕНИЕ («весь размах»), а не «не
      выбрано», поэтому проверка именно на null, а не на ложность. */
   if (LIQ.zoom !== null && LIQ.zoom !== undefined) { req.zn = LIQ.zoom; }
   if (LIQ.buckets !== null && LIQ.buckets !== undefined) { req.bk = LIQ.buckets; }
   askScene(req, function (env) {
-    LIQ.env = env; showReh(env); liqRender();
+    if (my !== LIQ.seq) return;          /* устаревший ответ - молча мимо */
+    LIQ.busy = false;
+    LIQ.env = env;
+    /* СТУПЕНИ ЗАПОМИНАЮТСЯ ИЗ КОНВЕРТА: список живёт в слое чисел, страница его только
+       помнит между запросами, чтобы ручки не исчезали на время ожидания и после отказа. */
+    if (env && env.zooms && env.zooms.length) { LIQ.zooms = env.zooms.slice(0); }
+    if (env && env.buckets_steps && env.buckets_steps.length) {
+      LIQ.bsteps = env.buckets_steps.slice(0);
+    }
+    showReh(env);
+    if (!document.getElementById('znrange')) {
+      liqRender();                       /* ручек ещё не было - первый ответ их приносит */
+    } else {
+      liqSyncCtrl();
+      liqPaint();
+    }
   });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ЭКРАН 4. «➕ ЕЩЁ» — ДВА СИГНАЛА, КОТОРЫЕ ЖИЛИ ТОЛЬКО В ЧАТЕ
+
+   ЖИВОЙ ВОПРОС ВЛАДЕЛЬЦА: «а на холст не стал добавлять другие вкладки с фичами?». Он прав:
+   часть сигналов уже работала в боте и была видна только тому, кто знает команду. Здесь две,
+   выбранные не по принципу «что осталось», а по тому, чего на прежних экранах НЕ БЫЛО ВОВСЕ:
+
+     * DCA - единственный сигнал про БУДУЩИЕ покупки. Остальные экраны говорят о прошлом: кто
+       уже держит, где уже висит плечо. Программа DCA - деньги, поставленные на то, что кошелёк
+       БУДЕТ покупать дальше;
+     * рейтинг сетей - единственный экран НЕ про кошелёк и НЕ про рынок, а про то, где вообще
+       идут деньги. Он отвечает на вопрос «куда смотреть сегодня» до того, как выбран объект.
+
+   ОБА СТОЯТ ОДИН ЗАПРОС, поэтому грузятся при открытии таба сами - в отличие от сравнения
+   рынков, которое стоит 13-17 запросов и потому ждёт кнопки. Цена решает поведение, а не вкус.
+   ═══════════════════════════════════════════════════════════════════════════ */
+var MORE = { dca: null, ch: null, busyD: false, busyC: false };
+
+function dcaHTML(env) {
+  if (!env) return loading('Reading scheduled buying…');
+  if (env.outcome !== 'ok' || !env.payload) return refuse(env);
+  var p = env.payload, rows = p.rows || [];
+  var h = '<div class="card"><h1>Who is buying on a schedule</h1>'
+        + '<div class="dim">A DCA program is a commitment to keep buying, not a single trade. '
+        + 'The bar is how much of the program is ALREADY spent: a program at 5% means the '
+        + 'purchases are still ahead, at 95% they are already in the price.</div>';
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    h += '<div class="mkrow"><div class="mkq">' + esc(r.who) + ' · <b>' + esc(r.inp)
+       + ' → ' + esc(r.outp) + '</b></div>';
+    h += '<div class="mkmeta">'
+       + (r.usd === null || r.usd === undefined ? 'size not in the response'
+                                               : ('$' + usd(r.usd)))
+       + (r.spent_pct === null || r.spent_pct === undefined
+          ? ' · <i>execution share not measurable</i>'
+          : (' · spent ' + Math.round(r.spent_pct) + '%'))
+       + (r.status ? ' · ' + esc(r.status) : '') + '</div>';
+    /* ПОЛОСА РИСУЕТСЯ ТОЛЬКО КОГДА ДОЛЯ ИЗМЕРЕНА. Полоса нулевой длины на неизмеренной доле
+       читалась бы как «ещё ничего не потратили» - то есть как измерение. */
+    if (r.spent_pct !== null && r.spent_pct !== undefined) {
+      h += '<div class="barwrap"><div class="bar" style="width:'
+         + Math.max(2, Math.round(Number(r.spent_pct))) + '%;background:var(--nsn)"></div>'
+         + '</div>';
+    }
+    h += '</div>';
+  }
+  h += '<div class="legend"><span><i style="background:var(--nsn)"></i>already spent</span>'
+     + '<span>the rest is still to be bought</span></div>';
+  h += footer(env) + '</div>';
+  return h;
+}
+
+function chainHTML(env) {
+  if (!env) return loading('Reading the chain ranking…');
+  if (env.outcome !== 'ok' || !env.payload) return refuse(env);
+  var p = env.payload, rows = p.rows || [], i, max = 0;
+  for (i = 0; i < rows.length; i++) { max = Math.max(max, Number(rows[i].tvl || 0)); }
+  var h = '<div class="card"><h1>Where the money sits, and where it moved</h1>'
+        + '<div class="dim">Order is by TVL. TVL is money parked, not money moving — so the '
+        + 'change next to it matters as much as the size.</div>';
+  for (i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var w = max ? Math.max(3, Math.round(100 * Number(r.tvl || 0) / max)) : 3;
+    var chg = (r.tvl_chg === null || r.tvl_chg === undefined) ? null : Number(r.tvl_chg);
+    h += '<div class="row"><div class="nm">' + esc(r.chain) + '</div>'
+       + '<div class="barwrap"><div class="bar" style="width:' + w
+       + '%;background:var(--nsn)"></div></div>'
+       + '<div class="val">$' + usd(r.tvl) + '</div></div>';
+    h += '<div class="det on">'
+       + (chg === null
+          ? '<i>change in TVL did not arrive — this stillness is our missing number</i>'
+          : ('TVL ' + (chg >= 0 ? '+' : '') + chg.toFixed(1) + '% over the window'))
+       + (r.dex === null || r.dex === undefined ? '' : (' · DEX volume $' + usd(r.dex)))
+       + (r.addrs === null || r.addrs === undefined ? ''
+          : (' · ' + usd(r.addrs) + ' active addresses'))
+       + '</div>';
+  }
+  h += footer(env) + '</div>';
+  return h;
+}
+
+function moreRender() {
+  document.getElementById('scr_more').innerHTML = dcaHTML(MORE.dca) + chainHTML(MORE.ch);
+}
+
+function moreLoad() {
+  if (!MORE.dca && !MORE.busyD) {
+    MORE.busyD = true;
+    askScene({ sc: 'smart_dca', lg: 'en' }, function (env) {
+      MORE.dca = env; MORE.busyD = false; showReh(env); moreRender();
+    });
+  }
+  if (!MORE.ch && !MORE.busyC) {
+    MORE.busyC = true;
+    askScene({ sc: 'chain_rank', lg: 'en' }, function (env) {
+      MORE.ch = env; MORE.busyC = false; showReh(env); moreRender();
+    });
+  }
+  moreRender();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1136,7 +1671,7 @@ function showReh(env) {
 
 /* ── табы ── */
 var TABS = [['t_hero', 'scr_hero'], ['t_sharp', 'scr_sharp'],
-            ['t_liq', 'scr_liq'], ['t_feed', 'scr_feed']];
+            ['t_liq', 'scr_liq'], ['t_more', 'scr_more'], ['t_feed', 'scr_feed']];
 function show(which) {
   for (var i = 0; i < TABS.length; i++) {
     var on = (TABS[i][0] === which);
@@ -1148,7 +1683,10 @@ function show(which) {
     feedLoad();
     FEED.timer = setInterval(feedLoad, 1000);   /* раз в секунду, как просит ТЗ */
   }
-  if (which === 't_liq' && !LIQ.env) liqLoad();
+  if (which === 't_liq' && !LIQ.env && !LIQ.busy) liqLoad();
+  /* ОБА ЭКРАНА ТАБА «ЕЩЁ» СТОЯТ ПО ОДНОМУ ЗАПРОСУ, поэтому грузятся сами и ровно один раз:
+     `moreLoad` сам проверяет, что уже приехало. */
+  if (which === 't_more' && (!MORE.dca || !MORE.ch)) moreLoad();
   /* СРАВНЕНИЕ РЫНКОВ САМО НЕ ЗАПУСКАЕТСЯ ПОВТОРНО: экран стоит 13-17 запросов, и обновлять
      его на каждое переключение таба значило бы жечь кредиты за перелистывание. */
   if (which === 't_sharp' && !SHARP.env && !SHARP.busy) sharpLoad();

@@ -2269,14 +2269,61 @@ def smart_money_dcas(per_page=20):
                        ckey=f"smdca:{per_page}"))
 
 
+def sm_dca_data(rows, top=10):
+    """ЧИСЛА ПРОГРАММ DCA, БЕЗ СЛОВ. -> dict | None.
+
+    ОТДЕЛЬНО ОТ РЕНДЕРА ПО ЗАКОНУ 0. Доля исполнения («потрачено 40%») - не украшение, а вывод,
+    по которому человек решает, покупки ещё впереди или уже в цене; считать её обязано ОДНО
+    место. Мини-апп читает ЭТОТ ЖЕ словарь, поэтому его полоска и фраза бота не могут
+    разойтись молча - а разошлись бы на первой же правке, если бы каждый считал сам.
+    """
+    _all = [r for r in (rows or ()) if isinstance(r, dict)]
+    if not _all:
+        return None
+    out, shown, with_val, total, first_row = [], 0, 0, 0.0, None
+    for r in _all[:int(top)]:
+        _shape('sm-dcas', r)
+        if first_row is None:
+            first_row = r
+        shown += 1
+        _dep = _num_or_none(r.get('deposit_value_usd'))
+        if _dep is not None:
+            with_val += 1
+            total += _dep
+        # ДОЛЯ ИСПОЛНЕНИЯ СЧИТАЕТСЯ ТОЛЬКО КОГДА ЕСТЬ ОБА ЧИСЛА. Из одного «потрачено» доли не
+        # выведешь, а показать «5%» от неизвестного целого - выдумать знаменатель.
+        _spent = _num_or_none(r.get('token_spent_amount'))
+        _size = _num_or_none(r.get('deposit_token_amount'))
+        _pc = None
+        if _spent is not None and _size:
+            try:
+                _pc = max(0.0, min(100.0, 100.0 * float(_spent) / float(_size)))
+            except (TypeError, ValueError, ZeroDivisionError):
+                _pc = None
+        out.append({'i': shown, 'who': _who(r),
+                    'inp': str(r.get('input_token_symbol') or '?')[:12],
+                    'outp': str(r.get('output_token_symbol') or '?')[:12],
+                    'usd': _dep, 'spent_pct': _pc,
+                    'status': str(r.get('dca_status') or '').strip()[:14]})
+    if not out:
+        return None
+    return {'rows': out, 'shown': shown, 'with_val': with_val, 'total_usd': total,
+            'more': max(0, len(_all) - shown), 'first_row': first_row}
+
+
 def sm_dca_block(rows, bot_un=None, lang='ru', top=10):
     """Программы DCA умных денег - текстом. -> str | None.
 
     ВЕДЁМ ВЕЛИЧИНОЙ И ДОЛЕЙ ИСПОЛНЕНИЯ. «$2M в программе» - половина ответа; вторая половина -
     сколько уже потрачено: программа, отработавшая на 5%, означает, что покупки ЕЩЁ ВПЕРЕДИ, а
     отработавшая на 95% - что они уже в цене.
+
+    ПРИНИМАЕМ И СЫРЫЕ СТРОКИ, И ГОТОВЫЙ СЛОВАРЬ (одна дверь, два входа - закон №40): бот зовёт
+    со строками площадки, мини-апп - с уже посчитанным словарём. Обратная сборка строк из
+    словаря была бы round-trip, то есть второй счёт тех же чисел.
     """
-    if not rows:
+    d = rows if (isinstance(rows, dict) and 'rows' in rows) else sm_dca_data(rows, top)
+    if not d or not d.get('rows'):
         return None
     en = (lang == 'en')
     L = [('🧊 <b>Smart money buying on a schedule (DCA)</b>' if en
@@ -2286,45 +2333,24 @@ def sm_dca_block(rows, bot_un=None, lang='ru', top=10):
               'Программа DCA - это обещание продолжать покупать, а не одна сделка: доля уже '
               'потраченного говорит, сколько покупок ещё впереди.'))
     L.append('')
-    _shown, _with_val, _first_row = 0, 0, None
-    for r in rows[:int(top)]:
-        if not isinstance(r, dict):
-            continue
-        _shape('sm-dcas', r)
-        if _first_row is None:
-            _first_row = r
-        _shown += 1
-        who = _who(r)
-        _in = str(r.get('input_token_symbol') or '?')[:12]
-        _out = str(r.get('output_token_symbol') or '?')[:12]
-        _dep = _num_or_none(r.get('deposit_value_usd'))
-        if _dep is not None:
-            _with_val += 1
-        _spent = _num_or_none(r.get('token_spent_amount'))
-        _size = _num_or_none(r.get('deposit_token_amount'))
+    for it in d['rows']:
         seg = []
-        if _dep is not None:
-            seg.append('$%s' % _usd(_dep))
-        # ДОЛЯ ИСПОЛНЕНИЯ СЧИТАЕТСЯ ТОЛЬКО КОГДА ЕСТЬ ОБА ЧИСЛА. Из одного «потрачено» доли не
-        # выведешь, а показать «5%» от неизвестного целого - выдумать знаменатель.
-        if _spent is not None and _size:
-            try:
-                _pc = 100.0 * float(_spent) / float(_size)
-                seg.append(('spent %.0f%%' if en else 'потрачено %.0f%%') % max(0.0, min(_pc, 100.0)))
-            except (TypeError, ValueError, ZeroDivisionError):
-                pass
-        _st = str(r.get('dca_status') or '').strip()[:14]
-        if _st:
-            seg.append(_esc(_st))
-        _tok = ('%s → %s' % (_esc(_in), _esc(_out)))
-        L.append('%d. %s · <b>%s</b>%s' % (_shown, who, _tok,
-                                           (' · ' + ' · '.join(seg)) if seg else ''))
-    if _shown == 0:
-        return None
-    if not _with_val:
+        if it.get('usd') is not None:
+            seg.append('$%s' % _usd(it['usd']))
+        if it.get('spent_pct') is not None:
+            seg.append(('spent %.0f%%' if en else 'потрачено %.0f%%') % it['spent_pct'])
+        if it.get('status'):
+            seg.append(_esc(it['status']))
+        L.append('%d. %s · <b>%s → %s</b>%s'
+                 % (it['i'], it['who'], _esc(it['inp']), _esc(it['outp']),
+                    (' · ' + ' · '.join(seg)) if seg else ''))
+    if not d.get('with_val'):
+        # `first_row` ЧИТАЕТСЯ ЧЕРЕЗ .get НАРОЧНО: шлюз мини-аппа вычищает сырую строку из
+        # словаря перед отправкой в браузер, и словарь после вычистки обязан остаться
+        # рендерируемым.
         L.append('')
-        L.append(schema_gap_note(_first_row, 'Размер программы' if not en
-                                else 'Program size', lang))
+        L.append(schema_gap_note(d.get('first_row'), 'Размер программы' if not en
+                                 else 'Program size', lang))
     return with_source('\n'.join(L), lang)
 
 
@@ -2352,67 +2378,93 @@ def pm_positions(market_id, per_page=20):
                        ckey=f"pmposd:{market_id}:{per_page}"))
 
 
+def pm_positions_data(rows, top=10):
+    """ЧИСЛА ДЕРЖАТЕЛЕЙ РЫНКА С ИХ PnL, БЕЗ СЛОВ. -> dict | None.
+
+    ЗДЕСЬ ДВА ВЫВОДА, КОТОРЫЕ ОБЯЗАНЫ СЧИТАТЬСЯ В ОДНОМ МЕСТЕ: порядок (по АБСОЛЮТНОМУ PnL -
+    крупнейший проигравший так же важен, как крупнейший победитель) и суммарный PnL показанных.
+    Посчитай их страница сама - и «в сумме +$120K» в чате разошлось бы с картинкой ровно в тот
+    день, когда кто-то поменяет `top`.
+
+    Цены входа и текущая приводятся к ЦЕНТАМ здесь же: площадка присылает их то в долях (0.42),
+    то в центах (42), и выбор формы - решение слоя чисел, а не рисовальщика.
+    """
+    _all = [r for r in (rows or ()) if isinstance(r, dict)]
+    if not _all:
+        return None
+    _shape('pm-position-detail', _all[0])
+    _title = _all[0].get('event_title')
+    _res = _all[0].get('market_resolved')
+    # СОРТИРУЕМ ПО АБСОЛЮТНОМУ PnL: интересны и крупнейшие победители, и крупнейшие проигравшие -
+    # «кто здесь больше всех поставил на карту» это обе стороны, а не только плюс.
+    _all.sort(key=lambda r: -abs(_num_or_none(r.get('token_pnl_usd')) or 0))
+    out, pnl_sum, with_pnl = [], 0.0, 0
+    for i, r in enumerate(_all[:int(top)], 1):
+        _pnl = _num_or_none(r.get('token_pnl_usd'))
+        if _pnl is not None:
+            pnl_sum += _pnl
+            with_pnl += 1
+        _ent = _num_or_none(r.get('avg_entry_price'))
+        _cur = _num_or_none(r.get('current_price'))
+        out.append({'i': i, 'who': _who(r),
+                    'side': str(_first(r, ('outcome', 'outcome_name'))
+                                or pm_holder_side(r) or '?')[:12],
+                    'pnl': _pnl,
+                    'entry': (None if _ent is None else (_ent * 100 if _ent <= 1 else _ent)),
+                    'px': (None if _cur is None else (_cur * 100 if _cur <= 1 else _cur)),
+                    'open_usd': _num_or_none(r.get('unrealized_value_usd'))})
+    if not out:
+        return None
+    # СЫРОЙ СТРОКИ ЗДЕСЬ НЕТ НАРОЧНО (в отличие от сцен, где она нужна для `schema_gap_note`):
+    # этот экран ничего про расхождение схемы не печатает, а в строке лежит ПОЛНЫЙ адрес
+    # кошелька. Правило «не посылай того, чего не показываешь» дешевле, чем надежда на то, что
+    # вычищающий слой не забудут позвать: шлюз действительно выкидывает `first_row`, но поле,
+    # которого нет, нельзя забыть вычистить. Поймано прогоном конверта на регулярку 0x…40.
+    return {'rows': out, 'shown': len(out), 'total': len(_all), 'net_pnl': pnl_sum,
+            'with_pnl': with_pnl, 'title': (str(_title)[:120] if _title else ''),
+            'resolved': (True if _res is True else (False if _res is False else None))}
+
+
 def pm_positions_block(rows, market_id='', lang='ru', top=10):
     """Держатели рынка с PnL - текстом. -> str | None.
 
     ВЕДЁМ PnL, А НЕ РАЗМЕРОМ. «$400K в позиции» говорит о ставке, «$400K в позиции и -$120K по
     ней» говорит о том, как эта ставка ИДЁТ, - и это второе решает, стоит ли стоять рядом.
+
+    Принимает и сырые строки, и готовый словарь - одна дверь, два входа.
     """
-    if not rows:
+    d = rows if (isinstance(rows, dict) and 'rows' in rows) else pm_positions_data(rows, top)
+    if not d or not d.get('rows'):
         return None
     en = (lang == 'en')
     L = [('🧾 <b>Who is in this market, and how it is going for them</b>' if en
           else '🧾 <b>Кто в этом рынке и как у них идёт</b>')]
     if market_id:
         L.append('<code>%s</code>' % _esc(str(market_id)[:40]))
-    _title = None
-    _res = None
-    _shown = 0
-    _pnl_sum = 0.0
-    _rows2 = []
-    for r in rows:
-        if not isinstance(r, dict):
-            continue
-        _shape('pm-position-detail', r)
-        if _title is None:
-            _title = r.get('event_title')
-            _res = r.get('market_resolved')
-        _rows2.append(r)
-    if _title:
-        L.append('<i>%s</i>' % _esc(str(_title)[:120]))
-    if _res is True:
+    if d.get('title'):
+        L.append('<i>%s</i>' % _esc(d['title']))
+    if d.get('resolved') is True:
         L.append(('<i>The market is RESOLVED: these numbers are final, not open risk.</i>' if en
                   else '<i>Рынок РАЗРЕШЁН: это итоговые числа, а не открытый риск.</i>'))
-    # СОРТИРУЕМ ПО АБСОЛЮТНОМУ PnL: интересны и крупнейшие победители, и крупнейшие проигравшие -
-    # «кто здесь больше всех поставил на карту» это обе стороны, а не только плюс.
-    _rows2.sort(key=lambda r: -abs(_num_or_none(r.get('token_pnl_usd')) or 0))
     L.append('')
-    for i, r in enumerate(_rows2[:int(top)], 1):
-        who = _who(r)
-        _out = _first(r, ('outcome', 'outcome_name')) or pm_holder_side(r)
-        _pnl = _num_or_none(r.get('token_pnl_usd'))
-        _ent = _num_or_none(r.get('avg_entry_price'))
-        _cur = _num_or_none(r.get('current_price'))
-        _unr = _num_or_none(r.get('unrealized_value_usd'))
+    for it in d['rows']:
         seg = []
-        if _pnl is not None:
-            _pnl_sum += _pnl
-            seg.append((('PnL +$%s' if _pnl >= 0 else 'PnL -$%s') % _usd(abs(_pnl))))
-        if _ent is not None and _cur is not None:
+        if it.get('pnl') is not None:
+            seg.append(('PnL +$%s' if it['pnl'] >= 0 else 'PnL -$%s') % _usd(abs(it['pnl'])))
+        if it.get('entry') is not None and it.get('px') is not None:
             seg.append(('entry %.0f¢ → %.0f¢' if en else 'вход %.0f¢ → %.0f¢')
-                       % (_ent * 100 if _ent <= 1 else _ent, _cur * 100 if _cur <= 1 else _cur))
-        if _unr:
-            seg.append(('open $%s' if en else 'открыто $%s') % _usd(_unr))
-        _shown += 1
-        L.append('%d. %s [%s] · %s' % (i, who, _esc(str(_out)[:12]), ' · '.join(seg) or '?'))
-    if not _shown:
-        return None
+                       % (it['entry'], it['px']))
+        if it.get('open_usd'):
+            seg.append(('open $%s' if en else 'открыто $%s') % _usd(it['open_usd']))
+        L.append('%d. %s [%s] · %s' % (it['i'], it['who'], _esc(str(it['side'])[:12]),
+                                       ' · '.join(seg) or '?'))
     L.append('')
     L.append((('<i>Net PnL of the %d holder(s) shown: %s$%s. This is their result in THIS '
                'market, not their lifetime record.</i>') if en else
               ('<i>Суммарный PnL показанных %d держател(ей): %s$%s. Это результат В ЭТОМ '
                'рынке, а не их история вообще.</i>'))
-             % (_shown, '+' if _pnl_sum >= 0 else '-', _usd(abs(_pnl_sum))))
+             % (d['shown'], '+' if d.get('net_pnl', 0) >= 0 else '-',
+                _usd(abs(d.get('net_pnl') or 0))))
     return with_source('\n'.join(L), lang)
 
 
@@ -2568,40 +2620,61 @@ def chain_rank(per_page=20):
                        ckey=f"chrank:{per_page}"))
 
 
+def chain_rank_data(rows, top=8, by='tvl_usd'):
+    """ЧИСЛА РЕЙТИНГА СЕТЕЙ, БЕЗ СЛОВ. -> dict | None.
+
+    ПОРЯДОК - ЭТО ТОЖЕ ЧИСЛО, И СЧИТАТЬ ЕГО ОБЯЗАНО ОДНО МЕСТО. Экран мини-аппа рисует
+    столбики в том порядке, в каком они лежат в словаре; сортируй он сам - и «первая сеть» в
+    чате и на картинке однажды оказались бы разными, причём молча.
+    """
+    _key = by if by in ('tvl_usd', 'total_dex_volume_usd', 'revenue_usd') else 'tvl_usd'
+    _all = [r for r in (rows or ()) if isinstance(r, dict)]
+    if not _all:
+        return None
+    _shape('chain-rank', _all[0])
+    _all.sort(key=lambda r: -(_num_or_none(r.get(_key)) or 0))
+    out = []
+    for i, r in enumerate(_all[:int(top)], 1):
+        out.append({'i': i, 'chain': str(r.get('chain') or '?')[:18],
+                    'tvl': _num_or_none(r.get('tvl_usd')),
+                    'tvl_chg': _num_or_none(r.get('tvl_usd_percent_change')),
+                    'dex': _num_or_none(r.get('total_dex_volume_usd')),
+                    'addrs': _num_or_none(r.get('active_address_count_txs'))})
+    if not out:
+        return None
+    return {'rows': out, 'shown': len(out), 'total': len(_all), 'by': _key}
+
+
 def chain_rank_block(rows, lang='ru', top=8, by='tvl_usd'):
     """Рейтинг сетей - текстом. -> str | None.
 
     СОРТИРУЕМ ПО ИЗМЕРЕННОЙ ВЕЛИЧИНЕ, А ПОКАЗЫВАЕМ ЕЁ ИЗМЕНЕНИЕ. «TVL $50B» - состояние;
     «TVL $50B, +12% за сутки» - величина, по которой принимают решение, куда смотреть сегодня.
+
+    Принимает и сырые строки, и готовый словарь - одна дверь, два входа.
     """
-    if not rows:
+    d = rows if (isinstance(rows, dict) and 'rows' in rows) else chain_rank_data(rows, top, by)
+    if not d or not d.get('rows'):
         return None
     en = (lang == 'en')
-    _key = by if by in ('tvl_usd', 'total_dex_volume_usd', 'revenue_usd') else 'tvl_usd'
-    _rows2 = [r for r in rows if isinstance(r, dict)]
-    if not _rows2:
-        return None
-    _shape('chain-rank', _rows2[0])
-    _rows2.sort(key=lambda r: -(_num_or_none(r.get(_key)) or 0))
     L = [('🌐 <b>Chains by TVL, and how they moved</b>' if en
           else '🌐 <b>Сети по TVL, и как они сдвинулись</b>')]
-    for i, r in enumerate(_rows2[:int(top)], 1):
-        _ch = _esc(str(r.get('chain') or '?')[:18])
-        _tvl = _num_or_none(r.get('tvl_usd'))
-        _chg = _num_or_none(r.get('tvl_usd_percent_change'))
-        _vol = _num_or_none(r.get('total_dex_volume_usd'))
+    for it in d['rows']:
         seg = []
-        if _tvl is not None:
-            seg.append('TVL $%s%s' % (_usd(_tvl),
-                                      ('' if _chg is None else (' (%+.1f%%)' % _chg))))
-        if _vol is not None:
-            seg.append(('DEX $%s' if en else 'DEX $%s') % _usd(_vol))
-        _aa = _num_or_none(r.get('active_address_count_txs'))
-        if _aa is not None:
+        if it.get('tvl') is not None:
+            seg.append('TVL $%s%s' % (_usd(it['tvl']),
+                                      ('' if it.get('tvl_chg') is None
+                                       else (' (%+.1f%%)' % it['tvl_chg']))))
+        if it.get('dex') is not None:
+            seg.append('DEX $%s' % _usd(it['dex']))
+        # ЧИСЛО АДРЕСОВ ПЕЧАТАЕТСЯ КАК ЕСТЬ. ЗДЕСЬ БЫЛА ТИХАЯ ПОРЧА ЦИФРЫ: прошлая редакция
+        # применяла `.rstrip('0')` к уже отформатированной строке, и «500 активных адресов»
+        # печаталось как «5 активных адресов» - вывод по обрезанному числу хуже отсутствия
+        # числа, потому что выглядит измерением.
+        if it.get('addrs') is not None:
             seg.append(('%s active addresses' if en else '%s активных адресов')
-                       % _usd(_aa).rstrip('0').rstrip('.') if _aa < 1000 else
-                       (('%s active addresses' if en else '%s активных адресов') % _usd(_aa)))
-        L.append('%d. <b>%s</b> · %s' % (i, _ch, ' · '.join(seg) or '?'))
+                       % _usd(it['addrs']))
+        L.append('%d. <b>%s</b> · %s' % (it['i'], _esc(it['chain']), ' · '.join(seg) or '?'))
     L.append('')
     L.append(('<i>Percent change is what the response carries, not our arithmetic.</i>' if en
               else '<i>Процент изменения приехал в ответе, это не наш пересчёт.</i>'))

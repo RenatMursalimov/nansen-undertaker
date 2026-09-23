@@ -54,7 +54,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [🧊 Who buys on a schedule (smart money DCA)](#dca) | `dca` | 🧠 Nansen → 🧠 Smart money → 🧊 Buying on a schedule | 💬 | price not named in the official list · 1 request |
 | [🌐 Chain ranking: TVL, DEX volume, active addresses](#chains) | `chain rank` | 🧠 Nansen → 🌐 Chains and tally → 🌐 Chain ranking | 💬 | price not named in the official list · 1 request |
 | [💠 The DeFi part of a wallet: assets MINUS debts](#defi) | `defi 0x…` | 🧠 Nansen → 🔎 Wallet and token → 💠 DeFi part | 💬 | price not named in the official list · 1 request |
-| [🧾 Who is in a Polymarket market, and their PnL](#pmpos) | `market positions 654412` | 🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL | 💬 | price not named in the official list · 1 request |
+| [🧾 Who is in a Polymarket market, and their PnL](#pmpos) | `market positions 654412` | 🎲 Trending markets → the «🧾 N» button under the list<br>🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL | 💬 | price not named in the official list · 1 request |
 | [🧊 Jupiter DCA by token (Solana)](#jupdca) | `jup dca <mint>` | 🧠 Nansen → 🧠 Smart money → 🧊 Jupiter DCA by token | 💬 | price not named in the official list · 1 request |
 | [🎯 Where the money on Polymarket is sharp (market comparison)](#sharpmarkets) | `sharp money` | 🧠 Nansen → 🎲 Polymarket → 🎯 Where money is sharp | 💬 | price not named in the official list · 1 + N + N×H requests (13 by default) |
 | [⚔️ Risk board: whose leverage is closest to the edge](#perprisk) | `risk board` | 🧠 Nansen → ⚔️ Leverage → ⚔️ Perp risk board<br>liquidation map → ⚔️ Compare all four | 💬 👥🔘 | price not named in the official list · one request per token (4) |
@@ -623,6 +623,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 **Say to the bot:** `dca`
 **By button:** 🧠 Nansen → 🧠 Smart money → 🧊 Buying on a schedule
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
+**In the mini-app:** a screen of its own — it renders this same dictionary, so the chart cannot drift from the sentence.
 
 **What you get:** active DCA programs: who, from which token into which, the size of the program and the share already spent
 
@@ -647,6 +648,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 **Say to the bot:** `chain rank`
 **By button:** 🧠 Nansen → 🌐 Chains and tally → 🌐 Chain ranking
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
+**In the mini-app:** a screen of its own — it renders this same dictionary, so the chart cannot drift from the sentence.
 
 **What you get:** chains by TVL with their daily change, DEX volume and active addresses
 
@@ -693,8 +695,9 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 🧾 Who is in a Polymarket market, and their PnL
 
 **Say to the bot:** `market positions 654412`
-**By button:** 🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL
+**By button:** 🎲 Trending markets → the «🧾 N» button under the list · 🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
+**In the mini-app:** a screen of its own — it renders this same dictionary, so the chart cannot drift from the sentence.
 
 **What you get:** every holder of the market with their PnL in that market: entry, current price, realized and open
 

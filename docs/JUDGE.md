@@ -19,10 +19,18 @@ sequence is dominated by `git clone`. What you should see, top to bottom:
    wallets that were right before (win rate at or above 60%) against the money of those that were
    not (below 40%), ordered by sharp **dollars**, because 90% of $300 is not a signal. A tap on a
    row opens that market in the hero — there is exactly one market breakdown on the page;
-4. tab **🗺 Liquidations** → **⚔️ compare all four** — BTC/ETH/SOL/HYPE ordered by how *close* the
+4. on that hero, the button **🧾 who is in it, with PnL** — the same market's holders with what is
+   happening to them *here*: entry price, and how far up or down they are in this market. The market
+   id is never typed: it travels from the card you tapped;
+5. tab **🗺 Map** → **⚔️ compare top four** — the four most traded perps ordered by how *close* the
    price is to the densest liquidation cluster, not by how big it is. A token whose price did not
-   load goes last and says so: last place is not "safer";
-5. under every screen: source, freshness, cost in requests, the caveats, and the **exact sentence
+   load goes last and says so: last place is not "safer". Two sliders change the price window and
+   the number of levels, and **↔ / ↕** redraws the same numbers in either orientation without a
+   single new request; **💾 save image** writes the chart to a file;
+6. tab **➕ More** — the two signals that answer something the other screens cannot: who is buying on
+   a *schedule* (the only forward-looking signal in the set) and which chains hold and move the
+   money;
+7. under every screen: source, freshness, cost in requests, the caveats, and the **exact sentence
    the bot would say in chat**.
 
 `?rehearsal=1` reads `fixtures/*.json`. Those files carry `"provenance": "synthetic"`: the shape is

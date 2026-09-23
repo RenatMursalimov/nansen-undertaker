@@ -29,9 +29,11 @@ Built for the **Nansen Meridian Buildathon**.
 
 ## Mini-app: the same answer, on a phone
 
-The screens above also run as a **Telegram mini-app** — the hero, the sharp-money market
-comparison, the liquidation map with a four-token risk board, and a live feed of the API calls
-themselves. See it in under a minute, no key and no Telegram account:
+The screens above also run as a **Telegram mini-app** — the hero (plus the same market's holders
+with their PnL *in that market*), the sharp-money market comparison, the liquidation map with a
+four-token risk board and two sliders for window and detail, scheduled buying and the chain ranking,
+and a live feed of the API calls themselves. See it in under a minute, no key and no Telegram
+account:
 
 ```bash
 python3 -m http.server 8080

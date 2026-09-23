@@ -286,7 +286,7 @@ SCENARIOS = [
      'hook': 'The agent is the expensive path: 200 credits, or 750 in expert mode. So every '
              'screen prints what it cost.'},
     # ── ОТКРЫТО ЖИВОЙ ПРОБОЙ СХЕМ 24.09 ─────────────────────────────────────────────────
-    {'id': 'dca', 'title': '🧊 Кто покупает по расписанию (DCA умных денег)',
+    {'id': 'dca', 'app': True, 'title': '🧊 Кто покупает по расписанию (DCA умных денег)',
      'cmds': ['dca', 'кто набирает'], 'btns': ['🧠 Nansen → 🧠 Умные деньги → 🧊 Покупают по расписанию'],
      'eps': ['smart-money/dcas'], 'scene': 'smart_dca', 'menu': 'nsn_dca',
      'price': 'цена не названа в официальном списке · 1 запрос',
@@ -296,7 +296,7 @@ SCENARIOS = [
             'программа DCA на $2M - разные утверждения о намерении',
      'hook': 'A single trade says what a wallet did. A DCA program says what it is committed to '
              'keep doing - and how much of that is still ahead.'},
-    {'id': 'chains', 'title': '🌐 Рейтинг сетей: TVL, объём DEX, активные адреса',
+    {'id': 'chains', 'app': True, 'title': '🌐 Рейтинг сетей: TVL, объём DEX, активные адреса',
      'cmds': ['рейтинг сетей', 'chain rank'], 'btns': ['🧠 Nansen → 🌐 Сети и зачёт → 🌐 Рейтинг сетей'],
      'eps': ['chains/chain-rank'], 'scene': 'chain_rank', 'menu': 'nsn_chains',
      'price': 'цена не названа в официальном списке · 1 запрос',
@@ -315,9 +315,14 @@ SCENARIOS = [
             'выглядят одинаково, а это разные кошельки',
      'hook': 'A wallet holding two million with one and a half million of debt looks identical '
              'to a debt-free one in a token list. Here it does not.'},
-    {'id': 'pmpos', 'title': '🧾 Кто в рынке Polymarket и с каким PnL',
+    {'id': 'pmpos', 'app': True, 'title': '🧾 Кто в рынке Polymarket и с каким PnL',
      'cmds': ['позиции рынка 654412', 'кто в рынке 654412'],
-     'btns': ['🧠 Nansen → 🎲 Polymarket → 🧾 Кто в рынке и с каким PnL'],
+     # КНОПКА «🧾 N» ПОД СПИСКОМ РЫНКОВ - ГЛАВНЫЙ ВХОД, А КОМАНДА С НОМЕРОМ - БЫСТРЫЙ ПУТЬ
+     # для того, у кого номер уже есть. До этого экран был достижим ТОЛЬКО номером руками, то
+     # есть требовал работы вне бота (замечание владельца: «опять идентификатор заставляешь
+     # искать»). Тот же дефект и то же лечение, что у графика и стакана рынка.
+     'btns': ['🎲 Трендовые рынки → кнопка «🧾 N» под списком',
+              '🧠 Nansen → 🎲 Polymarket → 🧾 Кто в рынке и с каким PnL'],
      'eps': ['prediction-market/position-detail'], 'scene': 'pm_positions',
      'menu': 'pm_posdetail',
      'price': 'цена не названа в официальном списке · 1 запрос',
@@ -564,7 +569,8 @@ _EN = {
                'why': '"where to look today" is a question about chains before it is a question '
                       'about tokens'},
     'pmpos': {'cmds': ['market positions 654412'],
-              'btns': ['🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL'],
+              'btns': ['🎲 Trending markets → the «🧾 N» button under the list',
+                       '🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL'],
               'title': '🧾 Who is in a Polymarket market, and their PnL',
               'price': 'price not named in the official list · 1 request',
               'gives': 'every holder of the market with their PnL in that market: entry, current '
