@@ -64,8 +64,15 @@
   .tabs{display:flex;gap:6px;position:sticky;top:0;padding:10px 12px;
         background:rgba(21,11,46,.92);backdrop-filter:blur(6px);
         z-index:5;border-bottom:1px solid var(--line)}
-  .tab{flex:1;padding:9px 6px;border:1px solid var(--line);border-radius:12px;
-       background:var(--card);color:var(--dim);text-align:center;font-size:13px;cursor:pointer}
+  /* ПОДПИСИ ТАБОВ СТОЯТ НА ОДНОМ УРОВНЕ ДАЖЕ КОГДА ОДНА ИЗ НИХ ПЕРЕНОСИТСЯ НА ДВЕ СТРОКИ.
+     ЖИВОЕ ЗАМЕЧАНИЕ REN: «Whose %» умещался в строку, «Sharp money» переносился - и первая
+     подпись стояла посередине кнопки, а вторая начиналась сверху. Лечится не укорачиванием
+     слов (оно вернётся на следующем языке), а вертикальным центрированием: flex + одинаковая
+     минимальная высота держат ряд ровным при любой длине подписи. */
+  .tab{flex:1;min-width:0;display:flex;align-items:center;justify-content:center;
+       min-height:46px;padding:7px 4px;border:1px solid var(--line);border-radius:12px;
+       background:var(--card);color:var(--dim);text-align:center;font-size:12.5px;
+       line-height:1.15;cursor:pointer}
   .tab.on{color:var(--ink);border-color:var(--nsn);background:#261a4e;
           box-shadow:0 0 0 1px rgba(0,211,149,.25) inset}
   .card{background:var(--card);border:1px solid var(--line);border-radius:16px;
@@ -158,10 +165,15 @@
   положить `nansen-logo.svg` рядом и подставить <img> вместо <svg> ниже.
 -->
 <div class="top">
-  <svg class="mark" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M12 2 L15.2 8.8 L22 12 L15.2 15.2 L12 22 L8.8 15.2 L2 12 L8.8 8.8 Z"
-          fill="none" stroke="#00d395" stroke-width="1.6" stroke-linejoin="round"/>
-    <circle cx="12" cy="12" r="2.1" fill="#00d395"/>
+  <svg class="mark" width="24" height="24" viewBox="0 0 48 48" aria-hidden="true">
+    <!-- ЧЕТЫРЕ ИЗОГНУТЫХ ЛЕПЕСТКА «ВЕРТУШКОЙ» - форма по знаку, который прислал владелец.
+         Нарисовано нами кривыми, а не вставлено файлом: см. комментарий выше про лицензию. -->
+    <g fill="none" stroke="#00d395" stroke-width="3.4" stroke-linecap="round">
+      <path d="M24 24 C18 17 16 9 21 5 C26 9 25 17 24 24 Z"/>
+      <path d="M24 24 C31 18 39 16 43 21 C39 26 31 25 24 24 Z"/>
+      <path d="M24 24 C30 31 32 39 27 43 C22 39 23 31 24 24 Z"/>
+      <path d="M24 24 C17 30 9 32 5 27 C9 22 17 23 24 24 Z"/>
+    </g>
   </svg>
   <span class="ttl">Undertaker</span>
   <a class="by" href="https://www.nansen.ai" target="_blank" rel="noopener noreferrer">
@@ -169,10 +181,15 @@
 </div>
 
 <div class="tabs">
-  <div class="tab on" id="t_hero">🎭 Whose&nbsp;%</div>
-  <div class="tab" id="t_sharp">🎯 Sharp&nbsp;money</div>
-  <div class="tab" id="t_liq">🗺 Liquidations</div>
-  <div class="tab" id="t_feed">📡 Live&nbsp;calls</div>
+  <!-- ПОДПИСИ КОРОТКИЕ И В ОДНУ СТРОКУ КАЖДАЯ. Длинные («Sharp money», «Liquidations») на
+       узком экране переносились, и ряд табов выглядел ступеньками - замечание владельца.
+       Вертикальное центрирование уже стоит в CSS, но ровнее всего ряд смотрится, когда ни одна
+       подпись не переносится вовсе. Смысл не теряется: под каждым табом первым делом стоит
+       заголовок экрана, который и объясняет, что это. -->
+  <div class="tab on" id="t_hero">🎭&nbsp;Whose&nbsp;%</div>
+  <div class="tab" id="t_sharp">🎯&nbsp;Sharp</div>
+  <div class="tab" id="t_liq">🗺&nbsp;Liq.&nbsp;map</div>
+  <div class="tab" id="t_feed">📡&nbsp;Live</div>
 </div>
 
 <div id="rehbar"></div>
@@ -667,7 +684,7 @@ function sharpLoad() {
 /* ═══════════════════════════════════════════════════════════════════════════
    ЭКРАН 2. КАРТА ЛИКВИДАЦИЙ — где висит чужое плечо
    ═══════════════════════════════════════════════════════════════════════════ */
-var LIQ = { token: (qp('token') || 'BTC').toUpperCase(), env: null, pick: -1 };
+var LIQ = { token: (qp('token') || 'BTC').toUpperCase(), env: null, pick: -1, zoom: null };
 var LIQ_TOKENS = ['BTC', 'ETH', 'SOL', 'HYPE'];
 var BOARD = { on: false, env: null, busy: false };
 
@@ -855,6 +872,25 @@ function liqRender() {
   }
   h += '<span class="btn' + (BOARD.on ? ' on' : '') + '" id="bdbtn">⚔️ compare top four</span>';
   h += '</div>';
+  /* МАСШТАБ КАРТЫ. Ступени приезжают В КОНВЕРТЕ (`zooms`) - список ступеней живёт в слое
+     чисел, и второй список в разметке разъехался бы с первым. АКТИВНАЯ СТУПЕНЬ ОТМЕЧАЕТСЯ ПО
+     ОТВЕТУ (`win_pct`/`zoom`), А НЕ ПО НАЖАТИЮ: если шлюз почему-то ответил другим окном,
+     человек увидит это подсветкой, а не поверит своему тапу. */
+  var zs = (LIQ.env && LIQ.env.zooms) || [];
+  if (zs.length) {
+    var zNow = (LIQ.env && (LIQ.env.zoom === 0 || LIQ.env.zoom) ? LIQ.env.zoom
+                : (LIQ.env && LIQ.env.win_pct ? Math.round(LIQ.env.win_pct) : null));
+    h += '<div class="btns" style="margin-top:6px"><span class="dim" style="align-self:center">'
+       + 'scale:</span>';
+    for (i = 0; i < zs.length; i++) {
+      var zv = Number(zs[i]);
+      h += '<span class="btn' + (zNow === zv ? ' on' : '') + '" data-zn="' + zv + '">'
+         + (zv ? ('±' + zv + '%') : 'all') + '</span>';
+    }
+    h += '</div>';
+    h += '<div class="dim">Levels are bucketed inside this window around the current price. '
+       + 'Money outside it is counted and named, not dropped.</div>';
+  }
   /* СВОЙ ТИКЕР ВВОДОМ. Это НЕ то же, что ручной ввод market_id, который мы из hero убрали:
      там номер был служебным и человек искал бы его вне экрана, а тикер он и так знает. */
   h += '<div class="btns" style="margin-top:6px">'
@@ -879,6 +915,12 @@ function liqRender() {
     brs[i].onclick = (function (tk) {
       return function () { LIQ.token = tk; LIQ.env = null; LIQ.pick = -1; liqLoad(); };
     })(brs[i].getAttribute('data-btk'));
+  }
+  var zbs = el.querySelectorAll('.btn[data-zn]');
+  for (i = 0; i < zbs.length; i++) {
+    zbs[i].onclick = (function (z) {
+      return function () { LIQ.zoom = z; LIQ.env = null; LIQ.pick = -1; liqLoad(); };
+    })(Number(zbs[i].getAttribute('data-zn')));
   }
   var tkin = document.getElementById('tkin');
   var tkgo = document.getElementById('tkgo');
@@ -910,7 +952,11 @@ function liqRender() {
 
 function liqLoad() {
   liqRender();
-  askScene({ sc: 'liq_map', tk: LIQ.token, lg: 'en' }, function (env) {
+  var req = { sc: 'liq_map', tk: LIQ.token, lg: 'en' };
+  /* МАСШТАБ ЕДЕТ ТОЛЬКО ЕСЛИ ЕГО ВЫБРАЛИ. Ноль - это ЗНАЧЕНИЕ («весь размах»), а не «не
+     выбрано», поэтому проверка именно на null, а не на ложность. */
+  if (LIQ.zoom !== null && LIQ.zoom !== undefined) { req.zn = LIQ.zoom; }
+  askScene(req, function (env) {
     LIQ.env = env; showReh(env); liqRender();
   });
 }

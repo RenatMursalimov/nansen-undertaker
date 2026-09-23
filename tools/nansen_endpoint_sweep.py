@@ -6,7 +6,7 @@ The client currently contains 53 network routes. This tool keeps a declarative e
 one and fails if the client and registry drift apart. It sends fresh requests through the normal
 telemetry throat (never through response cache), but it does NOT pretend every route is schedulable:
 
-* 49 structural read routes can run in ``complete``;
+* 50 structural read routes can run in ``complete``;
 * ``trade/quote`` is a zero-credit read and joins routine/complete;
 * two Agent routes require ``--include-agents`` because they cost 200 + 750 credits;
 * ``trade/bridge-status`` requires a real tx hash supplied outside source control;
@@ -96,6 +96,9 @@ def registry():
         # поле здесь ломает запрос, а не уточняет его.
         _case('smart-money/dcas', {'pagination': _pg()}),
         _case('chains/chain-rank', {'pagination': _pg()}),
+        # ПАГИНАЦИИ ЗДЕСЬ НЕТ НАРОЧНО: живая проба 24.09 сказала «Field 'pagination' is not
+        # recognized» - у этой ручки тело минимальное, и лишнее поле её ломает.
+        _case('portfolio/defi-holdings', {'wallet_address': WALLET}),
 
         _case('tgm/flow-intelligence',
               {'chain': 'base', 'token_address': TOKEN, 'timeframe': '1d'}, estimate=1),
@@ -384,8 +387,8 @@ def main(argv=None):
     # ЧИСЛО ЖЁСТКОЕ НАРОЧНО: оно напечатано в судейских документах, и «маршрут добавили, а
     # документ не обновили» обязано ломать прогон, а не обнаруживаться читателем. 55 - после
     # живой пробы схем 24.09 (`smart-money/dcas`, `chains/chain-rank`).
-    if len(cases) != 55:
-        print('REGISTRY DRIFT: expected 55 routes, got %d' % len(cases))
+    if len(cases) != 56:
+        print('REGISTRY DRIFT: expected 56 routes, got %d' % len(cases))
         return 2
     if args.max_wire < 1 or args.daily_wire_cap < 1 or args.daily_credit_cap < 1:
         print('Caps must be positive. Nothing sent.')
@@ -397,7 +400,7 @@ def main(argv=None):
         for c in cases:
             print('%-49s %-11s %-11s budget≈%d'
                   % (c['path'], c['kind'], c['tier'], c['estimate']))
-        print('\n55 declared: 49 structural reads + 2 Agent + 4 trade.')
+        print('\n56 declared: 50 structural reads + 2 Agent + 4 trade.')
         return 0
 
     selected = _select(args, cases)
