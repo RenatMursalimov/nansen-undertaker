@@ -110,6 +110,14 @@
   .btn{padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:#261a4e;
        color:var(--ink);font-size:13px;cursor:pointer}
   .btn.on{border-color:var(--nsn);color:#fff;box-shadow:0 0 0 1px rgba(0,211,149,.25) inset}
+  /* «?» РЯДОМ С ПОЛЗУНКАМИ: маленький круг, а не кнопка в полный рост - он не должен спорить
+     за внимание с ручками, к которым относится. Текст под ним мелкий (11px) и появляется
+     только по тапу: по просьбе владельца объяснение больше не стоит между ручкой и картой. */
+  .btn.qmark{padding:2px 8px;font-size:12px;line-height:1.3;border-radius:50%;
+             margin-top:4px;color:var(--dim)}
+  .help{display:none;font-size:11px;line-height:1.35;color:var(--dim);margin:4px 0 0;
+        padding-left:8px;border-left:2px solid var(--line)}
+  .help.on{display:block}
   input.mk{width:100%;padding:9px 10px;border-radius:10px;border:1px solid var(--line);
            background:var(--card2);color:var(--ink);font-size:14px}
   /* РЯД РЫНКА: вопрос крупно, вероятность и объём мелко. Идентификатора в разметке для глаз
@@ -796,8 +804,18 @@ function sharpLoad() {
                 движение не имеет права перерисовать экран, когда в пути уже второе. */
 var LIQ = { token: (qp('token') || 'BTC').toUpperCase(), env: null, pick: -1, zoom: null,
             buckets: null, busy: false, horiz: true, zooms: [], bsteps: [], seq: 0,
-            msg: '' };
+            msg: '', help: false };
 var LIQ_TOKENS = ['BTC', 'ETH', 'SOL', 'HYPE'];
+/* СПРАВКА ПО РУЧКАМ - ОДНОЙ СТРОКОЙ И В ОДНОМ МЕСТЕ. Она едет и в `title` (подсказка браузера
+   при наведении), и в раскрывающийся блок по тапу: на телефоне наведения нет, и справка,
+   доступная только мышью, на телефоне не существует. Второй копии текста нет нарочно - иначе
+   подсказка и блок разъехались бы на первой правке. */
+var LIQ_HELP = 'Scale is the price window around the current price: money outside it is '
+             + 'counted and named, not dropped. Detail is how many equal slices that window is '
+             + 'cut into; a slice with no money in it is not drawn, so there can be fewer bars '
+             + 'than levels. The ticker buttons are the most traded perps by 24h volume on the '
+             + 'venue itself — measured, not a list kept by hand; any other ticker works too, '
+             + 'type it.';
 var BOARD = { on: false, env: null, busy: false };
 
 function boardLoad() {
@@ -1071,11 +1089,17 @@ function liqHTML(env) {
     h += '<div class="dim">↻ redrawing at the new setting — the map below is the previous '
        + 'one until the answer arrives.</div>';
   }
+  /* НАД КАРТОЙ - ОДНА СТРОКА, И ЭТО ГЛАВНАЯ ВЕЛИЧИНА. Остальное собирается в `_under` и
+     печатается ПОСЛЕ картинки (просьба владельца): пока три абзаца стояли между ползунками и
+     графиком, до графика приходилось доскроллить, а регулировать и видеть отклик
+     одновременно было нельзя. Порядок чтения теперь такой же, как порядок вопросов: сколько
+     и где -> картинка -> из чего это сложено. */
   var top = p.top || [];
   h += '<p class="lead">Biggest cluster: <b>$' + usd(top[2]) + '</b> between $'
      + price(top[0]) + ' and $' + price(top[1]) + '.</p>';
-  h += '<div class="dim">On the map: $' + usd(p.total) + ' across ' + (p.shown || 0)
-     + ' position(s) · longs $' + usd(p.longs) + ' vs shorts $' + usd(p.shorts) + '</div>';
+  var _under = '<div class="dim">On the map: $' + usd(p.total) + ' across ' + (p.shown || 0)
+             + ' position(s) · longs $' + usd(p.longs) + ' vs shorts $' + usd(p.shorts)
+             + '</div>';
   /* ЧЬЁ ПЛЕЧО - ВТОРОЙ ВОПРОС ПОСЛЕ «СКОЛЬКО». Имена и сумма за ними приезжают словарём
      (`named`, `named_n`, `named_who`), страница их только печатает. Ноль сказан словом:
      «Nansen никого тут не знает по имени» - это ответ, а не отсутствие ответа. */
@@ -1083,11 +1107,11 @@ function liqHTML(env) {
   if (nmTot > 0) {
     var whoTxt = [];
     for (var w = 0; w < nmWho.length; w++) whoTxt.push(esc(nmWho[w][0]));
-    h += '<div class="dim">Of that, <b>$' + usd(nmTot) + '</b> hangs on wallets Nansen has a '
-       + 'name for (' + (p.named_n || 0) + ' position(s))'
-       + (whoTxt.length ? ': ' + whoTxt.join(', ') : '') + '</div>';
+    _under += '<div class="dim">Of that, <b>$' + usd(nmTot) + '</b> hangs on wallets Nansen '
+            + 'has a name for (' + (p.named_n || 0) + ' position(s))'
+            + (whoTxt.length ? ': ' + whoTxt.join(', ') : '') + '</div>';
   } else {
-    h += '<div class="dim">Nansen has no label for a single wallet on this map.</div>';
+    _under += '<div class="dim">Nansen has no label for a single wallet on this map.</div>';
   }
   h += liqSVG(p);
   h += '<div class="legend"><span><i style="background:var(--long)"></i>longs</span>'
@@ -1095,6 +1119,24 @@ function liqHTML(env) {
      + (nmTot > 0 ? '<span><i style="background:var(--named)"></i>money on named wallets'
                   + '</span>' : '')
      + '<span>dashed — current price</span></div>';
+  /* ═══ ОРИЕНТАЦИЯ И СОХРАНЕНИЕ - ПОД КАРТОЙ, А НЕ НАД НЕЙ ═══
+     Обе кнопки действуют НА КАРТУ, и место им у того, что они меняют. Над картой они
+     отодвигали её от ползунков, ради которых экран и открывают - просьба владельца, и она
+     совпадает с правилом «орган управления стоит у своего объекта».
+       ГОРИЗОНТАЛЬНАЯ - УМОЛЧАНИЕ (замечание владельца: «зачем в вертикальное переделал, было
+       же горизонтальное»): она совпадает с картинкой в чате, и её подписи не надо поворачивать,
+       а повёрнутые числа и вылезали за рамку. Вертикальная оставлена ОПЦИЕЙ: её пунктир цены
+       читается как на свечах. Ни одна из двух не «правильная», поэтому выбор у человека.
+       Перерисовка БЕЗ СЕТИ: те же числа, другая раскладка. */
+  h += '<div class="btns">'
+     + '<span class="btn" id="orbtn">' + (LIQ.horiz ? '↔ horizontal' : '↕ vertical')
+     + '</span>'
+     + '<span class="btn" id="svbtn">💾 save image</span></div>';
+  /* ПОДРОБНОСТИ - ПОСЛЕ КАРТИНКИ И МЕЛКИМ. Просьба владельца, и она про порядок чтения: над
+     картой остаётся ОДНА строка с главной величиной («самое плотное скопление»), а итоги по
+     карте и чьи это деньги человек читает, уже увидев картинку. Раньше три абзаца стояли
+     между ползунками и графиком, и до графика надо было доскроллить. */
+  h += _under;
   /* ДЕТАЛЬ КОРЗИНЫ ВСЕГДА ВИДНА, А НЕ ТОЛЬКО ПОСЛЕ ТАПА. Живое замечание владельца: «нажимаешь
      на колонки - не показывает какая сумма». Блок и раньше был, но появлялся ТОЛЬКО по тапу и
      ТОЛЬКО ниже графика, поэтому читался как «ничего не произошло». Теперь до тапа в нём стоит
@@ -1259,16 +1301,33 @@ function liqWarnHTML() {
    своё - разные вещи: без памяти один отказ шлюза уносил бы ползунки вообще, и человеку было
    бы нечем повторить попытку. */
 function liqCtrlHTML() {
+  /* ВСТУПЛЕНИЕ - ОДНА КОРОТКАЯ СТРОКА МЕЛКИМ. Три строки объяснений здесь отодвигали ручки и
+     карту ниже сгиба; то, что в них было ценного (список тикеров ИЗМЕРЕН, а не зашит; своё
+     можно вписать), переехало в справку под «?». */
   var h = '<div class="card"><h1>Where other people\'s leverage hangs</h1>'
-        + '<div class="dim">Capital grouped by liquidation price. The tickers below are the '
-        + 'most traded perps by 24h volume — measured, not a list we keep by hand. Any other '
-        + 'ticker works too: type it.</div><div class="btns">';
+        + '<div class="help on" style="border:0;padding:0;margin:0 0 6px">Capital grouped by '
+        + 'liquidation price · tickers are the most traded perps by 24h volume, measured'
+        + '</div><div class="btns">';
   var toks = liqTokens(), i;
   for (i = 0; i < toks.length; i++) {
     h += '<span class="btn' + (toks[i] === LIQ.token ? ' on' : '') + '" data-tk="'
        + esc(toks[i]) + '">' + esc(toks[i]) + '</span>';
   }
   h += '<span class="btn' + (BOARD.on ? ' on' : '') + '" id="bdbtn">⚔️ compare top four</span>';
+  /* СВОЙ ТИКЕР - РЯДОМ С КНОПКАМИ ТИКЕРОВ, А НЕ ПОД ПОЛЗУНКАМИ. Поле отвечает на тот же
+     вопрос, что кнопки («какой токен смотрим»), и стоять оно должно с ними. Под ползунками
+     оно отодвигало карту от ручек ещё на один ряд - ровно то, на что жаловался владелец.
+     Это НЕ то же, что ручной ввод market_id, который мы из hero убрали: там номер был
+     служебным и человек искал бы его вне экрана, а тикер он и так знает.
+     ШИРИНА 150: ПОЙМАНО РЕНДЕРОМ - при 140 подсказка обрезалась на «any ticker, e.g. ZE». */
+  /* ПОЛЕ И ЕГО КНОПКА - ОДНОЙ НЕРАЗРЫВНОЙ ПАРОЙ. ПОЙМАНО РЕНДЕРОМ: на узком экране ряд
+     переносился МЕЖДУ полем и кнопкой «show map», и кнопка оказывалась одна на своей строке -
+     выглядит как отдельное действие, хотя без поля она бессмысленна. */
+  h += '<span style="display:inline-flex;gap:6px;align-items:center">'
+     + '<input id="tkin" placeholder="ticker, e.g. ZEC" maxlength="12" '
+     + 'style="background:var(--card2);color:var(--ink);border:1px solid var(--line);'
+     + 'border-radius:10px;padding:7px 9px;width:150px;font:inherit">'
+     + '<span class="btn" id="tkgo">show map</span></span>';
   h += '</div>';
   /* ═══ МАСШТАБ ПОЛЗУНКОМ, КАК ГРОМКОСТЬ (просьба владельца) ═══
      Значения из ЗАКРЫТОЙ лестницы: ползунок двигает НОМЕР ступени, а не проценты. Свободный
@@ -1294,37 +1353,22 @@ function liqCtrlHTML() {
          + '<span class="dim">detail</span>'
          + '<input id="bkrange" type="range" min="0" max="' + (bs.length - 1) + '" step="1"'
          + ' value="' + bi + '" style="flex:1;min-width:120px;accent-color:#00d395">'
-         + '<span class="btn on" id="bklbl">' + esc(bs[bi]) + ' levels</span></div>';
+         + '<span class="btn on" id="bklbl">' + esc(bs[bi]) + ' levels</span>'
+         + '<span class="btn qmark" id="qbtn" title="' + esc(LIQ_HELP) + '">?</span></div>';
     }
-    h += '<div class="dim">Levels are bucketed inside this window around the current price. '
-       + 'Money outside it is counted and named, not dropped. '
-       /* ПОЧЕМУ СТОЛБИКОВ БЫВАЕТ МЕНЬШЕ, ЧЕМ УРОВНЕЙ НА РУЧКЕ. Ручка задаёт, на сколько равных
-          ломтей режем окно, а ломти без денег не рисуются вовсе. Без этой фразы «14 levels» над
-          пятью столбиками читается как ошибка счёта - то есть экран сам себя опровергает. */
-       + 'Detail is how many equal slices the window is cut into; a slice with no money in it '
-       + 'is not drawn, so the bars can be fewer than the levels.</div>';
+    /* ОБЪЯСНЕНИЕ РУЧЕК СПРЯТАНО ПОД «?», И ЭТО ПРОСЬБА ВЛАДЕЛЬЦА С ВЕРНЫМ ОБОСНОВАНИЕМ: три
+       строки текста стояли МЕЖДУ ползунком и картой, то есть между действием и его
+       результатом. Регулировать и видеть отклик одновременно из-за них не получалось -
+       приходилось прокручивать. Текст никуда не выброшен (он отвечает на настоящий вопрос:
+       почему столбиков бывает меньше, чем уровней на ручке), но теперь он по требованию:
+       наведение даёт подсказку браузера, тап - тот же текст мелким шрифтом.
+       ПРЕДУПРЕЖДЕНИЕ О РАСХОЖДЕНИИ ПОД «?» НЕ УБРАНО И НЕ БУДЕТ: справка объясняет, как
+       читать экран, а предупреждение говорит, что экран сейчас показывает НЕ ТО, о чём
+       попросили. Состояние не имеет права быть спрятанным за наведение. */
+    h += '<div class="help' + (LIQ.help ? ' on' : '') + '" id="liqhelp">' + esc(LIQ_HELP)
+       + '</div>';
   }
   h += '<div id="liqwarn">' + liqWarnHTML() + '</div>';
-  /* ═══ ОРИЕНТАЦИЯ И СОХРАНЕНИЕ КАРТИНКИ ═══
-     ГОРИЗОНТАЛЬНАЯ ВЕРНУЛАСЬ УМОЛЧАНИЕМ (замечание владельца: «зачем в вертикальное
-     переделал, было же горизонтальное»). Она совпадает с картинкой, которую бот присылает в
-     чат, и её подписи не требуют поворота текста - а повёрнутые числа и были тем, что вылезало
-     за рамку карточки. Вертикальная оставлена ОПЦИЕЙ, а не выкинута: у неё своё достоинство -
-     пунктир текущей цены читается как на свечах. Ни одна из двух не «правильная», поэтому
-     выбор отдан человеку, а не зашит. Перерисовка тут БЕЗ СЕТИ: те же числа, другая раскладка. */
-  h += '<div class="btns" style="margin-top:8px">'
-     + '<span class="btn" id="orbtn">' + (LIQ.horiz ? '↔ horizontal' : '↕ vertical')
-     + '</span>'
-     + '<span class="btn" id="svbtn">💾 save image</span></div>';
-  /* СВОЙ ТИКЕР ВВОДОМ. Это НЕ то же, что ручной ввод market_id, который мы из hero убрали:
-     там номер был служебным и человек искал бы его вне экрана, а тикер он и так знает. */
-  h += '<div class="btns" style="margin-top:6px">'
-     /* ШИРИНА 170: ПОЙМАНО РЕНДЕРОМ - при 140 подсказка обрезалась на «any ticker, e.g. ZE»,
-        и поле выглядело сломанным. Подсказка короче, поле шире. */
-     + '<input id="tkin" placeholder="ticker, e.g. ZEC" maxlength="12" '
-     + 'style="background:var(--card2);color:var(--ink);border:1px solid var(--line);'
-     + 'border-radius:10px;padding:7px 9px;width:170px;font:inherit">'
-     + '<span class="btn" id="tkgo">show map</span></div>';
   h += '</div>';
   return h;
 }
@@ -1392,16 +1436,17 @@ function liqBindCtrl() {
       LIQ.pick = -1; liqLoad();
     };
   }
-  var ob = document.getElementById('orbtn');
-  if (ob) {
-    ob.onclick = function () {
-      /* СМЕНА ОРИЕНТАЦИИ НЕ СТОИТ НИ ОДНОГО ЗАПРОСА: числа те же, раскладка другая. */
-      LIQ.horiz = !LIQ.horiz;
-      liqRender();
+  /* «?» - ЭТО ПЕРЕКЛЮЧАТЕЛЬ БЕЗ СЕТИ И БЕЗ ПЕРЕСБОРКИ КАРТЫ: он меняет класс у одного узла.
+     Пересобирать экран ради справки значило бы вернуть то самое мигание. */
+  var qb = document.getElementById('qbtn');
+  if (qb) {
+    qb.onclick = function () {
+      LIQ.help = !LIQ.help;
+      var hp = document.getElementById('liqhelp');
+      if (hp) { hp.className = 'help' + (LIQ.help ? ' on' : ''); }
+      qb.className = 'btn qmark' + (LIQ.help ? ' on' : '');
     };
   }
-  var sv = document.getElementById('svbtn');
-  if (sv) { sv.onclick = liqSave; }
   var tkin = document.getElementById('tkin');
   var tkgo = document.getElementById('tkgo');
   if (tkin && tkgo) {
@@ -1428,6 +1473,19 @@ function liqBindRes() {
   var el = document.getElementById('liqres');
   if (!el) return;
   var i;
+  /* ОРИЕНТАЦИЯ И СОХРАНЕНИЕ ЖИВУТ ТЕПЕРЬ ПОД КАРТОЙ, то есть в области результата, - значит и
+     привязывать их надо здесь, а не вместе с ручками. Забыть это = кнопки на месте и молчат. */
+  var ob = document.getElementById('orbtn');
+  if (ob) {
+    ob.onclick = function () {
+      /* СМЕНА ОРИЕНТАЦИИ НЕ СТОИТ НИ ОДНОГО ЗАПРОСА: числа те же, раскладка другая. И
+         пересобирать ручки незачем - меняется только картинка. */
+      LIQ.horiz = !LIQ.horiz;
+      liqPaint();
+    };
+  }
+  var sv = document.getElementById('svbtn');
+  if (sv) { sv.onclick = liqSave; }
   var brs = el.querySelectorAll('.mkrow[data-btk]');
   for (i = 0; i < brs.length; i++) {
     brs[i].onclick = (function (tk) {
@@ -1531,6 +1589,17 @@ function dcaHTML(env) {
         + '<div class="dim">A DCA program is a commitment to keep buying, not a single trade. '
         + 'The bar is how much of the program is ALREADY spent: a program at 5% means the '
         + 'purchases are still ahead, at 95% they are already in the price.</div>';
+  /* ГЛАВНАЯ ВЕЛИЧИНА ЭКРАНА - «СКОЛЬКО ЕЩЁ НЕ КУПЛЕНО», И СЧИТАЕТ ЕЁ БОТ. Живой прогон
+     владельца поймал расхождение обещания и содержимого: в ответе была одна программа,
+     закрытая и на 100% исполненная, а экран назывался сигналом про БУДУЩИЕ покупки. Теперь
+     заголовочная строка отвечает на обещание числом, а ноль сказан словом. */
+  if (p.ahead_n) {
+    h += '<p class="lead" style="margin-top:8px">Still to be bought: <b>$' + usd(p.ahead_usd)
+       + '</b> across ' + p.ahead_n + ' program(s).</p>';
+  } else if (p.with_val) {
+    h += '<p class="lead" style="margin-top:8px">Nothing here is still ahead: every program in '
+       + 'this response is fully executed.</p>';
+  }
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
     h += '<div class="mkrow"><div class="mkq">' + esc(r.who) + ' · <b>' + esc(r.inp)
@@ -1573,10 +1642,18 @@ function chainHTML(env) {
        + '<div class="barwrap"><div class="bar" style="width:' + w
        + '%;background:var(--nsn)"></div></div>'
        + '<div class="val">$' + usd(r.tvl) + '</div></div>';
+    /* «+0.0% у ВСЕХ» - ЭТО НЕ «ВСЕ СПОКОЙНЫ». Живой прогон владельца: у восьми сетей ответ
+       принёс нулевое изменение, и экран восемь раз напечатал «+0.0% over the window», то есть
+       утверждение, которого никто не мерил. Различает эти два случая слой чисел (`chg_nonzero`
+       в словаре), страница только печатает его вывод. */
+    var _allZero = !!(p.chg_n && !p.chg_nonzero);
     h += '<div class="det on">'
        + (chg === null
           ? '<i>change in TVL did not arrive — this stillness is our missing number</i>'
-          : ('TVL ' + (chg >= 0 ? '+' : '') + chg.toFixed(1) + '% over the window'))
+          : (_allZero
+             ? '<i>change came back as zero for every chain — not measured in this window, '
+               + 'not calm</i>'
+             : ('TVL ' + (chg >= 0 ? '+' : '') + chg.toFixed(1) + '% as reported')))
        + (r.dex === null || r.dex === undefined ? '' : (' · DEX volume $' + usd(r.dex)))
        + (r.addrs === null || r.addrs === undefined ? ''
           : (' · ' + usd(r.addrs) + ' active addresses'))

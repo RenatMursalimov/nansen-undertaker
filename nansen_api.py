@@ -2307,8 +2307,26 @@ def sm_dca_data(rows, top=10):
                     'status': str(r.get('dca_status') or '').strip()[:14]})
     if not out:
         return None
+    # СКОЛЬКО ЕЩЁ НЕ КУПЛЕНО - И ЕСТЬ СМЫСЛ ЭТОГО ЭКРАНА, А НЕ РАЗМЕР ПРОГРАММЫ.
+    # ЖИВОЙ ПРОГОН ВЛАДЕЛЬЦА ЭТО И ПОКАЗАЛ: в ответе пришла ОДНА программа, закрытая, на 100%
+    # исполненная - а экран обещал «единственный сигнал про будущие покупки». Обещание и
+    # содержимое разошлись, и заметно это стало только на живых данных. Величина «впереди
+    # $X по N программам» отвечает на обещание прямо: если она ноль, экран так и скажет,
+    # вместо того чтобы выглядеть сигналом о будущем, которого в ответе нет.
+    # Считается ТОЛЬКО там, где есть оба числа (размер и доля): из одного «потрачено» остаток
+    # не выведешь, и число пропущенных строк названо отдельно.
+    ahead_usd, ahead_n, ahead_gap = 0.0, 0, 0
+    for it in out:
+        if it['usd'] is None or it['spent_pct'] is None:
+            ahead_gap += 1
+            continue
+        _left = it['usd'] * (1.0 - it['spent_pct'] / 100.0)
+        if _left > 0:
+            ahead_usd += _left
+            ahead_n += 1
     return {'rows': out, 'shown': shown, 'with_val': with_val, 'total_usd': total,
-            'more': max(0, len(_all) - shown), 'first_row': first_row}
+            'more': max(0, len(_all) - shown), 'ahead_usd': ahead_usd, 'ahead_n': ahead_n,
+            'ahead_gap': ahead_gap, 'first_row': first_row}
 
 
 def sm_dca_block(rows, bot_un=None, lang='ru', top=10):
@@ -2332,6 +2350,17 @@ def sm_dca_block(rows, bot_un=None, lang='ru', top=10):
               'already spent says how much of it is still ahead.' if en else
               'Программа DCA - это обещание продолжать покупать, а не одна сделка: доля уже '
               'потраченного говорит, сколько покупок ещё впереди.'))
+    # ВЕДЁМ ВЕЛИЧИНОЙ «ЕЩЁ НЕ КУПЛЕНО», А НЕ ЧИСЛОМ ПРОГРАММ. Ноль здесь - тоже ответ, и он
+    # сказан словом: «в этом ответе все программы отработаны» честнее, чем список, который
+    # выглядит сигналом о будущем, ничего о будущем не говоря.
+    if d.get('ahead_n'):
+        L.append(('\U0001f52e Still to be bought: <b>$%s</b> across %d program(s)' if en else
+                  '\U0001f52e Ещё не куплено: <b>$%s</b> по %d программ(ам)')
+                 % (_usd(d['ahead_usd']), int(d['ahead_n'])))
+    elif d.get('with_val'):
+        L.append(('\U0001f52e Nothing is still ahead here: every program in this response is '
+                  'fully executed' if en else
+                  '\U0001f52e Впереди здесь ничего: все программы в этом ответе отработаны'))
     L.append('')
     for it in d['rows']:
         seg = []
@@ -2642,7 +2671,16 @@ def chain_rank_data(rows, top=8, by='tvl_usd'):
                     'addrs': _num_or_none(r.get('active_address_count_txs'))})
     if not out:
         return None
-    return {'rows': out, 'shown': len(out), 'total': len(_all), 'by': _key}
+    # СКОЛЬКО СЕТЕЙ ПРИЕХАЛО С ИЗМЕНЕНИЕМ И У СКОЛЬКИХ ОНО НЕ НУЛЕВОЕ.
+    # ЖИВОЙ ПРОГОН ВЛАДЕЛЬЦА: у ВСЕХ восьми сетей ответ принёс «+0.0%», и экран восемь раз
+    # напечатал «TVL +0.0% over the window» - то есть утверждение «нигде ничего не сдвинулось»,
+    # которого никто не мерил. Ноль у всех подряд - это признак того, что поле в этом окне не
+    # заполнено, а не восемь спокойных сетей. Различить эти два случая может только слой чисел,
+    # поэтому здесь считаются обе величины, а текст и экран их печатают.
+    _chg_n = sum(1 for r in out if r.get('tvl_chg') is not None)
+    _chg_nz = sum(1 for r in out if r.get('tvl_chg'))
+    return {'rows': out, 'shown': len(out), 'total': len(_all), 'by': _key,
+            'chg_n': _chg_n, 'chg_nonzero': _chg_nz}
 
 
 def chain_rank_block(rows, lang='ru', top=8, by='tvl_usd'):
@@ -2676,8 +2714,17 @@ def chain_rank_block(rows, lang='ru', top=8, by='tvl_usd'):
                        % _usd(it['addrs']))
         L.append('%d. <b>%s</b> · %s' % (it['i'], _esc(it['chain']), ' · '.join(seg) or '?'))
     L.append('')
-    L.append(('<i>Percent change is what the response carries, not our arithmetic.</i>' if en
-              else '<i>Процент изменения приехал в ответе, это не наш пересчёт.</i>'))
+    if d.get('chg_n') and not d.get('chg_nonzero'):
+        L.append(('<i>Every chain came back with a zero change: that is what the response '
+                  'carries, and it reads as "not measured in this window", not as %d calm '
+                  'chains.</i>' if en else
+                  '<i>Изменение приехало нулевым у ВСЕХ сетей: так ответила площадка, и читать '
+                  'это надо как «в этом окне не измерено», а не как %d спокойных сет(ей).</i>')
+                 % int(d['chg_n']))
+    else:
+        L.append(('<i>Percent change is what the response carries, not our arithmetic.</i>'
+                  if en
+                  else '<i>Процент изменения приехал в ответе, это не наш пересчёт.</i>'))
     return with_source('\n'.join(L), lang)
 
 

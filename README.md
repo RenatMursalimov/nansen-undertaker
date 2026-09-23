@@ -67,7 +67,8 @@ production: [`docs/MINIAPP_DECISIONS.md`](docs/MINIAPP_DECISIONS.md).
 - Social preview / demo title card: [`assets/social-preview.png`](assets/social-preview.png)
 - Full generated workflow catalog: [`docs/CATALOG.md`](docs/CATALOG.md)
 - All-53-route server sweep and 12×/day schedule: [`docs/ENDPOINT_SWEEP.md`](docs/ENDPOINT_SWEEP.md)
-- Silent 52-second demo plan: [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md)
+- Demo: 110-second shot list with narration [`docs/VIDEO_SCRIPT.md`](docs/VIDEO_SCRIPT.md);
+  the older silent plan: [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md)
 - Ready X thread: [`docs/X_THREAD.md`](docs/X_THREAD.md)
 - Submission draft and eligibility gate: [`docs/submission.md`](docs/submission.md)
 - Roadmap and competitor analysis: [`docs/WINNER_PLAN.md`](docs/WINNER_PLAN.md)

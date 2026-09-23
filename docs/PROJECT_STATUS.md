@@ -1,6 +1,6 @@
 # Nansen Undertaker — project status
 
-**Updated:** 20 September 2026  
+**Updated:** 23 September 2026  
 **Buildathon deadline:** 27 September 2026, 23:59 UTC  
 **Status:** product and eligibility proven; recording, X post and official form remain.
 
@@ -12,6 +12,9 @@
 | Server endpoint sweep | ✅ Ready | all 58 routes declared; 52 structural reads + safe trade reads, Agent tier, hard budgets |
 | Hero: Polymarket holder reputation | ✅ Live PASS | primary `1130012`, backup `4323345`; 3 known histories, 0 failures each |
 | Liquidation map | ✅ Complete | button + command + visualization + honest missing-data handling |
+| Telegram mini-app | ✅ Complete | five tabs (`Whose %`, `Sharp`, `Map`, `More`, `Live`), nine scenes, rehearsal mode on recorded fixtures |
+| Map controls | ✅ Complete | scale/detail sliders on a closed ladder, both orientations, save-as-picture; sliders stay put during a reload |
+| No identifier typing left | ✅ Complete | market id travels from the card (`🧾 N` in chat, a button on the market card in the app); only tickers are typed, and a ticker is knowledge the user already has |
 | Smart Money trade as % of market cap | ✅ Complete | no extra request; value, market cap and token age from one response |
 | Honest outcomes | ✅ Complete | 8 distinct states; partial failures never become wallet properties |
 | Telemetry | ✅ Complete | 28 workflow/operations scenes; one production reader; submission export |
@@ -19,7 +22,7 @@
 | 1,000-call eligibility | ✅ Threshold exceeded | Nansen screenshot: **5,484 used on Sep 20**, 13,850 total in 30D |
 | Meaningful corpus | ✅ Complete | 1,050 network calls, hard cap, 0 cache hits, 1,048 latest cells |
 | Primary/backup preflight | ✅ Complete | both live smoke runs PASS |
-| Silent 30–60s recording | ⏳ Not recorded | exact runbook and 52s storyboard prepared |
+| Recording | ⏳ Not recorded | 110-second shot list with narration, English voiceover tool (`tools/nansen_voiceover.py`), plus the older silent 52s runbook |
 | X thread | ⏳ Not published | six posts prepared; add final video URL/call count |
 | Official entry form | ⏳ Not submitted | submit by Sep 26 if possible |
 | Social preview | ⏳ Image prepared, manual upload required | `assets/social-preview.png`, GitHub Settings upload |
@@ -68,8 +71,14 @@ hard-coded to create an alarming conclusion.
 - **29** unique API routes directly drive those documented workflows.
 - **35** telemetry scenes, including separate `pm_reputation`, `pm_orderbook`, `pm_chart`,
   `liq_map`, `sharp_markets` and `perp_risk` evidence.
+- **9** mini-app scenes, each a new *surface* of an existing telemetry scene rather than a new
+  scene: `pm_markets`, `pm_reputation`, `liq_map`, `smart_trades`, `sharp_markets`, `perp_risk`,
+  `smart_dca`, `chain_rank`, `pm_positions`. Spend from chat and from the app therefore adds up on
+  one row per scene.
+- **9** recorded fixtures (one per scene), all marked `provenance: synthetic`, so the interface
+  opens with no key and cannot pass itself off as a live run.
 - **8** user-visible failure states.
-- Private Nansen suite: **837 PASS / 0 FAIL** after all-route sweep and credit-safety checks.
+- Private Nansen suite: **862 PASS / 0 FAIL** after all-route sweep and credit-safety checks.
 - Public suite: **156 PASS / 0 FAIL**; scrub clean; latest published CI green.
 
 ## What is finished
@@ -99,13 +108,21 @@ These are roadmap items, not missing submission requirements:
 5. **More direct UX doors:** the generated catalog lists client routes without an ordinary user
    workflow; add only when a real decision question exists, not to increase a route count.
 
-## Freeze rule
+## Freeze rule, and where it actually stood
 
-Until submission, add no new feature unless it fixes a demonstrated recording/submission blocker.
-The remaining work is packaging:
+The rule was written as *«add no new feature unless it fixes a demonstrated recording blocker»*, and
+between 22 and 23 September it was **not** what happened: the owner watched live screens and asked
+for the things that were missing, and those requests were built — sharp-money comparison, the perp
+risk board, the measured ticker list, the map controls, two orientations, save-as-picture, the
+`➕ More` tab, and the end of typing a market id. Recording that honestly matters more than looking
+disciplined: every one of those came from a real defect or a real gap found on live data, and the
+last of them removed a UX defect the owner had reported **twice**.
+
+From here the freeze holds, and the remaining work is packaging:
 
 1. crop/save Usage Analytics proof;
-2. record the 52-second silent demo;
+2. record the demo (110-second shot list in [`VIDEO_SCRIPT.md`](VIDEO_SCRIPT.md), narration
+   rendered by `tools/nansen_voiceover.py --run`);
 3. upload social preview;
 4. publish X thread;
 5. submit official form and save confirmation.
