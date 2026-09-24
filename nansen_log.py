@@ -111,6 +111,10 @@ SCENES = (
     'chain_rank',              # «рейтинг сетей» (chains/chain-rank)
     'defi_holdings',           # «дефи 0x…» (portfolio/defi-holdings)
     'pm_positions',            # «позиции рынка <id>» (prediction-market/position-detail)
+    # ПОСЛЕДНЯЯ РУЧКА БЕЗ СХЕМЫ ПЕРЕСТАЛА БЫТЬ БЕЗ СХЕМЫ: круг 4 живой пробы (24.09) дал 200 и
+    # строку. Сцена своя, потому что вопрос свой: не «кто стоит построчно», а «сколько плеча у
+    # китов, у смарт-трейдеров и у публичных фигур, лонги против шортов».
+    'perp_positioning',        # «позиционирование <адрес>» (tgm/position-intelligence)
     'jup_dca',                 # «jup dca <mint>» (tgm/jup-dca)
 )
 _SCENES = frozenset(SCENES)
@@ -162,6 +166,10 @@ _EP_UNKNOWN = frozenset((
     # ложь в самом проверяемом месте.
     'smart-money/dcas', 'chains/chain-rank', 'portfolio/defi-holdings',
     'prediction-market/position-detail', 'tgm/jup-dca',
+    # СХЕМА СНЯТА КРУГОМ 4 (24.09), ЦЕНА - НЕТ. Ручка отдала 200 и строку с девятью полями
+    # денег, но в официальном списке её цены нет, поэтому экран говорит «цена не названа» и
+    # считает запросами.
+    'tgm/position-intelligence',
     'profiler/address/labels', 'profiler/address/pnl-summary',
     'profiler/address/related-wallets', 'profiler/address/counterparties',
     'profiler/address/current-balance',

@@ -51,11 +51,11 @@ take drifts and the words run ahead of the picture, the take is wrong — not th
 | 12 | 1:58–2:06 | Back to the chat: the bot's picture of the same map, caption line by line. | "The app computes nothing. It draws the same dictionary the bot uses for its chat message, so the picture and the words cannot drift apart." |
 
 **Closing card (no narration, 2 seconds):** `github.com/RenatMursalimov/nansen-undertaker` ·
-"Fifty-eight Nansen routes. Thirty-two workflows. Eight ways to say I do not know."
+"Fifty-nine Nansen routes. Thirty-three workflows. Eight ways to say I do not know."
 
 > The three numbers on the closing card are asserted by the test suite against the code, so the card
-> cannot quietly go stale: `58` routes and `52` structural reads come from `tools/nansen_endpoint_sweep.py`,
-> `32` workflows from `tools/nansen_catalog.py`, and the eight refusal classes from `nansen_api`.
+> cannot quietly go stale: `59` routes and `53` structural reads come from `tools/nansen_endpoint_sweep.py`,
+> `33` workflows from `tools/nansen_catalog.py`, and the eight refusal classes from `nansen_api`.
 
 ---
 
@@ -112,6 +112,11 @@ the voiceover changes with it.
 * **trading.** The bot can place an order on a prediction market, and none of that contour is
   reachable through the mini-app gateway — by absence, not by a check. A trading frame would move
   the conversation from data to risk;
-* **the endpoints with no schema.** `tgm/position-intelligence` still answers 422 to every body
-  shape we have tried. It is documented as unresolved in `nansen/ENDPOINT_SWEEP.md` rather than
-  demonstrated as working.
+* **nothing is left unschemaed to hide.** This section used to say that
+  `tgm/position-intelligence` answers 422 to every body shape we tried. On 24 September the fourth
+  probe round closed it: the body is exactly one field, `token_address`, and the response carries
+  leverage split by segment — whales, smart traders, public figures, longs against shorts. It is now
+  a working screen (`⚖️ Who is positioned`, reachable by a button under the Nansen answer for a
+  token), so the honest version of this line is: **every route in the client has a measured
+  schema.** The claim that replaced it is the stronger one, and it is checked by the route test
+  rather than by this file.

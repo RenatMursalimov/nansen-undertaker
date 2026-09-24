@@ -6,7 +6,7 @@ The client currently contains 53 network routes. This tool keeps a declarative e
 one and fails if the client and registry drift apart. It sends fresh requests through the normal
 telemetry throat (never through response cache), but it does NOT pretend every route is schedulable:
 
-* 52 structural read routes can run in ``complete``;
+* 53 structural read routes can run in ``complete``;
 * ``trade/quote`` is a zero-credit read and joins routine/complete;
 * two Agent routes require ``--include-agents`` because they cost 200 + 750 credits;
 * ``trade/bridge-status`` requires a real tx hash supplied outside source control;
@@ -147,6 +147,12 @@ def registry():
         _case('tgm/perp-positions',
               {'token_symbol': 'BTC', 'pagination': _pg(),
                'order_by': [{'field': 'position_value_usd', 'direction': 'DESC'}]}),
+        # ПОСЛЕДНЯЯ РУЧКА НАБОРА, У КОТОРОЙ ПОЯВИЛАСЬ СХЕМА (круг 4 живой пробы 24.09).
+        # Тело - РОВНО один `token_address`: ни `chain`, ни `pagination` она не знает, и это
+        # сказала сама площадка тремя отказами подряд. Оценка цены 5 кредитов - именно ОЦЕНКА:
+        # в официальном списке цены нет, поэтому в телеметрии ручка помечена как unpriced и
+        # экраны считают её запросами, а не кредитами.
+        _case('tgm/position-intelligence', {'token_address': TOKEN}),
         _case('tgm/perp-pnl-leaderboard',
               {'token': 'BTC', 'date': _dr(7), 'pagination': _pg(),
                'order_by': [{'field': 'total_pnl', 'direction': 'DESC'}]}),
@@ -394,8 +400,8 @@ def main(argv=None):
     # ЧИСЛО ЖЁСТКОЕ НАРОЧНО: оно напечатано в судейских документах, и «маршрут добавили, а
     # документ не обновили» обязано ломать прогон, а не обнаруживаться читателем. 55 - после
     # живой пробы схем 24.09 (`smart-money/dcas`, `chains/chain-rank`).
-    if len(cases) != 58:
-        print('REGISTRY DRIFT: expected 58 routes, got %d' % len(cases))
+    if len(cases) != 59:
+        print('REGISTRY DRIFT: expected 59 routes, got %d' % len(cases))
         return 2
     if args.max_wire < 1 or args.daily_wire_cap < 1 or args.daily_credit_cap < 1:
         print('Caps must be positive. Nothing sent.')
@@ -407,7 +413,7 @@ def main(argv=None):
         for c in cases:
             print('%-49s %-11s %-11s budget≈%d'
                   % (c['path'], c['kind'], c['tier'], c['estimate']))
-        print('\n58 declared: 52 structural reads + 2 Agent + 4 trade.')
+        print('\n59 declared: 53 structural reads + 2 Agent + 4 trade.')
         return 0
 
     selected = _select(args, cases)

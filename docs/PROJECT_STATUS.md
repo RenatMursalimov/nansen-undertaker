@@ -8,8 +8,8 @@
 
 | Area | Status | Evidence / next action |
 |---|---|---|
-| Core Nansen integration | ✅ Complete | 58 API routes in one client; 32 documented workflows |
-| Server endpoint sweep | ✅ Ready | all 58 routes declared; 52 structural reads + safe trade reads, Agent tier, hard budgets |
+| Core Nansen integration | ✅ Complete | 59 API routes in one client; 33 documented workflows; **no route left without a measured schema** |
+| Server endpoint sweep | ✅ Ready | all 59 routes declared; 53 structural reads + safe trade reads, Agent tier, hard budgets |
 | Hero: Polymarket holder reputation | ✅ Live PASS | primary `1130012`, backup `4323345`; 3 known histories, 0 failures each |
 | Liquidation map | ✅ Complete | button + command + visualization + honest missing-data handling |
 | Telegram mini-app | ✅ Complete | five tabs (`Whose %`, `Sharp`, `Map`, `More`, `Live`), nine scenes, rehearsal mode on recorded fixtures |
@@ -63,14 +63,14 @@ hard-coded to create an alarming conclusion.
 
 ## Technical inventory
 
-- **58** unique Nansen API routes in the client.
-- **32** documented workflows:
-  - 30 user-facing workflows that call Nansen;
+- **59** unique Nansen API routes in the client — the last one without a schema (`tgm/position-intelligence`) was resolved on 24 Sep by the fourth probe round.
+- **33** documented workflows:
+  - 31 user-facing workflows that call Nansen;
   - 1 background digest workflow;
   - 1 local contribution-tally workflow.
-- **29** unique API routes directly drive those documented workflows.
-- **35** telemetry scenes, including separate `pm_reputation`, `pm_orderbook`, `pm_chart`,
-  `liq_map`, `sharp_markets` and `perp_risk` evidence.
+- **30** unique API routes directly drive those documented workflows.
+- **36** telemetry scenes, including separate `pm_reputation`, `pm_orderbook`, `pm_chart`,
+  `liq_map`, `sharp_markets`, `perp_risk` and `perp_positioning` evidence.
 - **9** mini-app scenes, each a new *surface* of an existing telemetry scene rather than a new
   scene: `pm_markets`, `pm_reputation`, `liq_map`, `smart_trades`, `sharp_markets`, `perp_risk`,
   `smart_dca`, `chain_rank`, `pm_positions`. Spend from chat and from the app therefore adds up on

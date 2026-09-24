@@ -10,7 +10,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 | Scenarios | Endpoints used | Telemetry scenes |
 |---|---|---|
-| 32: 30 user-facing on Nansen + 1 background + 1 local | 34 | 30 of 35 in registry |
+| 33: 31 user-facing on Nansen + 1 background + 1 local | 35 | 31 of 36 in registry |
 
 ## Three doors: where Nansen can be asked at all
 
@@ -56,6 +56,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [💠 The DeFi part of a wallet: assets MINUS debts](#defi) | `defi 0x…` | 🧠 Nansen → 🔎 Wallet and token → 💠 DeFi part | 💬 | price not named in the official list · 1 request |
 | [🧾 Who is in a Polymarket market, and their PnL](#pmpos) | `market positions 654412` | 🎲 Trending markets → the «🧾 N» button under the list<br>🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL | 💬 | price not named in the official list · 1 request |
 | [🧊 Jupiter DCA by token (Solana)](#jupdca) | `jup dca <mint>` | 🧠 Nansen → 🧠 Smart money → 🧊 Jupiter DCA by token | 💬 | price not named in the official list · 1 request |
+| [⚖️ Who is positioned on a token: whales, smart traders, public figures](#posintel) | `positioning 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2`<br>`who is positioned <address>` | 🔍 Nansen on a token → the «⚖️ Who is positioned» button<br>🧠 Nansen → ⚔️ Other people’s leverage → ⚖️ Who is positioned | 💬 👥🔘 | price not named in the official list · 1 request |
 | [🎯 Where the money on Polymarket is sharp (market comparison)](#sharpmarkets) | `sharp money` | 🧠 Nansen → 🎲 Polymarket → 🎯 Where money is sharp | 💬 | price not named in the official list · 1 + N + N×H requests (13 by default) |
 | [⚔️ Risk board: whose leverage is closest to the edge](#perprisk) | `risk board` | 🧠 Nansen → ⚔️ Leverage → ⚔️ Perp risk board<br>liquidation map → ⚔️ Compare all four | 💬 👥🔘 | price not named in the official list · one request per token (4) |
 | [🧮 My contest tally](#tally) | `nansen stats` | 🧠 Nansen → 🌐 Chains and tally → 🧮 My contest tally | 💬 | free, reads its own log |
@@ -739,6 +740,30 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ---
 
+<a name="posintel"></a>
+
+## ⚖️ Who is positioned on a token: whales, smart traders, public figures
+
+**Say to the bot:** `positioning 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` · `who is positioned <address>`
+**By button:** 🔍 Nansen on a token → the «⚖️ Who is positioned» button · 🧠 Nansen → ⚔️ Other people’s leverage → ⚖️ Who is positioned
+**Where:** in DM · in a group — by the button on a card the bot itself posted (`hs:posi`)
+
+**What you get:** leverage split by holder segment: whales, smart traders and public figures separately, longs against shorts and the net skew
+
+**Price:** price not named in the official list · 1 request
+
+**Why:** the neighbouring screen answers row by row (who stands where, and where their liquidation is); this one answers WHO AGAINST WHOM - whales long twelve million while smart traders are short nine is a statement a list of positions cannot make
+
+**Endpoints:** `tgm/position-intelligence`
+
+**Telemetry scene:** `perp_positioning` — this screen's spend is counted under it.
+
+**For a tweet (EN):**
+
+> Whales long twelve million while smart traders are short nine. A list of positions cannot say that: it does not know which wallet belongs to which class.
+
+---
+
 <a name="sharpmarkets"></a>
 
 ## 🎯 Where the money on Polymarket is sharp (market comparison)
@@ -836,7 +861,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## Client routes with no ordinary user scenario
 
-The catalog above has 32 workflows that use 34 unique API routes. The client contains **58** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
+The catalog above has 33 workflows that use 35 unique API routes. The client contains **59** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
 
 This is not a claim that all work end-to-end: having a client is not the same as a ready scenario. The list is broken out precisely so as not to pass API coverage off as user-available functionality.
 
