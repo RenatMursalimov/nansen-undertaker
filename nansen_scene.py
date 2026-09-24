@@ -83,7 +83,7 @@ def _viz():
 
 
 def _envelope(scene, payload, outcome, lang='ru', cost_requests=0, cost_credits=None,
-              freshness_seconds=None, caveats=(), refusal_what=None, extra=None):
+              freshness_seconds=None, caveats=(), refusal_what=None, extra=None, eps=()):
     """Собрать конверт сцены. -> dict.
 
     `outcome` == 'ok' - есть payload. Иначе payload None, а `refusal` несёт человеческую
@@ -102,7 +102,12 @@ def _envelope(scene, payload, outcome, lang='ru', cost_requests=0, cost_credits=
         'lang': 'en' if lang == 'en' else 'ru',
     }
     if outcome != 'ok':
-        env['refusal'] = _n().refusal(outcome, env['lang'], what=refusal_what)
+        # СЛОВА ПЛОЩАДКИ ЕДУТ НА ЭКРАН ВМЕСТЕ С КЛАССОМ ОТКАЗА. Живой вопрос владельца на 503:
+        # «это на стороне Нансена или у нас?» - и ответ у площадки был в том же ответе (её код,
+        # её сообщение, её request_id), а мы показывали три цифры и отправляли в лог на сервере.
+        # `eps` - те ручки, которые спрашивала ИМЕННО ЭТА сцена: без этой сверки на экран могла
+        # бы попасть ошибка чужого экрана, оставшаяся в памяти процесса.
+        env['refusal'] = _n().refusal(outcome, env['lang'], what=refusal_what, ep=eps)
         # КОД ОТВЕТА ЕДЕТ В КОНВЕРТЕ, А НЕ ОСТАЁТСЯ В ЛОГЕ НА СЕРВЕРЕ. 402, 429 и 502 - три
         # разных действия человека (кредиты / подождать / это не мы), и различает их одно число.
         # Прежний текст отказа предлагал посмотреть код «в логе бота», то есть требовал доступа к
@@ -116,6 +121,26 @@ def _envelope(scene, payload, outcome, lang='ru', cost_requests=0, cost_credits=
     if extra:
         env.update(extra)
     return env
+
+
+#: РУЧКИ КАЖДОЙ СЦЕНЫ - ОДНИМ СПИСКОМ, И ОН СЛУЖИТ ДВУМ ДЕЛАМ СРАЗУ: по нему считается цена
+#: экрана в кредитах И по нему решается, ЧЬИ слова площадки показывать в отказе. Два списка с
+#: одним смыслом (один у цены, другой у отказа) разъехались бы на первой правке, и тогда экран
+#: либо соврал бы о цене, либо показал ошибку чужой ручки как свою - оба случая невидимы глазом.
+SCENE_EPS = {
+    'pm_markets': ('prediction-market/market-screener',),
+    'pm_reputation': ('prediction-market/top-holders',
+                      'prediction-market/address-summary'),
+    'liq_map': ('tgm/perp-positions',),
+    'smart_trades': ('smart-money/dex-trades',),
+    'sharp_markets': ('prediction-market/market-screener',
+                      'prediction-market/top-holders',
+                      'prediction-market/address-summary'),
+    'perp_risk': ('tgm/perp-positions',),
+    'smart_dca': ('smart-money/dcas',),
+    'chain_rank': ('chains/chain-rank',),
+    'pm_positions': ('prediction-market/position-detail',),
+}
 
 
 def _credits_for(eps):
@@ -155,10 +180,11 @@ def pm_markets_data(lang='ru', top=12, rows=None):
     if rows is None:
         rows = N.pm_market_screener(per_page=int(top))
     _what = ('рынков Polymarket' if lang != 'en' else 'Polymarket markets')
-    _cr = _credits_for(('prediction-market/market-screener',))
+    _eps = SCENE_EPS['pm_markets']
+    _cr = _credits_for(_eps)
     if not rows:
         return _envelope('pm_markets', None, N.fail_reason('empty'), lang, cost_requests=1,
-                         cost_credits=_cr, refusal_what=_what)
+                         cost_credits=_cr, refusal_what=_what, eps=_eps)
     out, no_id = [], 0
     for r in rows[:int(top)]:
         if not isinstance(r, dict):
@@ -176,7 +202,7 @@ def pm_markets_data(lang='ru', top=12, rows=None):
                     'vol24': N._num_or_none(r.get('volume_24hr'))})
     if not out:
         return _envelope('pm_markets', None, N.fail_reason('empty'), lang, cost_requests=1,
-                         cost_credits=_cr, refusal_what=_what)
+                         cost_credits=_cr, refusal_what=_what, eps=_eps)
     _cav = []
     if no_id:
         _cav.append(('%d market(s) came without an id: they cannot be opened by a tap'
@@ -204,13 +230,13 @@ def pm_reputation_data(market_id, top=None, lang='ru'):
     if not rep:
         _what = ('держателей этого рынка' if lang != 'en' else 'holders of this market')
         return _envelope('pm_reputation', None, N.fail_reason('empty'), lang,
+                         eps=SCENE_EPS['pm_reputation'],
                          cost_requests=1, cost_credits=_credits_for(
                              ('prediction-market/top-holders',)),
                          refusal_what=_what)
     return _envelope('pm_reputation', rep, 'ok', lang,
                      cost_requests=int(rep.get('calls') or 0),
-                     cost_credits=_credits_for(('prediction-market/top-holders',
-                                                'prediction-market/address-summary')),
+                     cost_credits=_credits_for(SCENE_EPS['pm_reputation']),
                      freshness_seconds=rep.get('age_sec'),
                      caveats=_pm_caveats(rep, _top, lang),
                      # ОБА ПОРОГА ЕДУТ ЧИСЛОМ. Порог «острых» (60%) жил ТОЛЬКО в мини-аппе -
@@ -276,10 +302,10 @@ def liq_map_data(token, mark=None, lang='ru', rows=None, tokens=None, zoom=None,
         rows = N.perp_positions(_tok, 50)
     _what = (('позиций с плечом по %s' % _tok) if lang != 'en'
              else ('leveraged positions on %s' % _tok))
-    _cr = _credits_for(('tgm/perp-positions',))
+    _cr = _credits_for(SCENE_EPS['liq_map'])
     if not rows:
         return _envelope('liq_map', None, N.fail_reason('empty'), lang, cost_requests=1,
-                         cost_credits=_cr, refusal_what=_what)
+                         cost_credits=_cr, refusal_what=_what, eps=SCENE_EPS['liq_map'])
     cl = V.liq_clusters(rows, mark, zoom, buckets)
     if not cl:
         # СТРОКИ ЕСТЬ, А ЦЕН ЛИКВИДАЦИИ В НИХ НЕТ - это расхождение схемы, а не «пусто».
@@ -359,11 +385,12 @@ def smart_trades_data(lang='ru', top=12, rows=None):
     if rows is None:
         rows = N.sm_dex_trades(None, 15)
     _what = ('сделок smart money' if lang != 'en' else 'smart money trades')
-    _cr = _credits_for(('smart-money/dex-trades',))
+    _cr = _credits_for(SCENE_EPS['smart_trades'])
     d = N.sm_trades_data(rows, top) if rows else None
     if not d:
         return _envelope('smart_trades', None, N.fail_reason('empty'), lang, cost_requests=1,
-                         cost_credits=_cr, refusal_what=_what)
+                         cost_credits=_cr, refusal_what=_what,
+                         eps=SCENE_EPS['smart_trades'])
     return _envelope('smart_trades', d, 'ok', lang, cost_requests=1, cost_credits=_cr,
                      freshness_seconds=_tele().age(),
                      caveats=_sm_caveats(d, lang),
@@ -404,14 +431,13 @@ def sharp_markets_data(lang='ru', markets=None, holders=None, d=None):
     _m = int(markets or N.SHARP_MARKETS_N)
     _h = int(holders or N.SHARP_HOLDERS)
     _what = ('рынков Polymarket' if lang != 'en' else 'Polymarket markets')
-    _eps = ('prediction-market/market-screener', 'prediction-market/top-holders',
-            'prediction-market/address-summary')
+    _eps = SCENE_EPS['sharp_markets']
     _cr = _credits_for(_eps)
     if d is None:
         d = N.sharp_markets(_m, _h)
     if not d:
         return _envelope('sharp_markets', None, N.fail_reason('empty'), lang, cost_requests=1,
-                         cost_credits=_cr, refusal_what=_what)
+                         cost_credits=_cr, refusal_what=_what, eps=_eps)
     return _envelope('sharp_markets', d, 'ok', lang,
                      cost_requests=int(d.get('calls') or 0), cost_credits=_cr,
                      freshness_seconds=d.get('age_sec'),
@@ -478,7 +504,7 @@ def perp_risk_data(tokens=None, marks=None, lang='ru', by_token=None):
     N, V = _n(), _viz()
     _toks = tuple(t for t in (tokens or PERP_BOARD_TOKENS))[:6]
     _what = ('позиций с плечом' if lang != 'en' else 'leveraged positions')
-    _cr = _credits_for(('tgm/perp-positions',))
+    _cr = _credits_for(SCENE_EPS['perp_risk'])
     if by_token is None:
         by_token = {}
         for t in _toks:
@@ -488,7 +514,8 @@ def perp_risk_data(tokens=None, marks=None, lang='ru', by_token=None):
         # НИ ОДНОЙ КАРТЫ - ЭТО ОТКАЗ, А НЕ БОРД ИЗ ПРОЧЕРКОВ. Четыре строки «карты нет»
         # выглядят как измерение, которого не было.
         return _envelope('perp_risk', None, N.fail_reason('empty'), lang,
-                         cost_requests=len(_toks), cost_credits=_cr, refusal_what=_what)
+                         cost_requests=len(_toks), cost_credits=_cr, refusal_what=_what,
+                         eps=SCENE_EPS['perp_risk'])
     return _envelope('perp_risk', d, 'ok', lang, cost_requests=len(_toks), cost_credits=_cr,
                      freshness_seconds=_tele().age(),
                      caveats=_perp_risk_caveats(d, lang),
@@ -544,11 +571,11 @@ def smart_dca_data(lang='ru', top=10, rows=None):
     if rows is None:
         rows = N.smart_money_dcas(20)
     _what = ('программ DCA у smart money' if lang != 'en' else 'smart money DCA programs')
-    _cr = _credits_for(('smart-money/dcas',))
+    _cr = _credits_for(SCENE_EPS['smart_dca'])
     d = N.sm_dca_data(rows, int(top)) if rows else None
     if not d:
         return _envelope('smart_dca', None, N.fail_reason('empty'), lang, cost_requests=1,
-                         cost_credits=_cr, refusal_what=_what)
+                         cost_credits=_cr, refusal_what=_what, eps=SCENE_EPS['smart_dca'])
     return _envelope('smart_dca', d, 'ok', lang, cost_requests=1, cost_credits=_cr,
                      freshness_seconds=_tele().age(), caveats=_dca_caveats(d, lang))
 
@@ -604,11 +631,11 @@ def chain_rank_data(lang='ru', top=8, rows=None):
     if rows is None:
         rows = N.chain_rank(20)
     _what = ('рейтинга сетей' if lang != 'en' else 'the chain ranking')
-    _cr = _credits_for(('chains/chain-rank',))
+    _cr = _credits_for(SCENE_EPS['chain_rank'])
     d = N.chain_rank_data(rows, int(top)) if rows else None
     if not d:
         return _envelope('chain_rank', None, N.fail_reason('empty'), lang, cost_requests=1,
-                         cost_credits=_cr, refusal_what=_what)
+                         cost_credits=_cr, refusal_what=_what, eps=SCENE_EPS['chain_rank'])
     return _envelope('chain_rank', d, 'ok', lang, cost_requests=1, cost_credits=_cr,
                      freshness_seconds=_tele().age(), caveats=_chain_caveats(d, lang))
 
@@ -662,12 +689,12 @@ def pm_positions_data(market_id, lang='ru', top=10, rows=None):
     if rows is None:
         rows = N.pm_positions(_mid, 20)
     _what = ('держателей этого рынка' if lang != 'en' else 'holders of this market')
-    _cr = _credits_for(('prediction-market/position-detail',))
+    _cr = _credits_for(SCENE_EPS['pm_positions'])
     d = N.pm_positions_data(rows, int(top)) if rows else None
     if not d:
         return _envelope('pm_positions', None, N.fail_reason('empty'), lang, cost_requests=1,
                          cost_credits=_cr, refusal_what=_what,
-                         extra={'market_id': _mid})
+                         eps=SCENE_EPS['pm_positions'], extra={'market_id': _mid})
     return _envelope('pm_positions', d, 'ok', lang, cost_requests=1, cost_credits=_cr,
                      freshness_seconds=_tele().age(),
                      caveats=_pm_pos_caveats(d, lang),

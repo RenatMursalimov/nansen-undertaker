@@ -534,11 +534,18 @@ _REFUSAL = {
                'а не результат проверки.'),
         'en': ('⌛ Nansen did not answer in time (timeout): we did NOT get {what}. This is our '
                'failure, not a verdict.')},
+    # ═══ ТЕКСТ ПЕРЕПИСАН ПО ЖИВОМУ ВОПРОСУ ВЛАДЕЛЬЦА: «это на стороне Нансена или у нас?» ═══
+    # Прежняя фраза отвечала «отказ площадки» и отправляла за кодом В ЛОГ НА СЕРВЕРЕ - то есть
+    # на главный вопрос не отвечала вовсе, а за ответом посылала туда, куда человеку с телефона
+    # не дойти. Хуже: в этот класс падают И 401 (ключ отвергнут), И 404 (мы стучимся не туда), и
+    # называть их «отказом площадки» - прямая неправда. Поэтому теперь класс говорит ровно то,
+    # что знает: ответ был, данных в нём нет, а ЧТО именно не так - называет сама площадка
+    # строкой ниже (`provider_said`: её код, её сообщение, её request_id).
     'http': {
-        'ru': ('⚠️ Nansen ответил ошибкой: {what} мы НЕ получили. Это отказ площадки, а не '
-               'результат проверки; код ответа в логе бота.'),
-        'en': ('⚠️ Nansen replied with an error: we did NOT get {what}. This is a provider '
-               'failure, not a verdict; the status code is in the bot log.')},
+        'ru': ('⚠️ Nansen ответил ошибкой: {what} мы НЕ получили. Это ответ площадки, а не '
+               'результат проверки - и не пустота у данных.'),
+        'en': ('⚠️ Nansen replied with an error: we did NOT get {what}. This is the provider '
+               'answering, not a verdict - and not an absence of data.')},
     'badreq': {
         'ru': ('🛠 Nansen НЕ ПРИНЯЛ наш запрос (400/422): {what} мы не получили, и виноват '
                'запрос, а не площадка и не этот адрес. Это наш баг, он в логе бота с телом '
@@ -591,13 +598,37 @@ def provider_said(ep, lang='ru'):
     """
     if not ep:
         return ''
-    if str(_LAST_ERR.get('path') or '').strip('/') != str(ep).strip('/'):
+    # `ep` МОЖЕТ БЫТЬ И СПИСКОМ: у экрана-сцены запросов несколько, и слова площадки надо
+    # показать, если упал ЛЮБОЙ ИЗ НИХ - но по-прежнему НЕ показывать чужую ошибку, оставшуюся
+    # в памяти процесса от другого экрана. Поэтому это проверка принадлежности, а не «покажи
+    # последнее, что было».
+    _eps = ep if isinstance(ep, (tuple, list, set)) else (ep,)
+    _got = str(_LAST_ERR.get('path') or '').strip('/')
+    if _got not in tuple(str(x).strip('/') for x in _eps):
         return ''
     txt = str(_LAST_ERR.get('text') or '').strip()
     if not txt:
         return ''
-    return (('\n<i>Nansen said: «%s»</i>' if lang == 'en' else
-             '\n<i>Площадка ответила: «%s»</i>') % _esc(txt[:200]))
+    # СЛОВА ПЛОЩАДКИ, А НЕ 220 СИМВОЛОВ СЫРОГО ТЕЛА. У документированного отказа есть
+    # стабильный код, человеческое сообщение и `request_id` для их поддержки; у ошибки их edge
+    # вместо этого приезжает HTML, и его надо не печатать в лицо, а свести к одной строке.
+    _ei = _err_info(txt)
+    if _ei.get('code') or _ei.get('message'):
+        _mid = ' · '.join(x for x in ((('<code>%s</code>' % _esc(_ei['code']))
+                                       if _ei.get('code') else ''),
+                                      _esc(_ei.get('message') or '')) if x)
+        _rq = (('\n<i>request_id %s</i>' % _esc(_ei['request_id']))
+               if _ei.get('request_id') else '')
+        return (('\n<i>Nansen said: %s</i>%s' if lang == 'en' else
+                 '\n<i>Площадка ответила: %s</i>%s') % (_mid, _rq))
+    # ТЕЛА С КОДОМ НЕТ - ЗНАЧИТ ОТВЕТИЛ НЕ САМ API, А ЧТО-ТО ПЕРЕД НИМ. Это тоже ответ на
+    # вопрос «чья сторона», и его надо сказать словом, а не вываливать разметку.
+    _flat = re.sub(r'<[^>]{0,120}>', ' ', txt)
+    _flat = ' '.join(_flat.split())[:160]
+    return (('\n<i>Nansen replied without a documented error body (that is the answer of '
+             'something in front of their API, not of the API itself): «%s»</i>' if lang == 'en'
+             else '\n<i>Ответ пришёл БЕЗ документированного тела ошибки - так отвечает не сам '
+                  'API, а то, что стоит перед ним: «%s»</i>') % _esc(_flat or '—'))
 
 
 def refusal(reason, lang='ru', what=None, ep=None):
@@ -970,6 +1001,82 @@ def _post_fix(path, body, ckey=None, timeout=60):
     return None
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# МАШИНОЧИТАЕМЫЙ КОД ОШИБКИ ПЛОЩАДКИ (docs.nansen.ai/getting-started/…handling-errors)
+#
+# ЗАЧЕМ ЭТО ПОЯВИЛОСЬ. Живой прогон владельца 27.09: мини-апп показал `http · HTTP 503` и
+# «отказ площадки; код ответа в логе бота» - на ДВУХ разных экранах сразу. Вопрос был ровно
+# один: «это на стороне Нансена или у нас?». Ответить по одному числу нельзя, а у площадки в
+# ТОМ ЖЕ ответе лежит СТАБИЛЬНЫЙ код (`code`), человеческое сообщение, `request_id` для их
+# поддержки и иногда `retry_after`. Мы это выбрасывали и печатали три цифры.
+#
+# КОДЫ ВЕДУТ РАЗБОР, А СТАТУС - ТОЛЬКО ПОДСТРАХОВКА. Статус у площадки один на несколько
+# миров (422 - и «схема не та», и «этот актив не покрываем»), а `code` документирован и
+# помечен признаком «можно ли повторять». Их же документ прямо перечисляет повторяемые:
+# rate_limit_exceeded, query_timeout, upstream_unavailable, internal_error.
+#
+# ГРАНИЦА: НЕЗНАКОМЫЙ КОД НЕ ЛОМАЕТ РАЗБОР. Их документ предупреждает, что список кодов будет
+# расти, и требует терпеть неизвестные. Поэтому неизвестный код просто не участвует в решении -
+# работает прежний разбор по статусу, а сам код печатается человеку как есть.
+#: КОД ПЛОЩАДКИ -> НАШ КЛАСС ОТКАЗА. Только те, где смысл совпадает ОДНОЗНАЧНО.
+_ERR_CLASS = {
+    'insufficient_credits': 'nocredits',
+    'rate_limit_exceeded': 'ratelimit',
+    'query_timeout': 'timeout',
+    # «ПОЧИНИ ЗАПРОС» - ЭТО НАШ БАГ, А НЕ ОТКАЗ ПЛОЩАДКИ. Все эти коды их документ помечает
+    # «No» в графе «можно повторить»: повтор того же тела даст то же самое.
+    'missing_field': 'badreq', 'unknown_field': 'badreq', 'invalid_field_value': 'badreq',
+    'invalid_address_format': 'badreq', 'invalid_date_format': 'badreq',
+    'invalid_date_range': 'badreq', 'mutually_exclusive_fields': 'badreq',
+    'value_out_of_range': 'badreq', 'too_many_items': 'badreq',
+    'method_not_allowed': 'badreq', 'payload_too_large': 'badreq',
+    'query_too_large': 'badreq',
+    # 404 - ТОЖЕ НАШ БАГ, А НЕ «СБОЙ ПЛОЩАДКИ». Их документ: «wrong endpoint path». Раньше он
+    # падал в общий `http` и человек читал «отказ площадки» там, где мы стучимся не туда - в
+    # этом проекте так похоронены четыре мёртвых эндпоинта, и каждый из них сначала выглядел
+    # как чужая поломка.
+    'not_found': 'badreq',
+}
+#: КОДЫ, КОТОРЫЕ ПЛОЩАДКА САМА ПОМЕТИЛА КАК ПОВТОРЯЕМЫЕ.
+_ERR_RETRY = ('rate_limit_exceeded', 'query_timeout', 'upstream_unavailable', 'internal_error')
+#: СТАТУСЫ, ПОВТОРЯЕМЫЕ БЕЗ КОДА (ответ мог прийти от их edge, а не от приложения - тогда тела
+#: с кодом в нём нет вовсе: именно так выглядит 503 от прокси перед API).
+_HTTP_RETRY = (500, 502, 503, 504)
+#: ПОТОЛОК ОЖИДАНИЯ ПЕРЕД ПОВТОРОМ. Человек стоит и смотрит на экран: три секунды - это пауза,
+#: тридцать - это «бот повис». Просят больше - не повторяем, а ГОВОРИМ, сколько ждать.
+_RETRY_MAX_WAIT = 3.0
+
+
+def _err_info(text):
+    """Тело ошибки площадки -> её собственные слова. -> dict.
+
+    -> {'code','message','request_id','retry_after'} (любое поле может быть пустым).
+
+    ТЕРПИМ ЛЮБУЮ ФОРМУ: у 402-челленджа тела с кодом нет вовсе, у edge-ошибки приезжает HTML,
+    а у обычного отказа - документированный JSON. Разбор, который падает на HTML, оставил бы
+    человека без объяснения ровно в тот момент, когда объяснение нужнее всего.
+    """
+    out = {'code': '', 'message': '', 'request_id': '', 'retry_after': None}
+    t = str(text or '')
+    if '{' not in t:
+        return out
+    try:
+        j = json.loads(t[t.index('{'):t.rindex('}') + 1])
+    except (ValueError, TypeError):
+        return out
+    if not isinstance(j, dict):
+        return out
+    out['code'] = str(j.get('code') or '')[:40]
+    out['message'] = str(j.get('message') or j.get('error') or '')[:200]
+    out['request_id'] = str(j.get('request_id') or '')[:40]
+    try:
+        _ra = j.get('retry_after')
+        out['retry_after'] = float(_ra) if _ra not in (None, '') else None
+    except (TypeError, ValueError):
+        out['retry_after'] = None
+    return out
+
+
 #: ФРАЗЫ, КОТОРЫМИ ПЛОЩАДКА ГОВОРИТ «ЭТОГО Я НЕ УМЕЮ» вместо «ты прислал не то».
 #: Снято с живого ответа 19.09: `{"code":"invalid_field_value","message":"Token 0x… on base is
 #: a stablecoin. The TGM flows endpoint does not support stablecoins."}`.
@@ -986,6 +1093,15 @@ def _classify(status, text=''):
     эндпоинт не покрывает» (граница покрытия, чинить нечего). Без текста они неразличимы, и
     человек читал бы «наш баг, смотри лог» там, где в логе искать нечего.
     """
+    # СТАБИЛЬНЫЙ КОД ПЛОЩАДКИ - ПЕРВЫМ, НО ПОСЛЕ ФРАЗЫ ПРО ПОКРЫТИЕ (см. ниже): одним кодом
+    # `invalid_field_value` они отвечают и на «ты прислал не то», и на «стейблкоины мы не
+    # покрываем», а различает их ТЕКСТ. Поэтому порядок такой, и он проверен живой пробой 19.09.
+    _code = _err_info(text).get('code')
+    if (status in (400, 422) and _code == 'invalid_field_value'
+            and any(m in str(text).lower() for m in _UNSUPPORTED_MARKS)):
+        return 'unsupported'
+    if _code in _ERR_CLASS:
+        return _ERR_CLASS[_code]
     if status == 402:
         return 'nocredits'          # кредиты кончились
     if status == 429:
@@ -1056,6 +1172,49 @@ def _log_body(body):
 
 
 def _http_post(base, path, body, timeout, tag):
+    """POST С ОДНИМ ПОВТОРОМ НА ПОВТОРЯЕМОМ ОТКАЗЕ. -> (JSON | None, http-код).
+
+    ═══ ЗАЧЕМ ПОВТОР ВООБЩЕ, ЕСЛИ РАНЬШЕ ЕГО НЕ БЫЛО ═══
+    ЖИВОЙ ПРОГОН ВЛАДЕЛЬЦА 27.09: два экрана мини-аппа одновременно показали `HTTP 503`. Это
+    `upstream_unavailable` - у площадки на минуту отвалился внутренний сервис, и её собственный
+    документ на этот код говорит «retry with backoff». Мы не повторяли ни разу: один отказ их
+    прокси превращался в пустой экран у человека, хотя ответ был доступен через секунду.
+
+    ═══ ГРАНИЦЫ, ЧТОБЫ ЭТО НЕ СТАЛО МОЛОТИЛКОЙ КРЕДИТОВ ═══
+      * ПОВТОР РОВНО ОДИН. Второй отказ - это уже инцидент площадки, и человеку надо сказать
+        правду, а не держать его в ожидании ещё три секунды;
+      * повторяем ТОЛЬКО то, что площадка сама пометила повторяемым (`_ERR_RETRY`), либо 5xx
+        БЕЗ кода - так выглядит отказ их edge, у которого тела с кодом нет вовсе;
+      * НИКОГДА не повторяем `badreq`: то же тело даст тот же отказ, это лечится кодом, а не
+        настойчивостью. И не повторяем `nocredits`: повтор без денег - просто второй отказ;
+      * ждём столько, сколько просят (`retry_after`), но не больше трёх секунд. Просят больше -
+        не ждём молча, а возвращаем отказ: человек стоит и смотрит на экран;
+      * КАЖДАЯ ПОПЫТКА ПИШЕТ СВОЮ СТРОКУ ТЕЛЕМЕТРИИ. Сложи мы две попытки в одну строку -
+        сводка соврала бы о числе вызовов, а «поток вызовов» в мини-аппе перестал бы быть
+        потоком вызовов. Повтор видно как второй вызов, потому что это и есть второй вызов.
+    """
+    j, http = _http_once(base, path, body, timeout, tag)
+    if http == 200 or http == 0:
+        return j, http
+    _cls = _classify(http, _LAST_ERR.get('text') or '')
+    _info = _err_info(_LAST_ERR.get('text') or '')
+    _code = _info.get('code') or ''
+    _retryable = (_code in _ERR_RETRY) or (not _code and http in _HTTP_RETRY)
+    if not _retryable or _cls in ('badreq', 'nocredits', 'unsupported'):
+        return j, http
+    _wait = _info.get('retry_after')
+    _wait = float(_wait) if _wait else 1.2
+    if _wait > _RETRY_MAX_WAIT:
+        print('[nansen%s] %s http %s (%s): просят ждать %.0fс - НЕ повторяю, говорю человеку'
+              % (tag, path, http, _code or '-', _wait))
+        return j, http
+    print('[nansen%s] %s http %s (%s): повторяю один раз через %.1fс'
+          % (tag, path, http, _code or 'кода нет - похоже, edge', _wait))
+    time.sleep(_wait)
+    return _http_once(base, path, body, timeout, tag)
+
+
+def _http_once(base, path, body, timeout, tag):
     """ГОРЛОВИНА: один сетевой POST, одна строка телеметрии, один класс отказа.
     -> (JSON | None, http-код). `http=0` означает исключение (таймаут, сеть)."""
     t0 = time.time()
@@ -1076,6 +1235,14 @@ def _http_post(base, path, body, timeout, tag):
             _shown_error = ('<trade provider error redacted>'
                             if str(tag).strip() == 'trade' else r.text[:220])
             _LAST_ERR.update({'path': path, 'text': _shown_error})
+            # КОД, СООБЩЕНИЕ И `request_id` - СОБСТВЕННЫЕ СЛОВА ПЛОЩАДКИ, И ОНИ ИДУТ В ЛОГ
+            # ОТДЕЛЬНО ОТ ТЕЛА. `request_id` их поддержка просит первым делом; без него
+            # разговор с ними начинается с «пришлите идентификатор запроса», то есть с нуля.
+            _ei = _err_info(r.text)
+            if _ei.get('code') or _ei.get('request_id'):
+                print('[nansen%s] %s http %s код=%s request_id=%s: %s'
+                      % (tag, path, http, _ei.get('code') or '-',
+                         _ei.get('request_id') or '-', (_ei.get('message') or '')[:160]))
             # ТЕЛО ЗАПРОСА В ЛОГ, КОГДА ВИНОВАТ ЗАПРОС. При 400/422 отвечать нечем, кроме
             # «мы отправили не то», и без самого тела это неисправимо: схема у части
             # эндпоинтов живым ключом не снята, и догадка стоит ещё один круг. Ключа в теле

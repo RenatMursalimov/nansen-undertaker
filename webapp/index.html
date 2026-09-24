@@ -526,8 +526,12 @@ function refuse(env) {
      случай владельца: экран острых денег отказал и предложил посмотреть код «в логе бота» - то
      есть потребовал сервер от человека с телефоном в руках. */
   var _code = (env.http_status === 0 || env.http_status) ? (' · HTTP ' + env.http_status) : '';
+  /* ПЕРЕВОД СТРОКИ ОСТАЁТСЯ ПЕРЕВОДОМ СТРОКИ. Отказ теперь несёт СЛОВА ПЛОЩАДКИ отдельной
+     строкой (её код, её сообщение, её request_id), и склеенные в один абзац они читаются как
+     одна каша - а именно по этой строке человек отвечает себе на вопрос «чья сторона». */
   return '<div class="card"><div class="warn bad"><b>' + esc(env.outcome || 'error')
-       + esc(_code) + '</b><br>' + esc(plain(env.refusal || 'No reason given.')) + '</div>'
+       + esc(_code) + '</b><br>'
+       + esc(plain(env.refusal || 'No reason given.')).replace(/\n+/g, '<br>') + '</div>'
        + '<div class="dim">This is a state, not an empty chart: a blank graph would look '
        + 'like a measurement.</div></div>';
 }

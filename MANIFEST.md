@@ -53,11 +53,11 @@ reading it.
 | `fixtures/sharp_markets.json` | `2db415d3a9eb10b0` | byte-for-byte from the bot |
 | `fixtures/smart_dca.json` | `4d33b3805dcfd104` | byte-for-byte from the bot |
 | `fixtures/smart_trades.json` | `bd5f60c65c35ff9f` | byte-for-byte from the bot |
-| `nansen_api.py` | `02f69e48fbdf1c9a` | byte-for-byte from the bot |
+| `nansen_api.py` | `9816cec358d31b6f` | byte-for-byte from the bot |
 | `nansen_gate.py` | `27a5f5d2c7c44048` | byte-for-byte from the bot |
 | `nansen_limits.py` | `4ea08d0118f935e2` | byte-for-byte from the bot |
 | `nansen_log.py` | `738ce8d59ca2fff8` | byte-for-byte from the bot |
-| `nansen_scene.py` | `be977793aaeed5c5` | byte-for-byte from the bot |
+| `nansen_scene.py` | `a1188a7a62e91034` | byte-for-byte from the bot |
 | `oc_nansen_viz.py` | `3c994ecf18fc56a9` | byte-for-byte from the bot |
 | `requirements.txt` | `56dbb14aff00e3cd` | extract-only, this file does not exist in the bot |
 | `scrub.py` | `e1df9de4adcc7ef9` | extract-only, this file does not exist in the bot |
@@ -72,7 +72,7 @@ reading it.
 | `tools/record_fixture.py` | `3e6fc4018b83fed1` | byte-for-byte from the bot |
 | `tools/render_social_preview.py` | `ba595dc312016848` | byte-for-byte from the bot |
 | `tools/scene_text_baseline.py` | `9f14ec2789a6ce6f` | byte-for-byte from the bot |
-| `webapp/index.html` | `3585728b6a251543` | byte-for-byte from the bot |
+| `webapp/index.html` | `713c9fc741503879` | byte-for-byte from the bot |
 
 ## The one declared sanitary substitution
 
