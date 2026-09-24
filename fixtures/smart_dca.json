@@ -48,7 +48,7 @@
   "with_val": 3
  },
  "provenance": "synthetic",
- "recorded_at": "2026-09-23T17:32:48Z",
+ "recorded_at": "2026-09-24T11:53:26Z",
  "rehearsal": true,
  "rendered_text": "🧊 <b>Smart money buying on a schedule (DCA)</b>\nA DCA program is a commitment to keep buying, not a single trade: the share already spent says how much of it is still ahead.\n🔮 Still to be bought: <b>$1.62M</b> across 2 program(s)\n\n1. Smart Whale 1 · <b>USDC → WETH</b> · $2.00M · spent 20% · active\n2. Smart Whale 2 · <b>USDT → SOL</b> · $350.0K · spent 95% · active\n3. 0x4444…0044 · <b>USDC → AAA</b> · $90.0K · closed\n\n<i>📡 Source: Nansen, freshness not measured</i>",
  "scene": "smart_dca",

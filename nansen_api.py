@@ -576,19 +576,47 @@ _REFUSAL = {
 _WHAT = {'ru': 'данных', 'en': 'the data'}
 
 
-def refusal(reason, lang='ru', what=None):
+def provider_said(ep, lang='ru'):
+    """СВОИМИ СЛОВАМИ ПЛОЩАДКИ: последняя ошибка ИМЕННО ЭТОЙ ручки. -> str | ''.
+
+    ЗАЧЕМ ЭТО НУЖНО ЧЕЛОВЕКУ, А НЕ ТОЛЬКО ЛОГУ. Отказ класса `badreq` говорит «это наш баг, он
+    в логе бота» - и для владельца это тупик: лога у него под рукой нет, а Nansen В ЭТОТ ЖЕ
+    МОМЕНТ прислал машиночитаемое объяснение («Field 'chain' is not recognized», «does not
+    support native tokens on any chain»). Живой прогон 27.09: «jup dca <mint>» вернул 400/422, и
+    на экране было только «наш баг» - то есть самое полезное предложение ответа мы прятали.
+
+    СВЕРКА ПО ПУТИ ОБЯЗАТЕЛЬНА. `_LAST_ERR` один на процесс: без сверки с `ep` сюда приехала бы
+    ошибка ЧУЖОЙ ручки, и человек читал бы объяснение не про свой экран. Нет совпадения - нет
+    строки: пустая строка честнее правдоподобной чужой.
+    """
+    if not ep:
+        return ''
+    if str(_LAST_ERR.get('path') or '').strip('/') != str(ep).strip('/'):
+        return ''
+    txt = str(_LAST_ERR.get('text') or '').strip()
+    if not txt:
+        return ''
+    return (('\n<i>Nansen said: «%s»</i>' if lang == 'en' else
+             '\n<i>Площадка ответила: «%s»</i>') % _esc(txt[:200]))
+
+
+def refusal(reason, lang='ru', what=None, ep=None):
     """Отказ ЧЕЛОВЕКУ, называющий причину. -> str.
 
     reason: 'nokey' | 'nocredits' | 'ratelimit' | 'timeout' | 'badreq' | 'http' | 'empty' |
     'unsupported' | None.
-    None означает «вызовов не было вовсе» - и это тоже наш отказ, а не пустота у Nansen."""
+    None означает «вызовов не было вовсе» - и это тоже наш отказ, а не пустота у Nansen.
+
+    `ep` - путь ручки, которую спрашивали. С ним к отказу добавляются СЛОВА ПЛОЩАДКИ
+    (`provider_said`): они называют причину точнее любого нашего класса и снимают круг
+    переписки «покажи лог»."""
     lang = 'en' if lang == 'en' else 'ru'
     if reason is None:
         return ('⚠️ До Nansen дело не дошло: запрос не ушёл. Это наш отказ, данных нет.'
                 if lang == 'ru' else
                 '⚠️ We never reached Nansen: the request did not go out. This is our failure.')
     row = _REFUSAL.get(reason) or _REFUSAL['http']
-    return row[lang].replace('{what}', what or _WHAT[lang])
+    return row[lang].replace('{what}', what or _WHAT[lang]) + provider_said(ep, lang)
 
 
 #: как называются части, из которых собран блок - для строки «что не приехало»
@@ -1394,9 +1422,12 @@ def labeled_holders_line(chain, token_address, lang='ru', top=20):
         else (f"🏷 <b>В топ-{top} холдерах:</b> {inner}")
 
 
-def pnl_leaders_block(chain, token_address, top=5, lang='ru'):
+def pnl_leaders_block(chain, token_address, top=5, lang='ru', bot_un=None):
     """Блок «топ-трейдеры токена по PnL» для отдельной карточки/кнопки. -> str | None.
-    lang: 'en' даёт англоязычный блок."""
+    lang: 'en' даёт англоязычный блок.
+    bot_un: имя бота - тогда трейдер становится переходом на свою карточку счёта. Этот блок
+    едет ВНУТРИ ответа 🧠 Nansen по токену, и до перехода он был тупиком: пять кошельков с PnL,
+    и ни одного способа посмотреть, кто это."""
     rows = tgm_pnl_leaderboard(chain, token_address, per_page=top)
     if not rows:
         return None
@@ -1413,7 +1444,9 @@ def pnl_leaders_block(chain, token_address, top=5, lang='ru'):
         except (TypeError, ValueError):
             pnl_s = "?"
         roi_s = (f" · ROI {float(roi):+.0f}%") if roi not in (None, "") else ""
-        L.append(f"{i}. {who}: {pnl_s}{roi_s}")
+        L.append("%d. %s: %s%s" % (i, acc_link(who, addr, bot_un), pnl_s, roi_s))
+    if bot_un:
+        L.append(tap_hint(lang))
     return "\n".join(L)
 
 
@@ -1508,8 +1541,7 @@ def perp_leaders_block(top=8, days=7, rows=None, bot_un=None, lang='ru'):
         lbl = (r.get("trader_address_label") or "").strip()
         addr = r.get("trader_address") or ""
         who = lbl or (f"{addr[:6]}…{addr[-4:]}" if addr else "?")
-        if bot_un and addr:
-            who = '<a href="https://t.me/%s?start=acc_%s">%s</a>' % (bot_un, addr, who)
+        who = acc_link(who, addr, bot_un)
         pnl = r.get("total_pnl")
         roi = r.get("roi")
         try:
@@ -1661,10 +1693,83 @@ def _who(row):
     return ("%s…%s" % (addr[:6], addr[-4:])) if len(addr) > 12 else (addr or "?")
 
 
-def who_bought_sold_block(chain, token_address, days=7, top=5, lang='ru'):
+# ═══════════════════════════════════════════════════════════════════════════════
+# СКВОЗНОЙ ПЕРЕХОД: СТРОКА СПИСКА -> КАРТОЧКА В БОТЕ
+#
+# ЖИВОЕ ЗАМЕЧАНИЕ ВЛАДЕЛЬЦА, И ОНО ПРО ВСЕ СПИСКИ СРАЗУ: «когда ты выдаешь информацию списком
+# холдер кошей, почему она пустотелая, опять же не скопировать, не проанализировать с помощью
+# нашего дебанка… как в том же Киты HL показывается списком без ссылок, а толку если на них не
+# перейти и не проанализировать сразу в Гробовщике внутри».
+#
+# ЭТО НЕ КОСМЕТИКА. Список кошельков БЕЗ перехода - тупик: человек видит «Smart Whale 2 · $1.2M»
+# и не может сделать с этим НИЧЕГО, потому что адреса у него нет (мы печатаем метку или обрезок),
+# а полный адрес печатать в каждой строке значит утопить экран. Переход решает оба конца: строка
+# остаётся короткой, а полный адрес, копирование и отслеживание живут в карточке счёта, куда
+# ведёт тап.
+#
+# ПОЧЕМУ ОДНА ФУНКЦИЯ, А НЕ СТРОЧКА НА МЕСТЕ. Эта ссылка уже была написана ЧЕТЫРЕ раза
+# (perp_leaders_block, sm_netflow_block, sm_dca_block, sm_trades_block) - четырьмя копиями
+# одного тега «a href в t.me с префиксом acc». Пятая копия в пятом блоке разъехалась бы с
+# остальными на первой правке префикса, и разъезд был бы виден только тапом по одному из пяти
+# экранов. Один вид перехода - одна функция (закон №40), и число копий сторожит тест.
+#
+# ГРАНИЦА: БЕЗ `bot_un` ССЫЛКИ НЕТ ВОВСЕ. Имя бота знает только вызывающий (у тест-бота оно
+# своё), и подставить сюда прод-имя «по умолчанию» значило бы, что с тест-бота тап уводит
+# человека в ПРОД. Нет имени - возвращаем обычный текст, молча и без ссылки.
+# ═══════════════════════════════════════════════════════════════════════════════
+def acc_link(text, addr, bot_un=None):
+    """Имя/метка кошелька -> ССЫЛКА на экран счёта в боте (?start=acc_<addr>). -> str."""
+    a = str(addr or '').strip()
+    if not bot_un or not a:
+        return text
+    return '<a href="https://t.me/%s?start=acc_%s">%s</a>' % (bot_un, a, text)
+
+
+def tok_link(text, addr, bot_un=None):
+    """Тикер токена -> ССЫЛКА на карточку токена в боте (?start=tok_<contract>). -> str."""
+    a = str(addr or '').strip()
+    if not bot_un or not a:
+        return text
+    return '<a href="https://t.me/%s?start=tok_%s">%s</a>' % (bot_un, a, text)
+
+
+def _who_a(row, bot_un=None):
+    """`_who`, но КЛИКАБЕЛЬНЫЙ: тап -> экран счёта этого кошелька в боте. -> str.
+
+    Отдельно от `_who` НАРОЧНО: `_who` едет ещё и в словари сцен, которые читает мини-апп, а
+    там HTML-ссылка напечаталась бы как текст с угловыми скобками. Один и тот же вызов на два
+    назначения - ровно та щель, в которую этот класс бага уже заползал.
+    """
+    addr = _first(row, ("address", "trader_address", "wallet_address", "counterparty_address",
+                        "counterparty", "to_address"), "")
+    return acc_link(_who(row), addr, bot_un)
+
+
+def tap_hint(lang='ru', what='wallet'):
+    """Строка «тапни строку - открою карточку». -> str | '' (если переходов нет).
+
+    ПОДСКАЗКА ОБЯЗАТЕЛЬНА: ссылка в тексте Telegram выглядит как обычная подпись с другим
+    цветом, и владелец трижды сообщал про списки «без ссылок» ровно там, где ссылки уже были
+    у соседних экранов. Переход, о котором не сказано, для человека не существует.
+    """
+    en = (lang == 'en')
+    if what == 'token':
+        return ('\n<i>Tap a ticker — I will open the token card here in the bot.</i>' if en
+                else '\n<i>Тапни тикер — открою карточку токена здесь, в Гробовщике.</i>')
+    return ('\n<i>Tap a wallet — I will open its account card here: full address to copy, '
+            'labels, tracking.</i>' if en else
+            '\n<i>Тапни кошелёк — открою его карточку здесь: полный адрес для копирования, '
+            'метки, отслеживание.</i>')
+
+
+def who_bought_sold_block(chain, token_address, days=7, top=5, lang='ru', bot_un=None):
     """«Кто входил и кто выходил за период» по токену. -> (str|None, reason). ~2 кр.
 
-    Готовый сценарий, названный в ТЗ первым кандидатом: два дешёвых запроса, один экран."""
+    Готовый сценарий, названный в ТЗ первым кандидатом: два дешёвых запроса, один экран.
+
+    `bot_un` - имя бота: с ним КАЖДЫЙ кошелёк в списке становится переходом на свою карточку
+    счёта. Без перехода этот экран - тупик: он отвечает «кто входил», а сделать с ответом
+    ничего нельзя, потому что адреса человек не видит (мы печатаем метку или обрезок)."""
     if not _key():
         return None, 'nokey'
     _tele.clear()
@@ -1689,7 +1794,9 @@ def who_bought_sold_block(chain, token_address, days=7, top=5, lang='ru'):
                 vs = "$" + _usd(abs(float(v)))
             except (TypeError, ValueError):
                 vs = "?"
-            L.append("%d. %s · %s" % (i, _who(r), vs))
+            L.append("%d. %s · %s" % (i, _who_a(r, bot_un), vs))
+    if bot_un:
+        L.append(tap_hint(lang))
     _miss = missing_note(lang, total=2)
     if _miss:
         L.append("\n" + _miss)      # одна нога из двух могла не приехать - это видно словом
@@ -1745,8 +1852,11 @@ def token_info_block(chain, token_address, lang='ru'):
     return with_source("\n".join(L), lang), 'ok'
 
 
-def counterparties_block(address, chain="ethereum", top=8, days=30, lang='ru'):
-    """С кем этот кошелёк торгует чаще всего. -> (str|None, reason). Дёшево."""
+def counterparties_block(address, chain="ethereum", top=8, days=30, lang='ru', bot_un=None):
+    """С кем этот кошелёк торгует чаще всего. -> (str|None, reason). Дёшево.
+
+    `bot_un` - имя бота: контрагент становится переходом на СВОЮ карточку счёта. Здесь это
+    нужнее, чем где-либо: смысл экрана - «иди посмотри, кто это», а без перехода идти некуда."""
     if not _key():
         return None, 'nokey'
     _tele.clear()
@@ -1766,7 +1876,9 @@ def counterparties_block(address, chain="ethereum", top=8, days=30, lang='ru'):
             vs = "$" + _usd(abs(float(v)))
         except (TypeError, ValueError):
             vs = "?"
-        L.append("%d. %s · %s%s" % (i, _who(r), vs, (" · %s tx" % n) if n else ""))
+        L.append("%d. %s · %s%s" % (i, _who_a(r, bot_un), vs, (" · %s tx" % n) if n else ""))
+    if bot_un:
+        L.append(tap_hint(lang))
     return with_source("\n".join(L), lang), 'ok'
 
 
@@ -1807,7 +1919,7 @@ def wallet_balance_block(address, chain="ethereum", top=12, lang='ru'):
     return with_source("\n".join(L), lang), 'ok'
 
 
-def token_nansen_block_ex(chain, token_address, lang='ru'):
+def token_nansen_block_ex(chain, token_address, lang='ru', bot_un=None):
     """То же, что token_nansen_block, но ВОЗВРАЩАЕТ И ПРИЧИНУ пустоты. -> (text|None, reason).
     reason: 'ok' | 'nokey' | 'nocredits' | 'ratelimit' | 'timeout' | 'http' | 'empty'.
 
@@ -1835,7 +1947,7 @@ def token_nansen_block_ex(chain, token_address, lang='ru'):
         if s:
             parts.append(s)
     try:
-        pnl = pnl_leaders_block(chain, token_address, top=5, lang=lang)
+        pnl = pnl_leaders_block(chain, token_address, top=5, lang=lang, bot_un=bot_un)
     except Exception as e:
         _tele.note('http')
         print("[nansen] pnl_leaders(%s): %s" % (chain, str(e)[:100]))
@@ -1857,10 +1969,10 @@ def token_nansen_block_ex(chain, token_address, lang='ru'):
     return None, fail_reason('empty')
 
 
-def token_nansen_block(chain, token_address, lang='ru'):
+def token_nansen_block(chain, token_address, lang='ru', bot_un=None):
     """Единый Nansen-блок по токену (кнопка 🧠 на карточке контракта / глубокий паспорт):
     потоки по сегментам + Nansen Score + метки топ-холдеров + топ-трейдеры по PnL. -> str | None."""
-    return token_nansen_block_ex(chain, token_address, lang)[0]
+    return token_nansen_block_ex(chain, token_address, lang, bot_un=bot_un)[0]
 
 
 
@@ -1909,9 +2021,7 @@ def sm_netflow_block(chains=None, tf="24h", top=10, rows=None, bot_un=None, lang
             vs = ("+$" if float(v) >= 0 else "-$") + _usd(abs(float(v)))
         except (TypeError, ValueError):
             vs = "?"
-        sym_disp = f"<b>{sym}</b>"
-        if bot_un and addr:
-            sym_disp = '<a href="https://t.me/%s?start=tok_%s"><b>%s</b></a>' % (bot_un, addr, sym)
+        sym_disp = tok_link('<b>%s</b>' % sym, addr, bot_un)
         L.append(f"{i}. {sym_disp} [{ch}] · {vs}")
     if en:
         tail = "tap a ticker" if bot_un else "send a ticker"
@@ -2300,7 +2410,16 @@ def sm_dca_data(rows, top=10):
                 _pc = max(0.0, min(100.0, 100.0 * float(_spent) / float(_size)))
             except (TypeError, ValueError, ZeroDivisionError):
                 _pc = None
+        # АДРЕС КОШЕЛЬКА ЕДЕТ В СЛОВАРЕ ОТДЕЛЬНЫМ ПОЛЕМ `waddr`, И ЭТО ПОЛЕ ПОЯВИЛОСЬ ПО
+        # МЁРТВОМУ ПАРАМЕТРУ. `sm_dca_block(rows, bot_un=…)` принимал имя бота с самого начала
+        # и НЕ ИСПОЛЬЗОВАЛ его ни одной строкой: вызывающий (`oc_dm`) честно передавал
+        # `_bot_un(context)`, вид «ссылки настроены» был, а тап не работал - потому что адреса
+        # в словаре не было вовсе. Ровно «закон №7»: параметр принят, но не применён.
+        # В БРАУЗЕР ЭТО ПОЛЕ НЕ ПОПАДАЕТ: шлюз (`nansen_gate._strip_private`) вычищает из строк
+        # всё, что кончается на `addr`, - и потому имя выбрано с этим окончанием НАРОЧНО.
         out.append({'i': shown, 'who': _who(r),
+                    'waddr': str(_first(r, ('trader_address', 'address', 'wallet_address'))
+                                 or '').strip(),
                     'inp': str(r.get('input_token_symbol') or '?')[:12],
                     'outp': str(r.get('output_token_symbol') or '?')[:12],
                     'usd': _dep, 'spent_pct': _pc,
@@ -2371,8 +2490,11 @@ def sm_dca_block(rows, bot_un=None, lang='ru', top=10):
         if it.get('status'):
             seg.append(_esc(it['status']))
         L.append('%d. %s · <b>%s → %s</b>%s'
-                 % (it['i'], it['who'], _esc(it['inp']), _esc(it['outp']),
+                 % (it['i'], acc_link(it['who'], it.get('waddr'), bot_un),
+                    _esc(it['inp']), _esc(it['outp']),
                     (' · ' + ' · '.join(seg)) if seg else ''))
+    if bot_un and any(it.get('waddr') for it in d['rows']):
+        L.append(tap_hint(lang))
     if not d.get('with_val'):
         # `first_row` ЧИТАЕТСЯ ЧЕРЕЗ .get НАРОЧНО: шлюз мини-аппа вычищает сырую строку из
         # словаря перед отправкой в браузер, и словарь после вычистки обязан остаться
@@ -2435,7 +2557,12 @@ def pm_positions_data(rows, top=10):
             with_pnl += 1
         _ent = _num_or_none(r.get('avg_entry_price'))
         _cur = _num_or_none(r.get('current_price'))
+        # АДРЕС ДЕРЖАТЕЛЯ - ПОЛЕМ `waddr` (окончание `addr` нарочно: шлюз мини-аппа вычищает
+        # из строк всё с таким окончанием, поэтому в браузер он не уедет, а чат получит
+        # переход на карточку счёта). До этого экран отвечал «кто в рынке» и обрывался: адреса
+        # человек не видел, и «проанализировать этот кошелёк» требовало ухода из бота.
         out.append({'i': i, 'who': _who(r),
+                    'waddr': str(_first(r, ('address', 'owner_address')) or '').strip(),
                     'side': str(_first(r, ('outcome', 'outcome_name'))
                                 or pm_holder_side(r) or '?')[:12],
                     'pnl': _pnl,
@@ -2454,7 +2581,7 @@ def pm_positions_data(rows, top=10):
             'resolved': (True if _res is True else (False if _res is False else None))}
 
 
-def pm_positions_block(rows, market_id='', lang='ru', top=10):
+def pm_positions_block(rows, market_id='', lang='ru', top=10, bot_un=None):
     """Держатели рынка с PnL - текстом. -> str | None.
 
     ВЕДЁМ PnL, А НЕ РАЗМЕРОМ. «$400K в позиции» говорит о ставке, «$400K в позиции и -$120K по
@@ -2485,8 +2612,11 @@ def pm_positions_block(rows, market_id='', lang='ru', top=10):
                        % (it['entry'], it['px']))
         if it.get('open_usd'):
             seg.append(('open $%s' if en else 'открыто $%s') % _usd(it['open_usd']))
-        L.append('%d. %s [%s] · %s' % (it['i'], it['who'], _esc(str(it['side'])[:12]),
-                                       ' · '.join(seg) or '?'))
+        L.append('%d. %s [%s] · %s'
+                 % (it['i'], acc_link(it['who'], it.get('waddr'), bot_un),
+                    _esc(str(it['side'])[:12]), ' · '.join(seg) or '?'))
+    if bot_un and any(it.get('waddr') for it in d['rows']):
+        L.append(tap_hint(lang))
     L.append('')
     L.append((('<i>Net PnL of the %d holder(s) shown: %s$%s. This is their result in THIS '
                'market, not their lifetime record.</i>') if en else
@@ -2515,7 +2645,7 @@ def jup_dca(token_address, per_page=20):
                        ckey=f"jupdca:{token_address}:{per_page}"))
 
 
-def jup_dca_block(rows, token='', lang='ru', top=10):
+def jup_dca_block(rows, token='', lang='ru', top=10, bot_un=None):
     """DCA на Jupiter - текстом. -> str | None. Ведёт величиной вклада и долей исполнения."""
     if not rows:
         return None
@@ -2533,7 +2663,8 @@ def jup_dca_block(rows, token='', lang='ru', top=10):
             continue
         _shape('jup-dca', r)
         _shown += 1
-        who = _who(r) if (r.get('trader_label') or r.get('trader_address')) else '?'
+        who = (_who_a(r, bot_un) if (r.get('trader_label') or r.get('trader_address'))
+               else '?')
         _in = str(r.get('token_input') or '?')[:12]
         _out = str(r.get('token_output') or '?')[:12]
         _usdv = _num_or_none(r.get('deposit_usd_value'))
@@ -2555,6 +2686,8 @@ def jup_dca_block(rows, token='', lang='ru', top=10):
                                                 (' · ' + ' · '.join(seg)) if seg else ''))
     if not _shown:
         return None
+    if bot_un:
+        L.append(tap_hint(lang))
     return with_source('\n'.join(L), lang)
 
 
@@ -3106,11 +3239,15 @@ def perp_positioning_block(r, token='', lang='ru'):
     return with_source('\n'.join(L), lang)
 
 
-def perp_positions_block(rows, token, lang='ru'):
+def perp_positions_block(rows, token, lang='ru', bot_un=None):
     """Открытые позиции по перп-токену: плечо и ЦЕНА ЛИКВИДАЦИИ. -> str | None.
 
     ЛИКВИДАЦИЯ - ГЛАВНОЕ ЧИСЛО ЗДЕСЬ, и до этого эндпоинта его у нас не было вовсе: про
-    ликвидации мы могли только догадываться по цене входа."""
+    ликвидации мы могли только догадываться по цене входа.
+
+    `bot_un` - имя бота: владелец кошелька в строке становится переходом на свою карточку
+    счёта. Это и есть его живая претензия про списки: «показывается списком без ссылок, а
+    толку если на них не перейти и не проанализировать сразу в Гробовщике внутри»."""
     if not rows:
         return None
     _t = ('⚡ <b>Открытые позиции · %s</b>' % token) if lang != 'en' else \
@@ -3124,7 +3261,7 @@ def perp_positions_block(rows, token, lang='ru'):
         if _first_row is None:
             _first_row = r
         _shown += 1
-        who = _who(r)
+        who = _who_a(r, bot_un)
         side = (_first(r, ('side', 'direction', 'position_side')) or '').upper()[:5]
         # ТА ЖЕ ПОДСТРАХОВКА ПО СОГЛАШЕНИЮ ИМЁН, что в смарт-сделках: схема этого эндпоинта
         # живым ключом не снята, и три угаданных имени могут не совпасть ни одним.
@@ -3156,6 +3293,8 @@ def perp_positions_block(rows, token, lang='ru'):
                                     ' · '.join(seg) or '?'))
     if len(L) == 1:
         return None
+    if bot_un:
+        L.append(tap_hint(lang))
     if _shown and not _with_val:
         L.append('\n' + schema_gap_note(_first_row, 'Размер позиции' if lang != 'en'
                                         else 'Position size', lang))
@@ -3330,10 +3469,9 @@ def sm_trades_block(rows, bot_un=None, lang='ru', top=12):
     L = [('🧠 <b>Сделки smart money за сутки</b>' if lang != 'en'
           else '🧠 <b>Smart money trades, 24h</b>')]
     for it in d['rows']:
-        _sym = '<b>%s</b>' % it['sym']
-        if bot_un and it['addr']:
-            _sym = ('<a href="https://t.me/%s?start=tok_%s"><b>%s</b></a>'
-                    % (bot_un, it['addr'], it['sym']))
+        # ПЕРЕХОД СОБИРАЕТ `tok_link`, А НЕ ЭТА СТРОКА. Здесь лежала ПЯТАЯ копия одного и того
+        # же deep-link'а - её поймал тест, считающий копии по исходнику.
+        _sym = tok_link('<b>%s</b>' % it['sym'], it['addr'], bot_un)
         _tail = []
         if it['mcap'] not in (None, ''):
             try:
@@ -3360,8 +3498,11 @@ def sm_trades_block(rows, bot_un=None, lang='ru', top=12):
     if _shown and not _with_val:
         L.append('\n' + schema_gap_note(_first_row, 'Объём сделки' if lang != 'en'
                                         else 'Trade size', lang))
-    L.append('\n' + ('Тапни тикер — открою карточку.' if lang != 'en'
-                     else 'Tap a ticker for the card.'))
+    # ПОДСКАЗКА ПРО ТАП - ТОЛЬКО КОГДА ТАПАТЬ ПРАВДА ЕСТЬ ПО ЧЕМУ. Строка стояла безусловно, и
+    # в конверте мини-аппа (там имени бота нет нарочно - ссылка с адресом контракта в браузер не
+    # едет) человек читал приглашение тапнуть то, что не является ссылкой.
+    if bot_un:
+        L.append(tap_hint(lang, what='token'))
     return with_source('\n'.join(L), lang)
 
 
@@ -3589,21 +3730,99 @@ def pm_markets_block(query="", top=10, lang='ru', rows=None):
         except (TypeError, ValueError):
             prob = "?"
         vol = _usd(r.get("volume_24hr"))
-        L.append(f"{i}. <b>{q}</b> · {prob} · vol24 ${vol}")
-        # ID ПЕЧАТАЕМ ОТДЕЛЬНОЙ СТРОКОЙ И КОПИРУЕМЫМ: он нужен командам «топ рынка <id>»,
-        # «полимаркет график <id>», «полимаркет стакан <id>». Без него эти три команды
-        # существовали формально.
-        mid = pm_market_id(r)
-        if mid:
-            L.append("   <code>%s</code>" % mid)
-        else:
+        # РЫНОК БЕЗ ID НАЗЫВАЕТСЯ В СВОЕЙ ЖЕ СТРОКЕ. Раньше эту разницу было видно глазами: у
+        # каждого рынка под строкой стоял его id, и у этого его не было. Теперь id уехал на
+        # карточку, кнопка есть только у рынков с id - и БЕЗ этой пометки строка отличалась бы
+        # от соседних только отсутствием кнопки, то есть молчанием. Сводная оговорка ниже
+        # срабатывает лишь когда id не приехал У ВСЕХ, и одиночный случай проваливался в щель.
+        _mk = pm_market_id(r)
+        _tap = '' if _mk else (' · <i>id не приехал: по тапу не открыть</i>' if not en
+                               else ' · <i>no id in the response: cannot be opened by a tap</i>')
+        L.append(f"{i}. <b>{q}</b> · {prob} · vol24 ${vol}{_tap}")
+        # ═══ ID ИЗ СПИСКА УБРАН, И ЭТО НЕ ПОТЕРЯ, А ПЕРЕЕЗД ═══
+        # Здесь стояла строка `   <code>0x2fc1…</code>` ПОД КАЖДЫМ рынком - десять служебных
+        # хэшей в экране, который человек читает глазами. Владелец назвал результат прямо:
+        # «визуально плохо представлены… список, а потом только кнопки с цифрами не в тему».
+        # Идентификатор нужен КОМАНДАМ («топ рынка <id>»), а не читателю списка, и теперь он
+        # печатается копируемым НА КАРТОЧКЕ РЫНКА (`pm_market_card_block`), куда ведёт тап по
+        # самому рынку. Команды остались достижимы, а список перестал быть техническим.
+        # СЧЁТ РЫНКОВ БЕЗ ID ОСТАЛСЯ: он решает, печатать ли сводную оговорку про расхождение
+        # схемы (когда id не приехал ни у одного рынка - это уже не свойство данных, а наш
+        # разъезд с ответом площадки).
+        if not _mk:
             _no_id += 1
     if _no_id and _no_id == min(len(rows), top):
         L.append('\n' + schema_gap_note(rows[0], 'ID рынка' if lang != 'en' else 'Market ID',
                                         lang))
-    L.append("\nРазбор трейдера: «полимаркет профиль 0x…»." if not en
-             else "\nTrader breakdown: «polymarket profile 0x…».")
+    L.append(('\n<i>Тапни рынок кнопкой ниже — открою его карточку: цена, объём, '
+              'идентификатор для команд и четыре разбора по этому рынку.</i>' if not en else
+              '\n<i>Tap a market below — I will open its card: price, volume, the id the '
+              'commands take, and four breakdowns of that market.</i>'))
+    L.append("Разбор трейдера: «полимаркет профиль 0x…»." if not en
+             else "Trader breakdown: «polymarket profile 0x…».")
     return with_source("\n".join(L), lang)
+
+
+def pm_market_card_block(row, lang='ru'):
+    """КАРТОЧКА ОДНОГО РЫНКА Polymarket: вопрос, вероятность, объём, id. -> str | None.
+
+    ЗАЧЕМ ОНА ПОЯВИЛАСЬ, СЛОВАМИ ВЛАДЕЛЬЦА: «визуально в самом тг чате трендовые маркеты
+    Полимаркета представлены плохо. Список, а потом только кнопки с цифрами не в тему. Надо уж
+    маркеты, сразу кнопку или карточка Полимаркета, с которой уже можно вести в Нансен».
+
+    ЧТО БЫЛО НЕ ТАК. Под списком из десяти рынков стояла сетка 4×10 - СОРОК кнопок «📈 1 … 🧾 10»,
+    и чтобы нажать нужную, человек должен был удержать в голове, что «7» в четвёртом ряду - это
+    седьмая строка текста. Номер - служебная величина, и он оказался на человеке: ровно тот же
+    дефект, что мы уже лечили у market_id, только в другой одежде.
+
+    ЧТО СТАЛО. Под списком - по одной кнопке НА РЫНОК с началом самого вопроса, и тап открывает
+    ЭТУ карточку, а на ней уже четыре действия ТОЛЬКО по этому рынку. Номер из глаз человека
+    ушёл совсем.
+
+    ID ПЕЧАТАЕТСЯ КОПИРУЕМЫМ И ОСТАЁТСЯ: команды («топ рынка <id>») никуда не делись, и без
+    него они снова стали бы существовать формально.
+    """
+    if not isinstance(row, dict) or not row:
+        return None
+    en = (lang == 'en')
+    q = str(row.get('question') or '?')[:200]
+    L = [('🎲 <b>%s</b>' % _esc(q))]
+    pr = _num_or_none(row.get('last_trade_price'))
+    if pr is not None:
+        _p = pr * 100 if pr <= 1 else pr
+        L.append(('📊 Market price: <b>%.0f%%</b> — this is what people believe, not what is '
+                  'true.' if en else
+                  '📊 Цена рынка: <b>%.0f%%</b> — это во что верят, а не то, что верно.') % _p)
+    _v24 = _num_or_none(row.get('volume_24hr'))
+    _liq = _num_or_none(_first(row, ('liquidity', 'liquidity_usd', 'total_liquidity')))
+    seg = []
+    if _v24 is not None:
+        seg.append(('volume 24h $%s' if en else 'объём 24ч $%s') % _usd(_v24))
+    if _liq is not None:
+        seg.append(('liquidity $%s' if en else 'ликвидность $%s') % _usd(_liq))
+    if seg:
+        L.append('💵 ' + ' · '.join(seg))
+    _end = _first(row, ('end_date', 'end_date_iso', 'close_time', 'resolution_date'))
+    if _end:
+        L.append(('🗓 Ends: %s' if en else '🗓 Закрытие: %s') % _esc(str(_end)[:24]))
+    mid = pm_market_id(row)
+    if mid:
+        L.append('')
+        # КОМАНДЫ НАЗЫВАЮТСЯ НА ЯЗЫКЕ ЭКРАНА. Здесь стояли русские команды и в английской
+        # ветке тоже - то есть подсказка предлагала набрать то, что человек не прочтёт. Английские
+        # имена у этих команд есть (`top of market`, `polymarket chart`), и назвать надо их.
+        L.append(('🆔 <code>%s</code> — tap to copy («top of market &lt;id&gt;», '
+                  '«polymarket chart &lt;id&gt;» take it).' if en else
+                  '🆔 <code>%s</code> — тапни, чтобы скопировать (его принимают команды «топ '
+                  'рынка &lt;id&gt;», «полимаркет график &lt;id&gt;»).') % _esc(str(mid)[:80]))
+    L.append('')
+    L.append(('<i>Buttons below: probability over time, the orderbook, who holds this market '
+              'and how they guessed before, and who is in it now with what PnL. All four are '
+              'about THIS market — no number to keep in your head.</i>' if en else
+              '<i>Кнопки ниже: вероятность во времени, стакан, кто держит этот рынок и как '
+              'угадывал раньше, кто в нём сейчас и с каким PnL. Все четыре - про ЭТОТ рынок, '
+              'номер держать в голове не нужно.</i>'))
+    return with_source('\n'.join(L), lang)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3835,11 +4054,15 @@ def pm_reputation(market_id, top=PM_REP_TOP):
             'total_usd': total, 'calls': calls, 'market_id': str(market_id)}
 
 
-def pm_reputation_block(rep, market_id='', lang='ru', top=PM_REP_TOP):
+def pm_reputation_block(rep, market_id='', lang='ru', top=PM_REP_TOP, bot_un=None):
     """Рынок, взвешенный по репутации держателей. -> str | None.
 
     ГЛАВНАЯ СТРОКА - ВЕЛИЧИНА, и она первая. Дальше стороны, дальше сами держатели, и в конце
     оговорки: про кого мы НЕ знаем и что винрейт в прошлом не обещает будущего.
+
+    `bot_un` - имя бота: держатель становится переходом на свою карточку счёта. Это ТОТ САМЫЙ
+    список, на который жаловался владелец («выдаёшь информацию списком холдер кошей, почему она
+    пустотелая»): винрейт мы печатаем, а перейти к кошельку было нельзя.
     """
     if not isinstance(rep, dict) or not rep.get('holders'):
         return None
@@ -3908,7 +4131,10 @@ def pm_reputation_block(rep, market_id='', lang='ru', top=PM_REP_TOP):
                 seg.append(('%d рынков' if not en else '%d markets') % int(float(h['markets'])))
             except (TypeError, ValueError):
                 pass
-        L.append('%d. %s [%s] · %s' % (i, h['who'], h['side'], ' · '.join(seg)))
+        L.append('%d. %s [%s] · %s' % (i, acc_link(h['who'], h.get('addr'), bot_un),
+                                       h['side'], ' · '.join(seg)))
+    if bot_un and any(h.get('addr') for h in rep['holders'][:int(top)]):
+        L.append(tap_hint(lang))
     if rep.get('failed'):
         L.append('')
         rs = ', '.join('%s×%d' % (k, v) for k, v in

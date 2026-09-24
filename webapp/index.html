@@ -301,15 +301,44 @@ function localFixture(scene, done) {
 }
 
 /* ОДНА ДВЕРЬ К СЦЕНЕ: попросить и дождаться. Ответ - конверт сцены как есть. */
+/* ═══ ИМЯ БОТА ДЛЯ ПЕРЕХОДА «ОТКРОЙ В БОТЕ» ═══
+   Приезжает в конверте (`nansen_gate` ставит его ПОСЛЕ вычистки приватного: @-адрес бота -
+   публичная величина, он и так в адресной строке этого мини-аппа). Запоминается здесь, в одном
+   месте на все экраны: спрашивать его отдельным запросом было бы вторым источником правды о том,
+   в какого бота мы ведём, - а в тест-боте это ДРУГОЙ бот, и ошибка увела бы человека на прод.
+   Пусто (репетиция, старый конверт) - кнопки перехода нет вовсе, а не ведёт в никуда. */
+var BOTUN = '';
+
+/* ПЕРЕХОД В БОТА ОДНОЙ ФУНКЦИЕЙ. -> true, если ушли.
+   `openTelegramLink` закрывает мини-апп и открывает чат с ботом, передав ему payload - то есть
+   человек ПОПАДАЕТ на карточку, а не получает сообщение, которого не видит из холста.
+   Оболочки без этого метода (обычный браузер у судьи) получают обычный переход по ссылке: экран
+   обязан работать и там, иначе публичная страница выжимки станет наполовину мёртвой. */
+function openInBot(payload) {
+  if (!BOTUN) { return false; }
+  var url = 'https://t.me/' + BOTUN + '?start=' + encodeURIComponent(payload);
+  try {
+    if (TG && TG.openTelegramLink) { TG.openTelegramLink(url); return true; }
+  } catch (e) {}
+  try { window.open(url, '_blank'); return true; } catch (e2) {}
+  return false;
+}
+
 function askScene(fields, done) {
+  /* Обёртка стоит ЗДЕСЬ, а не в каждом обработчике: путей ответа три (фикстура, ящик, отказ),
+     и запоминать имя бота в одном из них значило бы, что на двух других кнопка исчезает. */
+  var keep = function (env) {
+    if (env && env.bot_un) { BOTUN = String(env.bot_un); }
+    done(env);
+  };
   if (REHEARSAL && fields.sc && fields.sc !== 'feed') {
     localFixture(fields.sc, function (env) {
-      if (env) { done(env); return; }
-      askLive(fields, done);        /* файла нет - пробуем ящик с флагом репетиции */
+      if (env) { keep(env); return; }
+      askLive(fields, keep);        /* файла нет - пробуем ящик с флагом репетиции */
     });
     return;
   }
-  askLive(fields, done);
+  askLive(fields, keep);
 }
 
 function askLive(fields, done) {
@@ -716,7 +745,19 @@ function heroRender() {
           /* НОМЕР РЫНКА У ЭТОЙ КНОПКИ УЖЕ ЕСТЬ - ОН В СОСТОЯНИИ ЭКРАНА. Человеку его вводить
              не надо и видеть незачем: служебное поле ездит между экранами, а не через глаза. */
           + '<span class="btn' + (HERO.posOn ? ' on' : '') + '" id="posbtn">'
-          + '🧾 who is in it, with PnL</span></div>')
+          + '🧾 who is in it, with PnL</span>'
+          /* ═══ СКВОЗНОЙ ПЕРЕХОД В БОТА, ПО ЖИВОМУ ЗАМЕЧАНИЮ ВЛАДЕЛЬЦА ═══
+             «С полимаркет маркетом также… нет кнопки в тг аппке открыть, чтобы открылась
+             карточка Полимаркет маркета внутри Гробовщика». Холст отвечал на один вопрос (чьи
+             деньги за ценой) и заканчивался, хотя по ЭТОМУ ЖЕ рынку в боте есть ещё четыре
+             экрана: вероятность во времени, стакан, кто держит, кто в нём сейчас.
+             ВЕДЁМ DEEP-LINK'ОМ, А НЕ СООБЩЕНИЕМ В ЧАТ: `openTelegramLink` закрывает мини-апп и
+             ОТКРЫВАЕТ БОТА на карточке - человек попадает туда, куда просил. Сообщение в чат он
+             бы не увидел, стоя в полноэкранном холсте. Идентификатор рынка служебный и
+             публичный, поэтому едет в payload ссылки прямо (в отличие от адресов).
+             Нет имени бота (репетиция) - кнопки нет: ссылка в никуда хуже отсутствия кнопки. */
+          + (BOTUN ? ('<span class="btn" id="mkbot">📲 open in the bot</span>') : '')
+          + '</div>')
        : '')
     + '</div>';
   // НИ ОДНОГО «Asking Nansen…» БЕЗ ЗАПРОСА. Раньше пустой экран показывал строку загрузки,
@@ -736,6 +777,12 @@ function heroRender() {
       HERO.posOn = !HERO.posOn;
       heroRender();
       if (HERO.posOn && !HERO.pos && !HERO.posBusy) posLoad();
+    };
+  }
+  var mb = document.getElementById('mkbot');
+  if (mb) {
+    mb.onclick = function () {
+      openInBot('pmid_' + HERO.market);
     };
   }
   var mk = el.querySelectorAll('.mkrow[data-mk]');
@@ -1736,7 +1783,56 @@ function liqLoad(full) {
    ОБА СТОЯТ ОДИН ЗАПРОС, поэтому грузятся при открытии таба сами - в отличие от сравнения
    рынков, которое стоит 13-17 запросов и потому ждёт кнопки. Цена решает поведение, а не вкус.
    ═══════════════════════════════════════════════════════════════════════════ */
-var MORE = { dca: null, ch: null, tr: null, busyD: false, busyC: false, busyT: false };
+var MORE = { dca: null, ch: null, tr: null, busyD: false, busyC: false, busyT: false,
+             msg: '' };
+
+/* СТРОКА СТАТУСА ТАБА «➕ More». Тот же приём, что у карты ликвидаций: она НИКОГДА не обещает
+   успех заранее и печатает причину отказа словами площадки, а не «не получилось». */
+function moreNote(t) {
+  MORE.msg = String(t || '');
+  var el = document.getElementById('morenote');
+  if (el) { el.innerHTML = MORE.msg ? '<div class="warn">' + esc(MORE.msg) + '</div>' : ''; }
+}
+
+/* ТИКЕР, ПО КОТОРОМУ МОЖНО ПОПРОСИТЬ КАРТОЧКУ. -> bool.
+   Форма проверяется ЗДЕСЬ, а не «на боте разберётся»: Worker пускает поле `tk` только в виде
+   [A-Za-z0-9]{1,12}, и кнопка, чей запрос будет молча вырезан на полпути, выглядит как
+   сломанная. У части строк символа нет вовсе - там стоит обрезанный адрес контракта («0x12…ab»)
+   или имя с точкой («suertudo.sol»), и такую строку мы честно оставляем без кнопки. */
+function tokAskable(sym) {
+  return /^[A-Za-z0-9]{1,12}$/.test(String(sym || ''));
+}
+
+/* ═══ «ОТКРОЙ ЭТОТ ТОКЕН КАРТОЧКОЙ В ГРОБОВЩИКЕ» ═══
+   ЖИВОЕ ЗАМЕЧАНИЕ ВЛАДЕЛЬЦА: «данные конечно появляются в More по токенам, но ни контракт ни
+   скопировать, ни сам токен, чтобы карточку раскрыть или сразу раскрыть карточку в Гробовщике,
+   должен же быть сквозной сценарий везде».
+   ПОЧЕМУ ЗДЕСЬ ПРОСЬБА БОТУ, А НЕ DEEP-LINK, КАК У РЫНКА. Для ссылки нужен АДРЕС КОНТРАКТА, а
+   адресов в конверте нет НАРОЧНО (`nansen_gate._strip_private`): конверт видно в devtools, в
+   скриншоте и в записи экрана. Поэтому наверх едет ТИКЕР - та самая величина, которую человек
+   видит на экране, - а контракт находит бот в ТОМ ЖЕ списке сделок (кэш-хит, без второго
+   запроса). Контракт при этом печатается КОПИРУЕМЫМ в карточке бота, то есть вторая половина
+   просьбы («ни контракт скопировать») тоже закрыта - просто не в браузере. */
+function moreTok(sym) {
+  if (!tokAskable(sym)) {
+    moreNote('This row has no plain ticker, so there is nothing to look up by.');
+    return;
+  }
+  if (REHEARSAL) {
+    moreNote('Rehearsal mode: nothing is sent. In live mode the bot posts the ' + sym
+             + ' card in your chat — contract, chart, holders, and the buttons that go deeper.');
+    return;
+  }
+  moreNote('Asking the bot for the ' + sym + ' card…');
+  askScene({ sc: 'tok_card', tk: sym, lg: 'en' }, function (env) {
+    if (env && env.outcome === 'ok') {
+      moreNote('Sent. The ' + sym + ' card is in your chat with the bot: the contract is there '
+               + 'to copy, and its buttons continue the breakdown.');
+    } else {
+      moreNote('The bot could not open it: ' + plain((env && env.refusal) || 'no reason given'));
+    }
+  });
+}
 
 /* СДЕЛКИ SMART MONEY - ФЛАГМАНСКИЙ СИГНАЛ НАБОРА, И ДО СИХ ПОР ЕГО НЕ БЫЛО НИ НА ОДНОМ ТАБЕ.
    ЖИВОЙ ВОПРОС ВЛАДЕЛЬЦА: «в More не нужно ещё фич приложить в холсте?». Нужно, и первым делом
@@ -1772,10 +1868,20 @@ function tradesHTML(env) {
       h += '<div class="barwrap"><div class="bar" style="width:'
          + Math.max(2, Math.min(100, Math.round(pct))) + '%;background:var(--nsn)"></div></div>';
     }
+    /* СТРОКА БОЛЬШЕ НЕ ТУПИК. Кнопка есть только там, где по чему спрашивать - у строки с
+       обычным тикером; у остальных её нет, и это сказано словом, а не пустым местом. */
+    if (tokAskable(r.sym)) {
+      h += '<div class="btns" style="margin:4px 0 2px"><span class="btn" data-tok="'
+         + esc(r.sym) + '">📲 open ' + esc(r.sym) + ' in the bot</span></div>';
+    } else {
+      h += '<div class="dim" style="margin:4px 0 2px">No plain ticker in this row — the bot '
+         + 'cannot be asked for its card by name.</div>';
+    }
     h += '</div>';
   }
   h += '<div class="legend"><span><i style="background:var(--nsn)"></i>trade as a share of '
      + 'market cap</span></div>';
+  h += '<div id="morenote"></div>';
   h += footer(env) + '</div>';
   return h;
 }
@@ -1863,8 +1969,17 @@ function chainHTML(env) {
 }
 
 function moreRender() {
-  document.getElementById('scr_more').innerHTML =
-    tradesHTML(MORE.tr) + dcaHTML(MORE.dca) + chainHTML(MORE.ch);
+  var el = document.getElementById('scr_more');
+  el.innerHTML = tradesHTML(MORE.tr) + dcaHTML(MORE.dca) + chainHTML(MORE.ch);
+  /* ОБРАБОТЧИКИ ВЕШАЮТСЯ ПОСЛЕ КАЖДОЙ ПЕРЕРИСОВКИ: innerHTML заменяет узлы, и кнопка,
+     привязанная один раз при загрузке, после первого же ответа перестала бы работать молча. */
+  var bs = el.querySelectorAll('.btn[data-tok]');
+  for (var i = 0; i < bs.length; i++) {
+    bs[i].onclick = (function (sym) {
+      return function () { moreTok(sym); };
+    })(bs[i].getAttribute('data-tok'));
+  }
+  moreNote(MORE.msg);
 }
 
 function moreLoad() {

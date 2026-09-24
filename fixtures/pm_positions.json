@@ -47,7 +47,7 @@
   "with_pnl": 2
  },
  "provenance": "synthetic",
- "recorded_at": "2026-09-23T17:32:48Z",
+ "recorded_at": "2026-09-24T11:53:26Z",
  "rehearsal": true,
  "rendered_text": "🧾 <b>Who is in this market, and how it is going for them</b>\n<code>654412</code>\n<i>Will the Fed cut rates in September?</i>\n\n1. 0x5555…0055 [Yes] · PnL +$128.0K · entry 42¢ → 61¢ · open $302.0K\n2. 0x6666…0066 [No] · PnL -$81.0K · entry 55¢ → 39¢\n3. 0x7777…0077 [Yes] · open $4.1K\n\n<i>Net PnL of the 3 holder(s) shown: +$47.0K. This is their result in THIS market, not their lifetime record.</i>\n\n<i>📡 Source: Nansen, freshness not measured</i>",
  "scene": "pm_positions",

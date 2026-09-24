@@ -4,7 +4,7 @@ Revision date: 2026-09-20. Deadline: **September 27, 23:59 UTC**.
 
 ## Verdict of the independent review
 
-The integration is technically broad: 59 API routes in the client, 33 documented workflows,
+The integration is technically broad: 59 API routes in the client, 34 documented workflows,
 eight failure classes, telemetry, images, Telegram commands and buttons. But breadth by itself
 does not win the contest. It even gets in the way if, in 60 seconds, a judge is trying to figure
 out what exactly to remember.

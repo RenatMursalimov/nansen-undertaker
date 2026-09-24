@@ -231,6 +231,26 @@ def _sections():
     for lang in ('ru', 'en'):
         out.append(('pm_positions.%s' % lang,
                     N.pm_positions_block(N.pm_positions_data(PM_POS_ROWS), '654412', lang)))
+    # ── 9. СКВОЗНОЙ ПЕРЕХОД: ТЕ ЖЕ ТРИ ЭКРАНА С ИМЕНЕМ БОТА. Это НЕ повтор предыдущих: с
+    #    `bot_un` каждая строка становится ССЫЛКОЙ на карточку (счёта или токена), и ровно на
+    #    этом жаловался владелец - «показывается списком без ссылок, а толку если на них не
+    #    перейти». Ссылка - часть текста, а не оформление: перепутанный префикс (`acc_` вместо
+    #    `tok_`) открыл бы человеку НЕ ТОТ экран, и заметить это можно только тапом. Поэтому
+    #    форма перехода стоит в baseline, где её видно строкой.
+    for lang in ('ru', 'en'):
+        out.append(('smart_trades.linked.%s' % lang,
+                    N.sm_trades_block(SM_TRADE_ROWS, 'grobtestbot', lang)))
+    for lang in ('ru', 'en'):
+        out.append(('smart_dca.linked.%s' % lang,
+                    N.sm_dca_block(N.sm_dca_data(SM_DCA_ROWS), 'grobtestbot', lang)))
+    for lang in ('ru', 'en'):
+        out.append(('pm_positions.linked.%s' % lang,
+                    N.pm_positions_block(N.pm_positions_data(PM_POS_ROWS), '654412', lang,
+                                         bot_un='grobtestbot')))
+    # ── 10. КАРТОЧКА ОДНОГО РЫНКА - НОВЫЙ ЭКРАН ЧАТА, и ведёт он вопросом, а не номером.
+    for lang in ('ru', 'en'):
+        out.append(('pm_market_card.%s' % lang,
+                    N.pm_market_card_block(PM_MARKETS[0], lang)))
     return out
 
 
