@@ -219,12 +219,27 @@ SCENARIOS = [
      'cmds': ['полимаркет рынки', 'polymarket markets'], 'btns': ['🧠 Nansen → 🎲 Polymarket → 🎲 Трендовые рынки'],
      'eps': ['prediction-market/market-screener'], 'scene': 'pm_markets',
      'menu': 'pm_markets', 'price': 'цена не названа в официальном списке',
-     'gives': 'рынки по объёму, вероятность, объём за сутки и КОПИРУЕМЫЙ market_id; под '
-              'списком три ряда кнопок',
-     'why': 'без печати market_id три соседних экрана существовали формально: позвать их было '
-            'нечем',
-     'hook': 'Trending prediction markets with the id printed, so the next three screens are '
-             'one tap away instead of impossible.'},
+     'gives': 'рынки по объёму, вероятность и объём за сутки; под списком ПО КНОПКЕ НА РЫНОК '
+              'с началом вопроса - тап открывает карточку этого рынка',
+     'why': 'сетка кнопок-номеров («📈 3 / 📖 3») требовала держать в голове служебный номер '
+            'строки; кнопка с вопросом не требует ничего',
+     'hook': 'Trending prediction markets, one button per market carrying the question itself - '
+             'no row numbers to keep in your head.'},
+    # ── КАРТОЧКА ОДНОГО РЫНКА: ТУДА ВЕДЁТ КНОПКА СПИСКА И ТАП В МИНИ-АППЕ ──────
+    {'id': 'pmcard', 'app': True, 'title': '🎲 Карточка одного рынка Polymarket',
+     'cmds': ['полимаркет рынок 654412', 'polymarket market 654412'],
+     'btns': ['🎲 Трендовые рынки → кнопка с вопросом рынка',
+              'мини-апп: 🎭 Whose % → 📲 open in the bot'],
+     'eps': ['prediction-market/market-screener'], 'scene': 'pm_markets',
+     'menu': 'pm_markets',
+     'price': 'цена не названа в официальном списке · 0 запросов при живом списке (кэш-хит)',
+     'gives': 'вопрос, цену рынка, объём, копируемый market_id и четыре разбора ЭТОГО рынка '
+              'кнопками',
+     'why': 'это точка сборки: из списка, из мини-аппа и командой попадаешь в одно место, где '
+            'номер рынка уже не нужен человеку - он уже в кнопках',
+     'hook': 'One market, one card: the question, the price, the id to copy, and four '
+             'breakdowns of that market - reachable from the list, from the mini app, or by '
+             'command.'},
     {'id': 'pmchart', 'title': '📈 График вероятности рынка во времени',
      'cmds': ['полимаркет график 654412'], 'btns': ['список рынков → 📈 N'],
      'eps': ['prediction-market/ohlcv'], 'scene': 'pm_chart', 'menu': 'pm_chart',
@@ -317,11 +332,11 @@ SCENARIOS = [
              'to a debt-free one in a token list. Here it does not.'},
     {'id': 'pmpos', 'app': True, 'title': '🧾 Кто в рынке Polymarket и с каким PnL',
      'cmds': ['позиции рынка 654412', 'кто в рынке 654412'],
-     # КНОПКА «🧾 N» ПОД СПИСКОМ РЫНКОВ - ГЛАВНЫЙ ВХОД, А КОМАНДА С НОМЕРОМ - БЫСТРЫЙ ПУТЬ
+     # КНОПКА НА КАРТОЧКЕ РЫНКА - ГЛАВНЫЙ ВХОД, А КОМАНДА С НОМЕРОМ - БЫСТРЫЙ ПУТЬ
      # для того, у кого номер уже есть. До этого экран был достижим ТОЛЬКО номером руками, то
      # есть требовал работы вне бота (замечание владельца: «опять идентификатор заставляешь
      # искать»). Тот же дефект и то же лечение, что у графика и стакана рынка.
-     'btns': ['🎲 Трендовые рынки → кнопка «🧾 N» под списком',
+     'btns': ['🎲 Трендовые рынки → рынок → 🧾 Кто в рынке сейчас',
               '🧠 Nansen → 🎲 Polymarket → 🧾 Кто в рынке и с каким PnL'],
      'eps': ['prediction-market/position-detail'], 'scene': 'pm_positions',
      'menu': 'pm_posdetail',
@@ -332,12 +347,14 @@ SCENARIOS = [
             'ИМЕННО ЗДЕСЬ, и вместе они отвечают «кто умеет» против «кто пока в плюсе»',
      'hook': 'Reputation says how a holder did over a lifetime. This says how the same holder '
              'is doing in this exact market: entry, current price, realized and open.'},
-    {'id': 'jupdca', 'title': '🧊 DCA на Jupiter по токену (Solana)',
+    {'id': 'jupdca', 'title': '🧊 DCA на Jupiter по токену (ТОЛЬКО Solana)',
      'cmds': ['jup dca <mint>'], 'btns': ['🧠 Nansen → 🧠 Умные деньги → 🧊 DCA на Jupiter'],
      'eps': ['tgm/jup-dca'], 'scene': 'jup_dca', 'menu': 'nsn_jupdca',
      'price': 'цена не названа в официальном списке · 1 запрос',
      'gives': 'программы DCA по токену: кто, из чего во что, размер вклада и доля уже '
-              'потраченного',
+              'потраченного. ГРАНИЦА НАЗВАНА НА ЭКРАНЕ: Jupiter - агрегатор Solana, и по '
+              'EVM-токену (включая токенизированные акции) программ DCA там не бывает вовсе; '
+              'такой адрес отсекается ДО запроса, чтобы пустота не читалась как свойство токена',
      'why': 'на Solana расписанные покупки идут через Jupiter, и это тот же вопрос о будущих '
             'покупках, только на другой площадке',
      'hook': 'Scheduled buying on Solana runs through Jupiter. Same question as DCA elsewhere: '
@@ -583,8 +600,18 @@ _EN = {
                'gives': 'chains by TVL with their daily change, DEX volume and active addresses',
                'why': '"where to look today" is a question about chains before it is a question '
                       'about tokens'},
+    'pmcard': {'cmds': ['polymarket market 654412'],
+               'btns': ['🎲 Trending markets → the button carrying the question',
+                        'mini app: 🎭 Whose % → 📲 open in the bot'],
+               'title': '🎲 The card of one Polymarket market',
+               'price': 'price not named in the official list · 0 requests on a warm list',
+               'gives': 'the question, the market price, 24h volume, the id to copy and four '
+                        'breakdowns of THAT market as buttons',
+               'why': 'a grid of numbered buttons made the reader carry a row number; a button '
+                      'carrying the question carries itself, and the card is where the list, the '
+                      'mini app and the command all arrive'},
     'pmpos': {'cmds': ['market positions 654412'],
-              'btns': ['🎲 Trending markets → the «🧾 N» button under the list',
+              'btns': ['🎲 Trending markets → the market → 🧾 Who is in it now',
                        '🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL'],
               'title': '🧾 Who is in a Polymarket market, and their PnL',
               'price': 'price not named in the official list · 1 request',

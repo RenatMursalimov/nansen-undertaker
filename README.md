@@ -59,7 +59,7 @@ because the telemetry was already writing those rows.
 Decisions, including the screen deliberately **not** shipped and two leaks the scrubber caught before
 production: [`docs/MINIAPP_DECISIONS.md`](docs/MINIAPP_DECISIONS.md).
 
-**59 Nansen API routes** · **33 documented workflows** · **36 named telemetry scenes** ·
+**59 Nansen API routes** · **34 documented workflows** · **36 named telemetry scenes** ·
 **8 distinct failure states**
 
 - [`docs/proofs/LIVE_HERO_2026-09-20.md`](docs/proofs/LIVE_HERO_2026-09-20.md) — sanitized live hero proof: 4 calls, 3 known histories, 0 failures.
@@ -205,8 +205,8 @@ separately — a visible “184 unpriced calls” is better than a tidy total bu
 The generated catalog distinguishes **client capability** from **shipped workflow**:
 
 - 59 unique network routes exist in the client;
-- 33 workflows are documented:
-  - 31 user-facing workflows that call Nansen;
+- 34 workflows are documented:
+  - 32 user-facing workflows that call Nansen;
   - 1 background digest workflow;
   - 1 local contribution-tally workflow;
 - 30 unique API routes drive those workflows;

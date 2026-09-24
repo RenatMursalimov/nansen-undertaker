@@ -8,7 +8,7 @@
 
 | Area | Status | Evidence / next action |
 |---|---|---|
-| Core Nansen integration | ✅ Complete | 59 API routes in one client; 33 documented workflows; **no route left without a measured schema** |
+| Core Nansen integration | ✅ Complete | 59 API routes in one client; 34 documented workflows; **no route left without a measured schema** |
 | Server endpoint sweep | ✅ Ready | all 59 routes declared; 53 structural reads + safe trade reads, Agent tier, hard budgets |
 | Hero: Polymarket holder reputation | ✅ Live PASS | primary `1130012`, backup `4323345`; 3 known histories, 0 failures each |
 | Liquidation map | ✅ Complete | button + command + visualization + honest missing-data handling |
@@ -64,8 +64,8 @@ hard-coded to create an alarming conclusion.
 ## Technical inventory
 
 - **59** unique Nansen API routes in the client — the last one without a schema (`tgm/position-intelligence`) was resolved on 24 Sep by the fourth probe round.
-- **33** documented workflows:
-  - 31 user-facing workflows that call Nansen;
+- **34** documented workflows:
+  - 32 user-facing workflows that call Nansen;
   - 1 background digest workflow;
   - 1 local contribution-tally workflow.
 - **30** unique API routes directly drive those documented workflows.

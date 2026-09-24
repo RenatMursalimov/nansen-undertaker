@@ -10,7 +10,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 | Scenarios | Endpoints used | Telemetry scenes |
 |---|---|---|
-| 33: 31 user-facing on Nansen + 1 background + 1 local | 35 | 31 of 36 in registry |
+| 34: 32 user-facing on Nansen + 1 background + 1 local | 35 | 31 of 36 in registry |
 
 ## Three doors: where Nansen can be asked at all
 
@@ -45,6 +45,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [🤝 Who a wallet trades with most](#cparty) | `counterparties 0x…` | 🧠 Nansen → 🔎 Wallet and token → 🤝 Counterparties | 💬 | price not named in the official list |
 | [💼 Wallet portfolio per Nansen data](#balance) | `nansen balance 0x…` | 🧠 Nansen → 🔎 Wallet and token → 💼 Wallet portfolio | 💬 | price not named in the official list |
 | [🎲 Trending Polymarket markets with market_id](#pmmarkets) | `polymarket markets` | 🧠 Nansen → 🎲 Polymarket → 🎲 Trending markets | 💬 | price not named in the official list |
+| [🎲 The card of one Polymarket market](#pmcard) | `polymarket market 654412` | 🎲 Trending markets → the button carrying the question<br>mini app: 🎭 Whose % → 📲 open in the bot | 💬 | price not named in the official list · 0 requests on a warm list |
 | [📈 Market probability chart over time](#pmchart) | `polymarket chart 654412` | markets list → 📈 N | 💬 | price not named in the official list |
 | [📖 Polymarket order book](#pmbook) | `polymarket orderbook 654412` | markets list → 📖 N | 💬 | price not named in the official list |
 | [🎭 Who holds the market and how they guessed before](#pmrep) | `market reputation 654412`<br>`who holds market 654412` | markets list → 🎭 N | 💬 | 6 requests (holders + lifetime history of each of the five) |
@@ -54,7 +55,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [🧊 Who buys on a schedule (smart money DCA)](#dca) | `dca` | 🧠 Nansen → 🧠 Smart money → 🧊 Buying on a schedule | 💬 | price not named in the official list · 1 request |
 | [🌐 Chain ranking: TVL, DEX volume, active addresses](#chains) | `chain rank` | 🧠 Nansen → 🌐 Chains and tally → 🌐 Chain ranking | 💬 | price not named in the official list · 1 request |
 | [💠 The DeFi part of a wallet: assets MINUS debts](#defi) | `defi 0x…` | 🧠 Nansen → 🔎 Wallet and token → 💠 DeFi part | 💬 | price not named in the official list · 1 request |
-| [🧾 Who is in a Polymarket market, and their PnL](#pmpos) | `market positions 654412` | 🎲 Trending markets → the «🧾 N» button under the list<br>🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL | 💬 | price not named in the official list · 1 request |
+| [🧾 Who is in a Polymarket market, and their PnL](#pmpos) | `market positions 654412` | 🎲 Trending markets → the market → 🧾 Who is in it now<br>🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL | 💬 | price not named in the official list · 1 request |
 | [🧊 Jupiter DCA by token (Solana)](#jupdca) | `jup dca <mint>` | 🧠 Nansen → 🧠 Smart money → 🧊 Jupiter DCA by token | 💬 | price not named in the official list · 1 request |
 | [⚖️ Who is positioned on a token: whales, smart traders, public figures](#posintel) | `positioning 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2`<br>`who is positioned <address>` | 🔍 Nansen on a token → the «⚖️ Who is positioned» button<br>🧠 Nansen → ⚔️ Other people’s leverage → ⚖️ Who is positioned | 💬 👥🔘 | price not named in the official list · 1 request |
 | [🎯 Where the money on Polymarket is sharp (market comparison)](#sharpmarkets) | `sharp money` | 🧠 Nansen → 🎲 Polymarket → 🎯 Where money is sharp | 💬 | price not named in the official list · 1 + N + N×H requests (13 by default) |
@@ -469,7 +470,32 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 **For a tweet (EN):**
 
-> Trending prediction markets with the id printed, so the next three screens are one tap away instead of impossible.
+> Trending prediction markets, one button per market carrying the question itself - no row numbers to keep in your head.
+
+---
+
+<a name="pmcard"></a>
+
+## 🎲 The card of one Polymarket market
+
+**Say to the bot:** `polymarket market 654412`
+**By button:** 🎲 Trending markets → the button carrying the question · mini app: 🎭 Whose % → 📲 open in the bot
+**Where:** in DM · **not in a group**: the word command is parsed only by the DM router
+**In the mini-app:** a screen of its own — it renders this same dictionary, so the chart cannot drift from the sentence.
+
+**What you get:** the question, the market price, 24h volume, the id to copy and four breakdowns of THAT market as buttons
+
+**Price:** price not named in the official list · 0 requests on a warm list
+
+**Why:** a grid of numbered buttons made the reader carry a row number; a button carrying the question carries itself, and the card is where the list, the mini app and the command all arrive
+
+**Endpoints:** `prediction-market/market-screener`
+
+**Telemetry scene:** `pm_markets` — this screen's spend is counted under it.
+
+**For a tweet (EN):**
+
+> One market, one card: the question, the price, the id to copy, and four breakdowns of that market - reachable from the list, from the mini app, or by command.
 
 ---
 
@@ -696,7 +722,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 🧾 Who is in a Polymarket market, and their PnL
 
 **Say to the bot:** `market positions 654412`
-**By button:** 🎲 Trending markets → the «🧾 N» button under the list · 🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL
+**By button:** 🎲 Trending markets → the market → 🧾 Who is in it now · 🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 **In the mini-app:** a screen of its own — it renders this same dictionary, so the chart cannot drift from the sentence.
 
@@ -861,7 +887,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## Client routes with no ordinary user scenario
 
-The catalog above has 33 workflows that use 35 unique API routes. The client contains **59** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
+The catalog above has 34 workflows that use 35 unique API routes. The client contains **59** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
 
 This is not a claim that all work end-to-end: having a client is not the same as a ready scenario. The list is broken out precisely so as not to pass API coverage off as user-available functionality.
 

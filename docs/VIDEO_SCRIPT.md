@@ -51,11 +51,11 @@ take drifts and the words run ahead of the picture, the take is wrong — not th
 | 12 | 1:58–2:06 | Back to the chat: the bot's picture of the same map, caption line by line. | "The app computes nothing. It draws the same dictionary the bot uses for its chat message, so the picture and the words cannot drift apart." |
 
 **Closing card (no narration, 2 seconds):** `github.com/RenatMursalimov/nansen-undertaker` ·
-"Fifty-nine Nansen routes. Thirty-three workflows. Eight ways to say I do not know."
+"Fifty-nine Nansen routes. Thirty-four workflows. Eight ways to say I do not know."
 
 > The three numbers on the closing card are asserted by the test suite against the code, so the card
 > cannot quietly go stale: `59` routes and `53` structural reads come from `tools/nansen_endpoint_sweep.py`,
-> `33` workflows from `tools/nansen_catalog.py`, and the eight refusal classes from `nansen_api`.
+> `34` workflows from `tools/nansen_catalog.py`, and the eight refusal classes from `nansen_api`.
 
 ---
 
