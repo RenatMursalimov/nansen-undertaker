@@ -426,8 +426,33 @@ def t_cli_without_key_says_why():
             cli.c_doctor([])
         finally:
             sys.stdout = old
+        _doc = buf.getvalue()
         check('CLI: doctor честно говорит про отсутствие ключа',
-              'НЕТ' in buf.getvalue(), buf.getvalue()[:200])
+              ('НЕТ' in _doc or 'MISSING' in _doc), _doc[:200])
+        # ЧИСЛО КЛАССОВ ОТКАЗА - ИЗ РЕЕСТРА, А НЕ СЛОВОМ. Поймано прогоном публичного репозитория
+        # в чистом окружении: doctor печатал «семи классов отказа», а в коде их восемь - число
+        # устарело молча ещё в сентябре, и увидеть это можно было только запустив.
+        check('CLI: doctor берёт число классов отказа из кода',
+              str(len(N._REFUSAL)) in _doc and 'семи' not in _doc and 'seven' not in _doc,
+              _doc[-200:])
+        # ЯЗЫК: команда объявлена в англоязычной справке - значит и отвечать обязана по-английски,
+        # когда её об этом просят. Первая команда, которую запускает судья, говорила по-русски.
+        buf2, old2 = io.StringIO(), sys.stdout
+        _keep_lang = cli.LANG
+        sys.stdout = buf2
+        try:
+            cli.LANG = 'en'
+            cli.c_doctor([])
+        finally:
+            sys.stdout = old2
+            cli.LANG = _keep_lang
+        _en = buf2.getvalue()
+        check('CLI: doctor отвечает по-английски, когда язык английский',
+              'refusal classes' in _en and 'классов отказа' not in _en, _en[:220])
+        check('CLI: и суточная сводка тоже двуязычна',
+              'NO VERDICT' in T.daily_text('1999-01-01', lang='en')
+              and 'ВЕРДИКТА НЕТ' in T.daily_text('1999-01-01'),
+              T.daily_text('1999-01-01', lang='en')[:120])
     finally:
         httpx.post = keep
         if keep_key:

@@ -105,7 +105,7 @@
   "weak_usd": 1305000.0
  },
  "provenance": "synthetic",
- "recorded_at": "2026-09-22T23:09:56Z",
+ "recorded_at": "2026-09-24T09:36:47Z",
  "rehearsal": true,
  "rendered_text": "🎭 <b>Who holds this market</b>\n<code>654412</code>\n\n💰 Of $1.94M examined, <b>$1.30M (67%)</b> sits with wallets whose win rate is below 40%.\n📊 Across all top holders: Yes $1.60M · No $715.0K\n\n<b>Holders</b> (5 of 6 examined):\n1. Whale A [Yes] · $810.0K · entry 12¢ → 45¢ · win rate 33% · PnL -$120.0K · 84 markets\n2. 0xbbbb…0002 [Yes] · $630.0K · entry 31¢ → 45¢ · win rate 71% · PnL +$340.0K · 210 markets\n3. Smart Money [No] · $495.0K · entry 60¢ → 55¢ · win rate 38% · PnL -$45.0K · 51 markets\n4. 0xdddd…0004 [No] · $220.0K · no history\n5. 0xeeee…0005 [Yes] · $112.5K · win-rate field missing · PnL +$1.0K · 3 markets\n\n⚠️ <i>2 holder(s) have no measurable win rate - their money is counted on NEITHER side. Assigning a win rate we do not know would be fitting the answer.</i>\n\nℹ️ <i>1 more holder(s) were not examined because this screen caps wallet history lookups at 5; this does not claim they have no history.</i>\n\n<i>Dollars are computed as shares × current price: the response has no ready total.</i>\n<i>Past win rate does not promise the future: this is the composition of the money, not a forecast or advice. Requests spent on this screen: 6.</i>\n\n<i>📡 Source: Nansen, freshness not measured</i>",
  "scene": "pm_reputation",

@@ -342,3 +342,88 @@ in addition to comparing each one with the canvas. Currently zero overflows and 
 is the second time in this project that a chart defect was found by measuring the rendered page rather
 than by reading the code (the first was the invisible bars on the sharp-money screen), which is why
 the check is in the harness and not in a reviewer's eye.
+
+
+## One unit per axis, and labels that must differ
+
+A live screenshot of the ETH map (28 levels) showed a price ladder ending like this:
+
+```
+$5.2K · $4.5K · $4.4K · … · $1.1K · $796.21
+```
+
+Every number is correct. The defect is that the **last one is in different units**, so a reader has
+to convert it in their head — and an axis exists for exactly one purpose, comparison by eye. The
+same thing happened inside a single sentence: *between $796.21 and $5.2K*.
+
+The fix is not a fixed format but a **search**, because two rules collide here and one of them is
+stronger:
+
+1. one unit for the whole axis (comparability);
+2. **different levels must get different labels** (meaning) — this is the rule that created the
+   custom price formatter in the first place, back when the caption read *cluster between $62K and
+   $62K*.
+
+So the formatter walks a ladder — axis unit → the general price format → plain numbers with
+increasing precision — and takes the first step at which **all** labels are distinct. Rule 2 can
+never be silently broken by an improvement to rule 1, because the search steps down by itself.
+
+This was caught on my own change, one minute after making it: the first version applied the axis
+unit unconditionally and printed *between $1.2K and $1.2K* for a cluster spanning \$1,150–\$1,190 —
+resurrecting the very bug the function was written to prevent. The guard that followed it (fall back
+to the general format) was also not enough, because that format rounds to the same \$1.2K. Only the
+full ladder is correct.
+
+Both implementations — the bot's (for the chat picture) and the page's (for the canvas) — carry the
+same ladder in the same order, are named as a deliberate pair in the comments, and are asserted by
+tests on the same set of numbers.
+
+## The same quantity printed twice: the third catch
+
+The detail line under the map read:
+
+```
+$930.2K between $95.51 and $97.77 · mostly SHORT · $930.2K of it named
+```
+
+Two identical numbers in one line, and a reader looks for the difference between them. The map
+caption had been fixed for this case, then the risk board, and this is the **third** place the same
+value was printed twice. When everything in a bar is named, the line now says so in words.
+
+Three catches of one defect in three renderers is itself the finding: the *rule* lives in the number
+layer (named ≥ total means "all of it"), and each renderer re-implemented the sentence. The number
+layer now carries the comparison, and each screen prints its verdict.
+
+## A scene with no surface is work nobody can see
+
+`smart_trades` — the flagship signal of the whole integration, a smart-money trade next to the
+**share of the token's market cap** it represents — was registered in the scene list, had a recorded
+fixture, had a price in the gateway, and appeared on **no tab at all**. Everything existed except the
+surface.
+
+It now leads the `➕ More` tab. The bar is the trade as a share of market cap, and the threshold below
+which a share is not drawn comes from the dictionary, not from the page.
+
+A test now walks the scene registry and requires each scene name to appear in the page, so a scene
+can no longer be complete-but-invisible.
+
+## Refusals name the status code on the screen
+
+The sharp-money screen failed on a live provider error and said: *this is a provider failure, not a
+verdict; the status code is in the bot log.* That sentence asks a person holding a phone to go read a
+server log — and the difference between 402 (out of credits), 429 (rate limited) and 502 (their
+outage) is three different actions.
+
+The code was already in the call box (`note()` records it). It now travels in the envelope
+(`http_status`) and is printed next to the outcome class. Not showing a number we already have, and
+pointing at a log instead, looks like screen hygiene and costs the reader server access.
+
+## What "Sharp money" explains about itself
+
+The owner's words: *"Sharp Money пока непонятно как работает"* — and the screen deserved that. It
+had a slogan (*price says what people believe, this says who believes it*) which explains the idea
+and not the picture. Three things were missing, all now on the screen: what is being compared (four
+of the most traded markets, side by side), what the two bars are (money held by wallets that were
+right more often vs wrong more often, by **lifetime** record), and why the order is by sharp dollars
+rather than by share (90% of \$300 is not a signal). Plus the honest price: this is the expensive
+screen — one request per market and one per holder.

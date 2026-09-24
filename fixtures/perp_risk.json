@@ -85,7 +85,7 @@
   "tokens": 4
  },
  "provenance": "synthetic",
- "recorded_at": "2026-09-23T17:32:48Z",
+ "recorded_at": "2026-09-24T09:36:47Z",
  "rehearsal": true,
  "rendered_text": "⚔️ <b>Where other people's leverage is closest to the edge</b>\nOrder is by distance from the current price to the densest liquidation cluster, not by its size: $300M three per cent away and $300M forty per cent away are different situations.\n\n1. <b>BTC</b>: $11.8M in the densest cluster (longs), 7.1% below the price\n    on the map $31.6M across 5 position(s) · longs $23.4M vs shorts $8.2M\n    of that $26.4M sits on wallets Nansen has a name for\n2. <b>ETH</b> - nothing liquidates within 50% of the price: $31.6M of leverage sits further out\n3. <b>SOL</b> - nothing liquidates within 50% of the price: $31.6M of leverage sits further out\n4. <b>HYPE</b> - nothing liquidates within 50% of the price: $31.6M of leverage sits further out\n\n<i>These are where other people stop out, not a forecast and not advice. Source: Nansen.</i>",
  "scene": "perp_risk",

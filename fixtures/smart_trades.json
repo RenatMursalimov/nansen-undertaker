@@ -52,7 +52,7 @@
  },
  "pct_min": 0.1,
  "provenance": "synthetic",
- "recorded_at": "2026-09-22T23:02:54Z",
+ "recorded_at": "2026-09-24T09:36:47Z",
  "rehearsal": true,
  "rendered_text": "🧠 <b>Smart money trades, 24h</b>\n1. Smart Trader 1 <b>AAA</b> [base] · $48.3K · mcap $2.10M · 2.3% of mcap · 3d\n2. Smart Trader 2 <b>BBB</b> [solana] · $120.0K · mcap $50.00B · 900d\n3. 0x3333…0033 <b>CCC</b> [ethereum] · $9.0K\n\nTap a ticker for the card.\n\n<i>📡 Source: Nansen, freshness not measured</i>",
  "scene": "smart_trades",

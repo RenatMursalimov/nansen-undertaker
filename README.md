@@ -1,5 +1,8 @@
 # Nansen Undertaker
 
+**▶️ Demo video (3 min, live data):** <https://x.com/Rencrypta/status/2103016647061656017> —
+running order and full transcript: [`docs/VIDEO.md`](docs/VIDEO.md)
+
 ## A market says 78% YES. But whose conviction is it?
 
 Nansen Undertaker is a live Telegram workflow that checks **who holds a Polymarket market and how
@@ -31,9 +34,9 @@ Built for the **Nansen Meridian Buildathon**.
 
 The screens above also run as a **Telegram mini-app** — the hero (plus the same market's holders
 with their PnL *in that market*), the sharp-money market comparison, the liquidation map with a
-four-token risk board and two sliders for window and detail, scheduled buying and the chain ranking,
-and a live feed of the API calls themselves. See it in under a minute, no key and no Telegram
-account:
+four-token risk board and two sliders for window and detail, smart-money trades as a share of market
+cap, scheduled buying, the chain ranking, and a live feed of the API calls themselves. See it in
+under a minute, no key and no Telegram account:
 
 ```bash
 python3 -m http.server 8080
@@ -67,8 +70,10 @@ production: [`docs/MINIAPP_DECISIONS.md`](docs/MINIAPP_DECISIONS.md).
 - Social preview / demo title card: [`assets/social-preview.png`](assets/social-preview.png)
 - Full generated workflow catalog: [`docs/CATALOG.md`](docs/CATALOG.md)
 - All-53-route server sweep and 12×/day schedule: [`docs/ENDPOINT_SWEEP.md`](docs/ENDPOINT_SWEEP.md)
-- Demo: 110-second shot list with narration [`docs/VIDEO_SCRIPT.md`](docs/VIDEO_SCRIPT.md);
-  the older silent plan: [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md)
+- Published demo video, running order and transcript: [`docs/VIDEO.md`](docs/VIDEO.md)
+- Demo *plan* (110-second shot list with narration, drives the voiceover tool):
+  [`docs/VIDEO_SCRIPT.md`](docs/VIDEO_SCRIPT.md); the older silent plan:
+  [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md)
 - Ready X thread: [`docs/X_THREAD.md`](docs/X_THREAD.md)
 - Submission draft and eligibility gate: [`docs/submission.md`](docs/submission.md)
 - Roadmap and competitor analysis: [`docs/WINNER_PLAN.md`](docs/WINNER_PLAN.md)

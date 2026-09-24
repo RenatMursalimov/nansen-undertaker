@@ -122,26 +122,56 @@ def _cost():
 
 
 def c_doctor(argv):
-    """Что есть и чего нет ДО того, как тратить кредиты."""
+    """Что есть и чего нет ДО того, как тратить кредиты.
+
+    ДВЕ ПРАВКИ ПОСЛЕ ПРОГОНА ПУБЛИЧНОГО РЕПОЗИТОРИЯ В ЧИСТОМ ОКРУЖЕНИИ:
+
+    1. ЭТА КОМАНДА ГОВОРИЛА ТОЛЬКО ПО-РУССКИ, включая `NANSEN_LANG=en`. А она - ПЕРВАЯ, которую
+       запускает судья: README предлагает её сразу после установки. Англоязычный человек получал
+       русский экран на первом же шаге англоязычного конкурса. Справка (`--help`) двуязычна с самого
+       начала, и расхождение между ней и первой командой заметно только тому, кто правда запустил;
+    2. ЧИСЛО КЛАССОВ ОТКАЗА ПЕЧАТАЛОСЬ СЛОВОМ «семи», А В КОДЕ ИХ ВОСЕМЬ. Классов стало больше
+       ещё в сентябре, и все документы проекта говорят «восемь», а эта строка молча осталась со
+       старым числом. Теперь она берёт число ИЗ РЕЕСТРА (`len(N._REFUSAL)`): число, посчитанное по
+       коду, не может разойтись с кодом - а прописанное словом может и разошлось.
+    """
+    en = (LANG == 'en')
     key = N._key()
-    print('ключ NANSEN_API_KEY: %s' % ('есть (префикс не печатаю)' if key else 'НЕТ'))
-    print('база зачёта:         %s' % os.getenv('NANSEN_DB_PATH', '(по умолчанию рядом с кодом)'))
-    print('телеметрия:          %s' % T.TELE_DIR)
+    _yes = 'set (prefix not printed)' if en else 'есть (префикс не печатаю)'
+    _no = 'MISSING' if en else 'НЕТ'
+    print(('NANSEN_API_KEY:      %s' if en else 'ключ NANSEN_API_KEY: %s')
+          % (_yes if key else _no))
+    print(('tally database:      %s' if en else 'база зачёта:         %s')
+          % os.getenv('NANSEN_DB_PATH',
+                      '(default, next to the code)' if en else '(по умолчанию рядом с кодом)'))
+    print(('telemetry:           %s' if en else 'телеметрия:          %s') % T.TELE_DIR)
     try:
         import httpx                                  # noqa: F401
-        print('httpx:               есть')
+        print('httpx:               %s' % ('present' if en else 'есть'))
     except ImportError:
-        print('httpx:               НЕТ - без него не уйдёт ни один запрос (pip install httpx)')
+        print('httpx:               %s'
+              % ('MISSING - not a single request can go out (pip install httpx)' if en
+                 else 'НЕТ - без него не уйдёт ни один запрос (pip install httpx)'))
     try:
         import matplotlib                             # noqa: F401
-        print('matplotlib:          есть (картинки соберутся)')
+        print('matplotlib:          %s'
+              % ('present (pictures will render)' if en else 'есть (картинки соберутся)'))
     except ImportError:
-        print('matplotlib:          нет - команды png-* честно скажут это и отдадут текст')
+        print('matplotlib:          %s'
+              % ('absent - the png-* commands say so and return text' if en
+                 else 'нет - команды png-* честно скажут это и отдадут текст'))
     if not key:
-        print('\nКлюча нет, поэтому запросов не будет. Это НЕ поломка: так выглядит первый из')
-        print('семи классов отказа. Ключ: https://app.nansen.ai -> API.')
+        # ЧИСЛО КЛАССОВ - ИЗ РЕЕСТРА, А НЕ СЛОВОМ В ТЕКСТЕ.
+        _n_cls = len(getattr(N, '_REFUSAL', {})) or 8
+        if en:
+            print('\nNo key, so no requests will go out. This is NOT a breakage: it is the first')
+            print('of %d refusal classes. Key: https://app.nansen.ai -> API.' % _n_cls)
+        else:
+            print('\nКлюча нет, поэтому запросов не будет. Это НЕ поломка: так выглядит первый из')
+            print('%d классов отказа. Ключ: https://app.nansen.ai -> API.' % _n_cls)
         return 0
-    print('\nостаток кредитов:    %s' % N.credits_left(force=True))
+    print(('\ncredits left:        %s' if en else '\nостаток кредитов:    %s')
+          % N.credits_left(force=True))
     return 0
 
 
@@ -413,17 +443,22 @@ def c_png_pm(argv):
 def c_cost(argv):
     """Суточная сводка расхода: по сценам, по эндпоинтам, с отдельной строкой про неизвестную
     цену. Читает ТОТ ЖЕ файл телеметрии, который пишут все вызовы выше."""
-    print(_plain(T.daily_text()))
+    # ЯЗЫК ВЫВОДА - ТОТ ЖЕ, ЧТО У ОСТАЛЬНЫХ КОМАНД. Команда объявлена в англоязычной справке, а
+    # печатала русский отчёт целиком: на англоязычном конкурсе это первая же команда, которая
+    # говорит не на том языке, и чинится она параметром, а не переводом на глаз.
+    print(_plain(T.daily_text(lang=LANG)))
     return 0
 
 
 def c_scenes(argv):
     """Закрытый реестр сцен. Сцена - это ЧЕЛОВЕЧЕСКИЙ вопрос, а не имя эндпоинта: расход
     считается по вопросам, иначе «на что ушли кредиты» остаётся без ответа."""
-    print('Сцены (закрытый реестр, чужое имя даёт scene=? и громкую строку в сводке):')
+    print('Scenes (closed registry; an unknown name becomes scene=? and a loud line in the '
+          'summary):' if LANG == 'en' else
+          'Сцены (закрытый реестр, чужое имя даёт scene=? и громкую строку в сводке):')
     for s in T.SCENES:
         print('  %s' % s)
-    print('\nвсего: %d' % len(T.SCENES))
+    print(('\ntotal: %d' if LANG == 'en' else '\nвсего: %d') % len(T.SCENES))
     return 0
 
 
