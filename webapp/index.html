@@ -125,6 +125,16 @@
   .mkrow{padding:9px 2px;border-bottom:1px solid var(--line);cursor:pointer}
   .mkrow:last-child{border-bottom:0}
   .mkq{font-size:14px;line-height:1.3}
+  /* ═══ ЧИП ПЕРЕХОДА: МАЛЕНЬКАЯ КНОПКА СПРАВА, НЕ РАЗРЫВАЮЩАЯ СПИСОК ═══
+     ЖИВОЕ ЗАМЕЧАНИЕ ВЛАДЕЛЬЦА про прежнюю кнопку во всю ширину («📲 open USDC in the bot»):
+     «как-то нелепо это выглядит, может достаточно небольшой кнопки с тикером справа, не
+     мешающим визуальный просмотр всего списка». Поэтому чип: он в потоке заголовка строки,
+     уезжает вправо (`float`), и список остаётся списком - его можно пролистать глазами.
+     Площадь тапа не меньше 28 px по высоте: чип маленький ГЛАЗАМИ, но не пальцем. */
+  .chip{float:right;margin:-2px 0 0 8px;padding:4px 9px;border:1px solid var(--line);
+        border-radius:999px;background:#261a4e;color:var(--dim);font-size:11.5px;
+        line-height:1.5;cursor:pointer;white-space:nowrap}
+  .chip:active{border-color:var(--nsn);color:#fff}
   .mkmeta{font-size:11.5px;color:var(--dim);margin-top:2px}
   /* ПОЛОСЫ В РЯДУ РЫНКА. ПОЙМАНО РЕНДЕРОМ: стили полос были объявлены только как `.row .barwrap`,
      а экран острых денег строит их внутри `.mkrow` - высота не задавалась, и полос НЕ БЫЛО ВИДНО
@@ -1885,13 +1895,26 @@ function moreNote(t) {
   if (el) { el.innerHTML = MORE.msg ? '<div class="warn">' + esc(MORE.msg) + '</div>' : ''; }
 }
 
-/* ТИКЕР, ПО КОТОРОМУ МОЖНО ПОПРОСИТЬ КАРТОЧКУ. -> bool.
-   Форма проверяется ЗДЕСЬ, а не «на боте разберётся»: Worker пускает поле `tk` только в виде
-   [A-Za-z0-9]{1,12}, и кнопка, чей запрос будет молча вырезан на полпути, выглядит как
-   сломанная. У части строк символа нет вовсе - там стоит обрезанный адрес контракта («0x12…ab»)
-   или имя с точкой («suertudo.sol»), и такую строку мы честно оставляем без кнопки. */
-function tokAskable(sym) {
-  return /^[A-Za-z0-9]{1,12}$/.test(String(sym || ''));
+/* ПОДПИСЬ СТРОКИ -> КОРОТКАЯ ПОДПИСЬ ДЛЯ СВЕРКИ. -> str (до 6 символов, нижним регистром).
+   ═══ ПОЧЕМУ ГЕЙТ «ПРОСТОГО ТИКЕРА» УБРАН СОВСЕМ ═══
+   Он стоял здесь и вырезал кнопку у строк, где символ приезжает не голым: живой прогон
+   владельца показал «🌱 FRED» - с эмодзи от площадки, - и экран честно печатал «No plain ticker
+   in this row», то есть ОТКАЗЫВАЛ там, где контракт был прямо в ответе. Хуже: тикер вообще не
+   годился ключом - в том же списке две РАЗНЫЕ строки шли под именем FRED с разными
+   контрактами, и «открой FRED» означало бы «открой первый из двух».
+   Теперь ключ - НОМЕР СТРОКИ, а эта подпись едет рядом только для сверки: список мог
+   перечитаться, и бот обязан убедиться, что строка №3 - всё ещё та же. */
+function rowSig(sym) {
+  return String(sym || '').replace(/[^0-9a-zA-Z]/g, '').slice(0, 6).toLowerCase();
+}
+
+/* КОРОТКАЯ ПОДПИСЬ КНОПКИ. Владелец про прежнюю: «как-то нелепо это выглядит, может достаточно
+   небольшой кнопки с тикером справа, не мешающим визуальный просмотр всего списка». Верно:
+   «📲 open USDC in the bot» во всю ширину разбивало список на куски, и глазами его было не
+   пролистать. Теперь это чип справа в строке с числами. */
+function tokChip(sym) {
+  var t = String(sym || '').replace(/[^0-9a-zA-Z]/g, '').slice(0, 8);
+  return t || '↗';
 }
 
 /* ═══ «ОТКРОЙ ЭТОТ ТОКЕН КАРТОЧКОЙ В ГРОБОВЩИКЕ» ═══
@@ -1904,18 +1927,17 @@ function tokAskable(sym) {
    видит на экране, - а контракт находит бот в ТОМ ЖЕ списке сделок (кэш-хит, без второго
    запроса). Контракт при этом печатается КОПИРУЕМЫМ в карточке бота, то есть вторая половина
    просьбы («ни контракт скопировать») тоже закрыта - просто не в браузере. */
-function moreTok(sym, i) {
+function moreTok(row, sig) {
   var note = function (t) {
-    var el = document.getElementById('tn' + i);
+    var el = document.getElementById('tn' + (row - 1));
     if (el) { el.innerHTML = t ? '<div class="warn">' + esc(String(t)) + '</div>' : ''; }
     else { moreNote(t); }
   };
-  if (!tokAskable(sym)) {
-    note('This row has no plain ticker, so there is nothing to look up by.');
-    return;
-  }
-  askBotCard({ sc: 'tok_card', tk: sym, lg: 'en' }, note,
-             'Sent the ' + sym + ' card (contract inside, ready to copy)');
+  /* КЛЮЧ - НОМЕР СТРОКИ, А НЕ ТИКЕР: тикер не уникален даже внутри одного списка (две строки
+     «FRED» с разными контрактами в живом прогоне), и бот не должен выбирать между ними за
+     человека. Подпись `sig` едет рядом, чтобы бот убедился: строка та же. */
+  askBotCard({ sc: 'tok_card', mk: 'r' + row + '-' + sig, lg: 'en' }, note,
+             'Sent the card (contract inside, ready to copy)');
 }
 
 /* СДЕЛКИ SMART MONEY - ФЛАГМАНСКИЙ СИГНАЛ НАБОРА, И ДО СИХ ПОР ЕГО НЕ БЫЛО НИ НА ОДНОМ ТАБЕ.
@@ -1940,7 +1962,12 @@ function tradesHTML(env) {
     var pct = (r.pct_shown && r.pct_of_mcap !== null && r.pct_of_mcap !== undefined)
               ? Number(r.pct_of_mcap) : null;
     h += '<div class="mkrow"><div class="mkq">' + esc(r.who) + ' · <b>' + esc(r.sym) + '</b>'
-       + (r.chain ? ' <span class="dim">[' + esc(r.chain) + ']</span>' : '') + '</div>';
+       + (r.chain ? ' <span class="dim">[' + esc(r.chain) + ']</span>' : '')
+       /* ЧИП СПРАВА В ЗАГОЛОВКЕ СТРОКИ: он на одной высоте с названием и не разрывает список.
+          Номер строки (1-based) едет в `data-row`, подпись для сверки - в `data-sig`. */
+       + '<span class="chip" data-row="' + (i + 1) + '" data-sig="' + esc(rowSig(r.sym))
+       + '" title="open this token in the bot">📲 ' + esc(tokChip(r.sym)) + '</span>'
+       + '</div>';
     h += '<div class="mkmeta">'
        + (r.usd === null || r.usd === undefined ? 'size not in the response' : ('$' + usd(r.usd)))
        + (r.mcap === null || r.mcap === undefined ? ' · market cap not in the response'
@@ -1952,18 +1979,10 @@ function tradesHTML(env) {
       h += '<div class="barwrap"><div class="bar" style="width:'
          + Math.max(2, Math.min(100, Math.round(pct))) + '%;background:var(--nsn)"></div></div>';
     }
-    /* СТРОКА БОЛЬШЕ НЕ ТУПИК. Кнопка есть только там, где по чему спрашивать - у строки с
-       обычным тикером; у остальных её нет, и это сказано словом, а не пустым местом.
+    /* СТРОКА БОЛЬШЕ НЕ ТУПИК, И КНОПКА ЕСТЬ У КАЖДОЙ СТРОКИ С АДРЕСОМ ТОКЕНА.
        СТРОКА СТАТУСА - СВОЯ У КАЖДОЙ КНОПКИ. Одна общая внизу карточки уже подвела: владелец
        тапнул кнопку в середине списка, ответ появился вне экрана, и вывод был «не работает». */
-    if (tokAskable(r.sym)) {
-      h += '<div class="btns" style="margin:4px 0 2px"><span class="btn" data-tok="'
-         + esc(r.sym) + '">📲 open ' + esc(r.sym) + ' in the bot</span></div>'
-         + '<div id="tn' + i + '"></div>';
-    } else {
-      h += '<div class="dim" style="margin:4px 0 2px">No plain ticker in this row — the bot '
-         + 'cannot be asked for its card by name.</div>';
-    }
+    h += '<div id="tn' + i + '"></div>';
     h += '</div>';
   }
   h += '<div class="legend"><span><i style="background:var(--nsn)"></i>trade as a share of '
@@ -2060,17 +2079,14 @@ function moreRender() {
   el.innerHTML = tradesHTML(MORE.tr) + dcaHTML(MORE.dca) + chainHTML(MORE.ch);
   /* ОБРАБОТЧИКИ ВЕШАЮТСЯ ПОСЛЕ КАЖДОЙ ПЕРЕРИСОВКИ: innerHTML заменяет узлы, и кнопка,
      привязанная один раз при загрузке, после первого же ответа перестала бы работать молча. */
-  var bs = el.querySelectorAll('.btn[data-tok]');
+  var bs = el.querySelectorAll('.chip[data-row]');
   for (var i = 0; i < bs.length; i++) {
-    bs[i].onclick = (function (sym, node) {
-      /* НОМЕР СТРОКИ БЕРЁМ ИЗ ID СОСЕДНЕЙ СТРОКИ СТАТУСА, а не из порядка кнопок: у части
-         строк кнопки нет вовсе (нет обычного тикера), и счётчик кнопок разошёлся бы с
-         номерами строк - ответ ушёл бы к чужой строке. */
-      var nid = (node.parentNode && node.parentNode.nextSibling
-                 && node.parentNode.nextSibling.id) || '';
-      var n = nid.replace('tn', '');
-      return function () { moreTok(sym, n); };
-    })(bs[i].getAttribute('data-tok'), bs[i]);
+    bs[i].onclick = (function (row, sig) {
+      /* НОМЕР СТРОКИ ЕДЕТ ИЗ САМОЙ СТРОКИ, а не из порядка кнопок: считать кнопки значило бы
+         однажды отправить ответ к чужой строке (так и было, пока часть строк оставалась без
+         кнопки). Ответ печатается в строку статуса ЭТОЙ строки. */
+      return function () { moreTok(row, sig); };
+    })(Number(bs[i].getAttribute('data-row')), bs[i].getAttribute('data-sig') || '');
   }
   moreNote(MORE.msg);
 }

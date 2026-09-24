@@ -72,7 +72,7 @@ reading it.
 | `tools/record_fixture.py` | `3e6fc4018b83fed1` | byte-for-byte from the bot |
 | `tools/render_social_preview.py` | `ba595dc312016848` | byte-for-byte from the bot |
 | `tools/scene_text_baseline.py` | `9f14ec2789a6ce6f` | byte-for-byte from the bot |
-| `webapp/index.html` | `713c9fc741503879` | byte-for-byte from the bot |
+| `webapp/index.html` | `e88905830a44b93b` | byte-for-byte from the bot |
 
 ## The one declared sanitary substitution
 
