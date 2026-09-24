@@ -382,6 +382,22 @@ def outcome():
     return max(b['outcomes'], key=lambda o: _SEV.get(o, 2))
 
 
+def http_code():
+    """КОД ПОСЛЕДНЕГО СЕТЕВОГО ОТВЕТА В ЭТОЙ КОРОБКЕ. -> int | None.
+
+    ЗАЧЕМ НАРУЖУ. Отказ экрана раньше говорил «status code is in the bot log» - то есть отправлял
+    человека читать лог на сервере, чтобы отличить 402 (кончились кредиты) от 429 (придержали по
+    частоте) и от 502 (у площадки сбой). Это три разных действия, и различает их одно число,
+    которое у нас УЖЕ есть в коробке вызова: `note()` кладёт его в `b['http']`. Не показывать
+    имеющееся число и просить человека залезть в лог - хуже, чем не иметь его вовсе: выглядит как
+    забота о чистоте экрана, а стоит человеку доступа к серверу.
+    """
+    try:
+        return int(box().get('http') or 0) or None
+    except (TypeError, ValueError):
+        return None
+
+
 def age():
     """Возраст данных в секундах или None, если не измерен."""
     return box().get('age')
@@ -1129,22 +1145,36 @@ def _pct(vals, pct):
     return int(vals[max(0, min(i, len(vals) - 1))])
 
 
-def daily_text(day=None):
-    """Суточная сводка ТЕКСТОМ (для служебного чата и для tools/nansen_daily.py)."""
+def daily_text(day=None, lang='ru'):
+    """Суточная сводка ТЕКСТОМ (служебный чат, tools/nansen_daily.py, публичный `cli.py cost`).
+
+    ДВУЯЗЫЧНА ПОСЛЕ ПРОГОНА ПУБЛИЧНОГО РЕПОЗИТОРИЯ В ЧИСТОМ ОКРУЖЕНИИ: команда `cost` объявлена в
+    англоязычной справке CLI, а печатала русский отчёт целиком. Переведены ТОЛЬКО подписи; ни одно
+    число и ни одна ветка не изменились, русский остался умолчанием.
+    """
+    en = (lang == 'en')
     day = day or _day(time.time() - 86400)
     s = summary(day)
     if s is None:
-        return ('Nansen, сутки %s: ВЕРДИКТА НЕТ — файла телеметрии нет (%s).\n'
-                'Ноль запросов и несобравшаяся телеметрия по нулям неразличимы, а действия '
-                'у них противоположные.' % (day, os.path.join(TELE_DIR, '%s.log' % day)))
+        return (('Nansen, day %s: NO VERDICT - there is no telemetry file (%s).\n'
+                 'Zero requests and telemetry that failed to assemble look identical in zeroes, '
+                 'and they call for opposite actions.' if en else
+                 'Nansen, сутки %s: ВЕРДИКТА НЕТ — файла телеметрии нет (%s).\n'
+                 'Ноль запросов и несобравшаяся телеметрия по нулям неразличимы, а действия '
+                 'у них противоположные.') % (day, os.path.join(TELE_DIR, '%s.log' % day)))
     if not s['lines']:
-        return 'Nansen, сутки %s: ВЕРДИКТА НЕТ — файл есть, но он пуст.' % day
-    L = ['Nansen, сутки %s (строк %d)' % (day, s['lines']), '', 'По сценариям:',
+        return (('Nansen, day %s: NO VERDICT - the file exists but it is empty.' if en else
+                 'Nansen, сутки %s: ВЕРДИКТА НЕТ — файл есть, но он пуст.') % day)
+    _noscene = 'NO SCENE' if en else 'БЕЗ СЦЕНЫ'
+    L = [('Nansen, day %s (%d rows)' if en else 'Nansen, сутки %s (строк %d)') % (day, s['lines']),
+         '', ('Per scene:' if en else 'По сценариям:'),
          '  %-22s %7s %6s %5s %5s %6s %5s %8s %7s %9s'
-         % ('сцена', 'запрос', 'уник', 'сеть', 'кэш', 'пусто', 'сбой', 'мед.мс',
-            'p95 мс', 'кредитов')]
+         % (('scene', 'calls', 'uniq', 'wire', 'cache', 'empty', 'fail', 'med.ms',
+             'p95 ms', 'credits') if en else
+            ('сцена', 'запрос', 'уник', 'сеть', 'кэш', 'пусто', 'сбой', 'мед.мс',
+             'p95 мс', 'кредитов'))]
     for sc, v in sorted(s['per_scene'].items(), key=lambda kv: -kv[1]['calls']):
-        nm = 'БЕЗ СЦЕНЫ' if sc == '?' else sc
+        nm = _noscene if sc == '?' else sc
         L.append('  %-22s %7d %6s %5d %5d %6d %5d %8d %7d %9d'
                  % (nm, v['calls'], v['users'] or '-', v['net'], v['cache'], v['empty'],
                     v['fail'], v['median_ms'], v['p95_ms'], v['credits']))
@@ -1152,44 +1182,58 @@ def daily_text(day=None):
         # печатается ВСЕГДА, даже нулём: молча пропавшая строка и «контекст везде
         # проставлен» - разные вещи (закон №16)
         L.append('  %-22s %7d %6s %5d %5d %6d %5d %8d %7d %9d'
-                 % ('БЕЗ СЦЕНЫ', 0, '-', 0, 0, 0, 0, 0, 0, 0))
+                 % (_noscene, 0, '-', 0, 0, 0, 0, 0, 0, 0))
     L.append('')
     _cpct = int(100.0 * s['cache'] / s['calls']) if s['calls'] else 0
-    L.append('Итого: запросов %d, по сети %d (кэш снял %d%%)' % (s['calls'], s['net'], _cpct))
-    L.append('Уникальных за сутки: %d' % s['users'])
-    L.append('Кредитов за сутки: %d (замером %d вызовов, по таблице %d)'
+    L.append(('Total: %d call(s), %d over the wire (cache took %d%%)' if en else
+              'Итого: запросов %d, по сети %d (кэш снял %d%%)')
+             % (s['calls'], s['net'], _cpct))
+    L.append(('Unique people today: %d' if en else 'Уникальных за сутки: %d') % s['users'])
+    L.append(('Credits today: %d (%d call(s) measured, %d from the price table)' if en else
+              'Кредитов за сутки: %d (замером %d вызовов, по таблице %d)')
              % (s['credits'], max(0, s['net'] - s['est_calls'] - s['unpriced']),
                 s['est_calls']))
     if s['unpriced']:
         # ЦЕНА НЕ ВЫДУМЫВАЕТСЯ. Строка «столько-то вызовов с неизвестной ценой» полезнее
         # красивой суммы из догадок: она называет, чего мы не знаем, и её закрывает один
         # взгляд в Usage Analytics.
-        L.append('ВЫЗОВОВ С НЕИЗВЕСТНОЙ ЦЕНОЙ: %d — в сумму выше они вошли НУЛЁМ. Цена этих '
-                 'эндпоинтов в докстрингах не написана; закрывается Usage Analytics.'
+        L.append(('CALLS WITH AN UNKNOWN PRICE: %d - they entered the total above as ZERO. '
+                  'The price of those endpoints is not written down anywhere; Usage Analytics '
+                  'closes the question.' if en else
+                  'ВЫЗОВОВ С НЕИЗВЕСТНОЙ ЦЕНОЙ: %d — в сумму выше они вошли НУЛЁМ. Цена этих '
+                  'эндпоинтов в докстрингах не написана; закрывается Usage Analytics.')
                  % s['unpriced'])
     if s['rem_last'] is not None:
-        L.append('Остаток по заголовку последнего ответа: %d' % s['rem_last'])
-    L.append('Латентность по всем вызовам: p95 %d мс' % s['p95_ms'])
+        L.append(('Remaining, per the last response header: %d' if en else
+                  'Остаток по заголовку последнего ответа: %d') % s['rem_last'])
+    L.append(('Latency across all calls: p95 %d ms' if en else
+              'Латентность по всем вызовам: p95 %d мс') % s['p95_ms'])
     if s['fail_codes']:
-        L.append('Сбоев: %d (%s)' % (s['fail'], ', '.join(
-            '%s: %d' % ('таймаут/сеть' if k == 0 else k, v)
+        L.append(('Failures: %d (%s)' if en else 'Сбоев: %d (%s)') % (s['fail'], ', '.join(
+            '%s: %d' % (('timeout/network' if en else 'таймаут/сеть') if k == 0 else k, v)
             for k, v in sorted(s['fail_codes'].items()))))
     else:
-        L.append('Сбоев: 0')
-    L.append('Честных отказов человеку: %d (%s)'
+        L.append('Failures: 0' if en else 'Сбоев: 0')
+    L.append(('Honest refusals shown to a person: %d (%s)' if en else
+              'Честных отказов человеку: %d (%s)')
              % (s['honest_refusals'],
                 ', '.join('%s: %d' % (k, v) for k, v in sorted(s['outcomes'].items())
                           if k in ('no_credits', 'rate_limited', 'timeout', 'http_error',
-                                   'bad_request', 'quota_user')) or 'ни одного'))
-    L.append('Пустых ответов при успешном запросе: %d' % s['empty'])
+                                   'bad_request', 'quota_user'))
+                or ('none' if en else 'ни одного')))
+    L.append(('Empty answers on a successful request: %d' if en else
+              'Пустых ответов при успешном запросе: %d') % s['empty'])
     if s['top_scene']:
-        L.append('Самый частый сценарий дня: %s'
-                 % ('БЕЗ СЦЕНЫ' if s['top_scene'] == '?' else s['top_scene']))
+        L.append(('Most frequent scene today: %s' if en else 'Самый частый сценарий дня: %s')
+                 % (_noscene if s['top_scene'] == '?' else s['top_scene']))
     if s['dearest']:
-        L.append('Самый дорогой запрос дня: %s (%s) — %d кредитов'
+        L.append(('Dearest call today: %s (%s) - %d credits' if en else
+                  'Самый дорогой запрос дня: %s (%s) — %d кредитов')
                  % (s['dearest']['scene'], s['dearest']['ep'], s['dearest']['credits']))
     if s['noscene']:
-        L.append('ВНИМАНИЕ: %d вызовов без сцены — где-то забыт контекст.' % s['noscene'])
+        L.append(('ATTENTION: %d call(s) with no scene - a context is missing somewhere.'
+                  if en else
+                  'ВНИМАНИЕ: %d вызовов без сцены — где-то забыт контекст.') % s['noscene'])
     return '\n'.join(L)
 
 

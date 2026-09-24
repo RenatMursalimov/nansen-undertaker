@@ -27,11 +27,17 @@ sequence is dominated by `git clone`. What you should see, top to bottom:
    load goes last and says so: last place is not "safer". Two sliders change the price window and
    the number of levels, and **↔ / ↕** redraws the same numbers in either orientation without a
    single new request; **💾 save image** writes the chart to a file;
-6. tab **➕ More** — the two signals that answer something the other screens cannot: who is buying on
-   a *schedule* (the only forward-looking signal in the set) and which chains hold and move the
-   money;
+6. tab **➕ More** — three signals that answer something the other screens cannot: what smart money
+   bought in the last day **as a share of the token's market cap** (the same \$50K means opposite
+   things in a \$2M token and a \$50B one), who is buying on a *schedule* (the only forward-looking
+   signal in the set, and it says so in words when every program in the response is already
+   executed), and which chains hold and move the money (when the response returns a zero change for
+   every chain, the screen says *not measured in this window* instead of printing eight calm zeroes);
 7. under every screen: source, freshness, cost in requests, the caveats, and the **exact sentence
-   the bot would say in chat**.
+   the bot would say in chat**;
+8. if a screen refuses, it names the outcome class **and the HTTP status** — 402, 429 and 502 call
+   for three different actions, and a person reading a phone should not have to open a server log to
+   tell them apart.
 
 `?rehearsal=1` reads `fixtures/*.json`. Those files carry `"provenance": "synthetic"`: the shape is
 real (it comes from the production formatters), the numbers are invented. That is stated in the file

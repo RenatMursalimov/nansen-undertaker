@@ -377,6 +377,46 @@ function esc(s) {
   return String(s === null || s === undefined ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+/* ═══ ПОДПИСИ ЦЕН: ОДНА ЕДИНИЦА НА ОСЬ, И ВСЕ РАЗНЫЕ ═══
+   ДВА ПРАВИЛА, И ВТОРОЕ СИЛЬНЕЕ:
+     1. одна единица на всю ось. ЖИВОЙ СКРИНШОТ ВЛАДЕЛЬЦА (ETH, 28 уровней): лестница шла
+        «$5.2K · $4.5K · … · $1.1K · $796.21» - у нижней строки единица другая, и её приходится
+        переводить в голове. Числа верные, но ось существует ради сравнения глазом;
+     2. разные уровни обязаны иметь РАЗНЫЕ подписи, иначе ось перестаёт быть шкалой (ровно тот
+        дефект, из-за которого в боте появился особый формат цены: «между $62K и $62K»).
+   Поэтому не фиксированный формат, а ПОИСК: первый по лестнице, при котором подписи различны.
+   Лестница и порядок - те же, что у бота (`oc_nansen_viz._axis_labels`); пара реализаций здесь
+   неизбежна (картинку в чат рисует бот, эту - страница), и тест сторожит обе. */
+function _axisUnit(hi) {
+  var a = Math.abs(hi || 0);
+  if (a >= 1e9) return { d: 1e9, s: 'B', p: 2 };
+  if (a >= 1e6) return { d: 1e6, s: 'M', p: 2 };
+  if (a >= 1e3) return { d: 1e3, s: 'K', p: 1 };
+  return null;
+}
+function axisLabels(vals) {
+  var i, mx = 0;
+  for (i = 0; i < vals.length; i++) { mx = Math.max(mx, Math.abs(Number(vals[i]) || 0)); }
+  var u = _axisUnit(mx), fns = [];
+  if (u) { fns.push(function (v) { return (v / u.d).toFixed(u.p) + u.s; }); }
+  fns.push(price);
+  [0, 1, 2, 4, 6].forEach(function (p) {
+    fns.push(function (v) { return Number(v || 0).toFixed(p); });
+  });
+  for (i = 0; i < fns.length; i++) {
+    var out = vals.map(fns[i]), seen = {}, dup = false, j;
+    for (j = 0; j < out.length; j++) {
+      if (seen[out[j]]) { dup = true; break; }
+      seen[out[j]] = 1;
+    }
+    if (!dup) return out;
+  }
+  return vals.map(price);
+}
+function pricePair(lo, hi) {
+  if (Number(lo) === Number(hi)) { return [price(lo), price(hi)]; }
+  return axisLabels([Number(lo), Number(hi)]);
+}
 /* ЦВЕТ ЧИТАЕТСЯ ИЗ CSS, А НЕ ДУБЛИРУЕТСЯ ШЕСТНАДЦАТИРИЧНЫМ ЧИСЛОМ В КОДЕ.
    ЗАЧЕМ ВООБЩЕ. Графики раньше красились через `fill="var(--long)"`, и на экране это работает.
    Но карту теперь можно СОХРАНИТЬ КАРТИНКОЙ (просьба владельца), а внутри отдельного файла
@@ -438,8 +478,13 @@ function footer(env) {
 function refuse(env) {
   /* СОСТОЯНИЕ, А НЕ ПУСТОЙ ГРАФИК. Шесть нулевых столбиков выглядят как измерение и врут
      сильнее, чем отсутствие картинки, поэтому при отказе рисуется ПРИЧИНА. */
+  /* КОД ОТВЕТА - НА ЭКРАНЕ, А НЕ В ЛОГЕ НА СЕРВЕРЕ. 402 (кончились кредиты), 429 (придержали по
+     частоте) и 502 (сбой у площадки) требуют РАЗНЫХ действий, и различает их одно число. Живой
+     случай владельца: экран острых денег отказал и предложил посмотреть код «в логе бота» - то
+     есть потребовал сервер от человека с телефоном в руках. */
+  var _code = (env.http_status === 0 || env.http_status) ? (' · HTTP ' + env.http_status) : '';
   return '<div class="card"><div class="warn bad"><b>' + esc(env.outcome || 'error')
-       + '</b><br>' + esc(plain(env.refusal || 'No reason given.')) + '</div>'
+       + esc(_code) + '</b><br>' + esc(plain(env.refusal || 'No reason given.')) + '</div>'
        + '<div class="dim">This is a state, not an empty chart: a blank graph would look '
        + 'like a measurement.</div></div>';
 }
@@ -576,6 +621,13 @@ function heroHTML(env) {
 
   var sides = p.by_side || {}, sk = Object.keys(sides);
   if (sk.length) {
+    /* СТОРОНЫ СЧИТАНЫ ПО ВСЕМ ТОП-ДЕРЖАТЕЛЯМ, А ЗАГОЛОВОК ВЫШЕ - ПО РАЗОБРАННЫМ. И это надо
+       сказать, а не оставить человеку арифметику: на живом скриншоте владельца сверху стояло
+       «Of $1.9K examined», а две плашки сторон давали в сумме $3.2K. Оба числа верные (сторон -
+       по десяти держателям, разбор истории - по пяти), но рядом они читаются как ошибка счёта.
+       Текст бота эту оговорку печатает («по всем топ-держателям»), а экран - не печатал. */
+    h += '<div class="dim" style="margin-top:6px">Across all ' + ((p.holders || []).length)
+       + ' top holders (the breakdown below examines ' + (env.top || 5) + '):</div>';
     h += '<div class="sides">';
     for (var s = 0; s < Math.min(sk.length, 3); s++) {
       h += '<div class="side"><b>' + esc(sk[s]) + '</b><br>$' + usd(sides[sk[s]]) + '</div>';
@@ -776,8 +828,19 @@ function sharpHTML(env) {
 
 function sharpRender() {
   var el = document.getElementById('scr_sharp');
+  /* ОБЪЯСНЕНИЕ ЭКРАНА ПРОСТЫМИ СЛОВАМИ - ПО ЖИВОМУ ЗАМЕЧАНИЮ ВЛАДЕЛЬЦА («Sharp Money пока
+     непонятно как работает»). Раньше здесь стоял только лозунг «цена говорит, во что верят, а
+     это - кто верит»: он объясняет ИДЕЮ, но не то, что человек видит. Нужны три вещи, которых
+     не было: что сравнивается, что значат две полосы и что делать дальше. */
   el.innerHTML = '<div class="card"><h1>Which heated market do the winners hold?</h1>'
     + '<div class="dim">Price says what people believe. This says who believes it.</div>'
+    + '<div class="help on" style="margin-top:8px">Four of the most traded prediction markets, '
+    + 'side by side. For each one the bot takes its biggest holders and looks up the <b>lifetime '
+    + 'record of every wallet</b>: the green bar is money held by wallets that were right more '
+    + 'often than not, the red bar is money held by wallets that were wrong more often. Rows are '
+    + 'ordered by <b>sharp dollars</b>, not by share — 90% of $300 is not a signal. Tap a row to '
+    + 'see who exactly holds it. This screen is the expensive one: one request per market plus '
+    + 'one per holder.</div>'
     + '</div>' + sharpHTML(SHARP.env);
   var mk = el.querySelectorAll('.mkrow[data-mk]');
   for (var j = 0; j < mk.length; j++) {
@@ -919,13 +982,14 @@ function liqSVG(p) {
     /* ЗАСЕЧЕК ТРИ, А НЕ ПЯТЬ: на пяти подписи вида «$748.04» и «$40.4K» наезжали друг на друга -
        видно на живом скриншоте. Три по краям и центру читаются всегда. */
     if (hi > lo) {
+      var _tk = axisLabels([lo, lo + (hi - lo) / 2.0, hi]);
       for (i = 0; i <= 2; i++) {
         var tx = padL + plotW * (i / 2.0), tv = lo + (hi - lo) * (i / 2.0);
         s += '<line x1="' + tx.toFixed(1) + '" y1="' + H + '" x2="' + tx.toFixed(1)
            + '" y2="' + (H + 3) + '" stroke="#4a2c82" stroke-width="0.8"/>'
            + '<text x="' + tx.toFixed(1) + '" y="' + (H + 13) + '" text-anchor="'
            + (i === 0 ? 'start' : (i === 2 ? 'end' : 'middle'))
-           + '" fill="#b4a3dd" font-size="8">$' + esc(price(tv)) + '</text>';
+           + '" fill="#b4a3dd" font-size="8">$' + esc(_tk[i]) + '</text>';
       }
     }
     if (mark !== null && hi > lo) {
@@ -962,6 +1026,11 @@ function liqSVG(p) {
      только теснит не рамка, а другое число. */
   var _mySlot = (mark !== null && hi > lo) ? ((hi - mark) / (hi - lo)) * n : null;
   var _myY = (_mySlot === null) ? null : (padTop + _mySlot * rowH);
+  /* ПОДПИСИ УРОВНЕЙ СЧИТАЮТСЯ СРАЗУ ВСЕ (см. `axisLabels`): единица выбирается по всей оси, а не
+     по каждому числу отдельно, иначе нижняя строка окажется в других единицах. */
+  var _lvl = [];
+  for (i = 0; i < n; i++) { _lvl.push((Number(b[i][0]) + Number(b[i][1])) / 2); }
+  _lvl = axisLabels(_lvl);
   s = SVG_OPEN + W + ' ' + Hh + '">'
     + '<rect x="0" y="0" width="' + W + '" height="' + Hh + '" fill="' + C_BG + '"/>';
   /* ОСЬ ДЕНЕГ - СВЕРХУ, ТРИ ЗАСЕЧКИ. Она же объясняет длину столбика. */
@@ -999,7 +1068,7 @@ function liqSVG(p) {
     if (rowH >= 9) {
       s += '<text x="' + (padLeftH - 4) + '" y="' + (yy + rowH / 2 + 2.6).toFixed(1)
          + '" text-anchor="end" fill="#b4a3dd" font-size="' + (rowH >= 11 ? 8 : 7)
-         + '">$' + esc(price((Number(b[i][0]) + Number(b[i][1])) / 2)) + '</text>';
+         + '">$' + esc(_lvl[i]) + '</text>';
     }
     /* СУММА СПРАВА ОТ СТОЛБИКА, БЕЗ ПОВОРОТА, И ТОЛЬКО ЕСЛИ ВЛЕЗАЕТ В ПРАВОЕ ПОЛЕ И НЕ
        СПОРИТ С ПОДПИСЬЮ ТЕКУЩЕЙ ЦЕНЫ (см. про спор выше). */
@@ -1140,8 +1209,9 @@ function liqHTML(env) {
      одновременно было нельзя. Порядок чтения теперь такой же, как порядок вопросов: сколько
      и где -> картинка -> из чего это сложено. */
   var top = p.top || [];
+  var _tp = pricePair(top[0], top[1]);
   h += '<p class="lead">Biggest cluster: <b>$' + usd(top[2]) + '</b> between $'
-     + price(top[0]) + ' and $' + price(top[1]) + '.</p>';
+     + _tp[0] + ' and $' + _tp[1] + '.</p>';
   var _under = '<div class="dim">On the map: $' + usd(p.total) + ' across ' + (p.shown || 0)
              + ' position(s) · longs $' + usd(p.longs) + ' vs shorts $' + usd(p.shorts)
              + '</div>';
@@ -1202,14 +1272,23 @@ function liqHTML(env) {
     }
     _pi = _bm;
   }
+  /* КОНЦЫ КОРЗИНЫ - ОДНОЙ ПАРОЙ (единица одна, подписи различимы), а «сколько из этого
+     именовано» - СЛОВОМ, когда именована вся корзина. ЖИВОЙ СКРИНШОТ ВЛАДЕЛЬЦА (LTC в группе):
+     строка читалась как «$930.2K between … · $930.2K of it named» - два одинаковых числа в одной
+     строке, и человек ищет между ними разницу, которой нет. Тот же случай уже лечили в подписи
+     карты и в борде; это ТРЕТЬЕ место, где та же величина печаталась дважды. */
+  var _dp = (_pi >= 0) ? pricePair(p.buckets[_pi][0], p.buckets[_pi][1]) : ['?', '?'];
+  var _dn = (_pi >= 0) ? Number(p.buckets[_pi][4] || 0) : 0;
+  var _dt = (_pi >= 0) ? Number(p.buckets[_pi][2] || 0) : 0;
   h += '<div class="det on" id="liqdet">'
      + (_pi >= 0
         ? ((LIQ.pick === _pi ? '' : 'densest level · ')
-           + '<b>$' + usd(p.buckets[_pi][2]) + '</b> between $' + price(p.buckets[_pi][0])
-           + ' and $' + price(p.buckets[_pi][1])
+           + '<b>$' + usd(_dt) + '</b> between $' + _dp[0] + ' and $' + _dp[1]
            + (p.buckets[_pi][3] ? ' · mostly ' + esc(p.buckets[_pi][3]) : '')
-           + (Number(p.buckets[_pi][4] || 0) > 0
-              ? ' · $' + usd(p.buckets[_pi][4]) + ' of it named'
+           + (_dn > 0
+              ? (_dn >= _dt * 0.999
+                 ? ' · every position in this bar is named'
+                 : ' · $' + usd(_dn) + ' of it named')
                 + (p.buckets[_pi][5] ? ', biggest ' + esc(p.buckets[_pi][5]) : '')
               : ' · no labelled wallet in this bar')
            + ' · <span class="dim">tap any bar to switch</span>')
@@ -1657,7 +1736,49 @@ function liqLoad(full) {
    ОБА СТОЯТ ОДИН ЗАПРОС, поэтому грузятся при открытии таба сами - в отличие от сравнения
    рынков, которое стоит 13-17 запросов и потому ждёт кнопки. Цена решает поведение, а не вкус.
    ═══════════════════════════════════════════════════════════════════════════ */
-var MORE = { dca: null, ch: null, busyD: false, busyC: false };
+var MORE = { dca: null, ch: null, tr: null, busyD: false, busyC: false, busyT: false };
+
+/* СДЕЛКИ SMART MONEY - ФЛАГМАНСКИЙ СИГНАЛ НАБОРА, И ДО СИХ ПОР ЕГО НЕ БЫЛО НИ НА ОДНОМ ТАБЕ.
+   ЖИВОЙ ВОПРОС ВЛАДЕЛЬЦА: «в More не нужно ещё фич приложить в холсте?». Нужно, и первым делом
+   именно эту: сцена `smart_trades` была зарегистрирована, у неё была фикстура и цена в шлюзе -
+   то есть она существовала целиком, кроме поверхности. Сцена без экрана - это работа, которую
+   никто не видит: ровно тот класс, который в этом проекте уже ловили на экранах, достижимых
+   только командой.
+   ГЛАВНОЕ ЧИСЛО СТРОКИ - ДОЛЯ ОТ КАПИТАЛИЗАЦИИ, А НЕ РАЗМЕР СДЕЛКИ. $50K в токене на $2M и
+   $50K в токене на $50B - разные события, и порог «меньше 0.1% не показываем» приезжает
+   числом из словаря, а не зашит здесь. */
+function tradesHTML(env) {
+  if (!env) return loading('Reading smart money trades…');
+  if (env.outcome !== 'ok' || !env.payload) return refuse(env);
+  var p = env.payload, rows = p.rows || [], i;
+  var h = '<div class="card"><h1>What smart money bought in the last day</h1>'
+        + '<div class="dim">The size of a buy says little on its own. The bar is the trade as a '
+        + '<b>share of the token\'s market cap</b>: shares below ' + esc(env.pct_min || 0.1)
+        + '% are not drawn, because at that size the buy moves nothing.</div>';
+  for (i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var pct = (r.pct_shown && r.pct_of_mcap !== null && r.pct_of_mcap !== undefined)
+              ? Number(r.pct_of_mcap) : null;
+    h += '<div class="mkrow"><div class="mkq">' + esc(r.who) + ' · <b>' + esc(r.sym) + '</b>'
+       + (r.chain ? ' <span class="dim">[' + esc(r.chain) + ']</span>' : '') + '</div>';
+    h += '<div class="mkmeta">'
+       + (r.usd === null || r.usd === undefined ? 'size not in the response' : ('$' + usd(r.usd)))
+       + (r.mcap === null || r.mcap === undefined ? ' · market cap not in the response'
+                                                 : (' · mcap $' + usd(r.mcap)))
+       + (pct === null ? '' : (' · <b>' + pct.toFixed(1) + '% of mcap</b>'))
+       + (r.age_days === null || r.age_days === undefined ? '' : (' · ' + r.age_days + 'd old'))
+       + '</div>';
+    if (pct !== null) {
+      h += '<div class="barwrap"><div class="bar" style="width:'
+         + Math.max(2, Math.min(100, Math.round(pct))) + '%;background:var(--nsn)"></div></div>';
+    }
+    h += '</div>';
+  }
+  h += '<div class="legend"><span><i style="background:var(--nsn)"></i>trade as a share of '
+     + 'market cap</span></div>';
+  h += footer(env) + '</div>';
+  return h;
+}
 
 function dcaHTML(env) {
   if (!env) return loading('Reading scheduled buying…');
@@ -1742,10 +1863,17 @@ function chainHTML(env) {
 }
 
 function moreRender() {
-  document.getElementById('scr_more').innerHTML = dcaHTML(MORE.dca) + chainHTML(MORE.ch);
+  document.getElementById('scr_more').innerHTML =
+    tradesHTML(MORE.tr) + dcaHTML(MORE.dca) + chainHTML(MORE.ch);
 }
 
 function moreLoad() {
+  if (!MORE.tr && !MORE.busyT) {
+    MORE.busyT = true;
+    askScene({ sc: 'smart_trades', lg: 'en' }, function (env) {
+      MORE.tr = env; MORE.busyT = false; showReh(env); moreRender();
+    });
+  }
   if (!MORE.dca && !MORE.busyD) {
     MORE.busyD = true;
     askScene({ sc: 'smart_dca', lg: 'en' }, function (env) {
@@ -1841,7 +1969,7 @@ function show(which) {
   if (which === 't_liq' && !LIQ.env && !LIQ.busy) liqLoad();
   /* ОБА ЭКРАНА ТАБА «ЕЩЁ» СТОЯТ ПО ОДНОМУ ЗАПРОСУ, поэтому грузятся сами и ровно один раз:
      `moreLoad` сам проверяет, что уже приехало. */
-  if (which === 't_more' && (!MORE.dca || !MORE.ch)) moreLoad();
+  if (which === 't_more' && (!MORE.dca || !MORE.ch || !MORE.tr)) moreLoad();
   /* СРАВНЕНИЕ РЫНКОВ САМО НЕ ЗАПУСКАЕТСЯ ПОВТОРНО: экран стоит 13-17 запросов, и обновлять
      его на каждое переключение таба значило бы жечь кредиты за перелистывание. */
   if (which === 't_sharp' && !SHARP.env && !SHARP.busy) sharpLoad();

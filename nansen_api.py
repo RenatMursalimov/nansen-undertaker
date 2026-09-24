@@ -3479,6 +3479,22 @@ SHARP_MARKETS_N = 4
 SHARP_HOLDERS = 3
 
 
+def _cut_word(t, n):
+    """Строку под предел, ОБРЕЗАЯ ПО СЛОВУ и ставя многоточие. -> str.
+
+    Отдельной функцией, потому что обрубок на полуслове («Xtreme Gamin») человек читает как
+    испорченные данные, а не как сокращение, - и это ловили дважды: на метках кошельков и на
+    именах исходов рынка.
+    """
+    t = ' '.join(str(t or '').split())
+    if len(t) <= n:
+        return t
+    cut = t[:n]
+    if ' ' in cut[4:]:
+        cut = cut[:cut.rfind(' ')]
+    return cut.rstrip(' ,;:-"\'') + '…'
+
+
 def pm_holder_side(row):
     """Сторону держателя - словом. -> str ('Yes'/'No'/имя исхода/'?').
 
@@ -3494,7 +3510,13 @@ def pm_holder_side(row):
             return 'Yes' if int(i) == 0 else 'No'
         except (TypeError, ValueError):
             return '?'
-    return str(v)[:12]
+    # ОБРЕЗАЕМ ПО ГРАНИЦЕ СЛОВА И СО МНОГОТОЧИЕМ, А НЕ ПО СИМВОЛУ.
+    # ЖИВОЙ СКРИНШОТ ВЛАДЕЛЬЦА: сторона спортивного рынка печаталась как «Xtreme Gamin» - обрубок
+    # на полуслове читается как ИСПОРЧЕННЫЕ ДАННЫЕ, а не как сокращение, и человек начинает искать
+    # ошибку там, где её нет. У имён исходов Polymarket длина любая («Xtreme Gaming», «Team
+    # Nemesis», «No change in rates»), поэтому предел подняли и режем словами: многоточие говорит
+    # «здесь обрезали мы». Тот же приём уже стоит на метках кошельков (`_label_clean` в viz).
+    return _cut_word(str(v), 18)
 
 
 def pm_reputation(market_id, top=PM_REP_TOP):

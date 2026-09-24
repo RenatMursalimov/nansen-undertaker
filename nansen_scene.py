@@ -103,6 +103,16 @@ def _envelope(scene, payload, outcome, lang='ru', cost_requests=0, cost_credits=
     }
     if outcome != 'ok':
         env['refusal'] = _n().refusal(outcome, env['lang'], what=refusal_what)
+        # КОД ОТВЕТА ЕДЕТ В КОНВЕРТЕ, А НЕ ОСТАЁТСЯ В ЛОГЕ НА СЕРВЕРЕ. 402, 429 и 502 - три
+        # разных действия человека (кредиты / подождать / это не мы), и различает их одно число.
+        # Прежний текст отказа предлагал посмотреть код «в логе бота», то есть требовал доступа к
+        # серверу от того, кто смотрит экран в телефоне.
+        try:
+            _code = _tele().http_code()
+            if _code:
+                env['http_status'] = int(_code)
+        except Exception as e:                    # noqa: BLE001
+            print('[nansen_scene] код ответа не прочитался: %s' % str(e)[:80])
     if extra:
         env.update(extra)
     return env

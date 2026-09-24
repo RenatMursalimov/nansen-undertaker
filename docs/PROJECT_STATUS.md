@@ -22,8 +22,8 @@
 | 1,000-call eligibility | ✅ Threshold exceeded | Nansen screenshot: **5,484 used on Sep 20**, 13,850 total in 30D |
 | Meaningful corpus | ✅ Complete | 1,050 network calls, hard cap, 0 cache hits, 1,048 latest cells |
 | Primary/backup preflight | ✅ Complete | both live smoke runs PASS |
-| Recording | ⏳ Not recorded | 110-second shot list with narration, English voiceover tool (`tools/nansen_voiceover.py`), plus the older silent 52s runbook |
-| X thread | ⏳ Not published | six posts prepared; add final video URL/call count |
+| Recording | ✅ Published | 3-minute live walkthrough: https://x.com/Rencrypta/status/2103016647061656017 · running order + transcript in [`VIDEO.md`](VIDEO.md) · the 110-second scripted cut remains available for a tighter second take |
+| X post | ✅ Published | same link; the thread draft in `submission/X_THREAD.md` can still be expanded around it |
 | Official entry form | ⏳ Not submitted | submit by Sep 26 if possible |
 | Social preview | ⏳ Image prepared, manual upload required | `assets/social-preview.png`, GitHub Settings upload |
 | GitHub Wiki | ⏳ Source prepared, first page must be initialized | see Wiki section below |
@@ -121,8 +121,8 @@ last of them removed a UX defect the owner had reported **twice**.
 From here the freeze holds, and the remaining work is packaging:
 
 1. crop/save Usage Analytics proof;
-2. record the demo (110-second shot list in [`VIDEO_SCRIPT.md`](VIDEO_SCRIPT.md), narration
-   rendered by `tools/nansen_voiceover.py --run`);
+2. ~~record the demo~~ — **done**, published 23 Sep: see [`VIDEO.md`](VIDEO.md). A tighter
+   110-second cut per [`VIDEO_SCRIPT.md`](VIDEO_SCRIPT.md) is optional, not required;
 3. upload social preview;
 4. publish X thread;
 5. submit official form and save confirmation.
