@@ -46,9 +46,9 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [💼 Wallet portfolio per Nansen data](#balance) | `nansen balance 0x…` | 🧠 Nansen → 🔎 Wallet and token → 💼 Wallet portfolio | 💬 | price not named in the official list |
 | [🎲 Trending Polymarket markets with market_id](#pmmarkets) | `polymarket markets` | 🧠 Nansen → 🎲 Polymarket → 🎲 Trending markets | 💬 | price not named in the official list |
 | [🎲 The card of one Polymarket market](#pmcard) | `polymarket market 654412` | 🎲 Trending markets → the button carrying the question<br>mini app: 🎭 Whose % → 📲 open in the bot | 💬 | price not named in the official list · 0 requests on a warm list |
-| [📈 Market probability chart over time](#pmchart) | `polymarket chart 654412` | markets list → 📈 N | 💬 | price not named in the official list |
-| [📖 Polymarket order book](#pmbook) | `polymarket orderbook 654412` | markets list → 📖 N | 💬 | price not named in the official list |
-| [🎭 Who holds the market and how they guessed before](#pmrep) | `market reputation 654412`<br>`who holds market 654412` | markets list → 🎭 N | 💬 | 6 requests (holders + lifetime history of each of the five) |
+| [📈 Market probability chart over time](#pmchart) | `polymarket chart 654412` | market card → 📈 Probability | 💬 | price not named in the official list |
+| [📖 Polymarket order book](#pmbook) | `polymarket orderbook 654412` | market card → 📖 Orderbook | 💬 | price not named in the official list |
+| [🎭 Who holds the market and how they guessed before](#pmrep) | `market reputation 654412`<br>`who holds market 654412` | market card → 🎭 Who holds it | 💬 | 6 requests (holders + lifetime history of each of the five) |
 | [🎰 Polymarket trader profile](#pmwallet) | `polymarket profile 0x…` | 🎲 Polymarket → 🎰 Trader profile | 💬 | 2 requests |
 | [🏆 Top traders of a specific market](#pmleaders) | `market leaders 654412` | 🎲 Polymarket → 🏆 Market leaders | 💬 | price not named in the official list |
 | [🔍 Free-form question to the Nansen agent](#agent) | — | exchange card → 🔍 Nansen<br>a question in DM or chat | 💬 👥🔘 👥🤖 | 200 credits (fast) or 750 (expert) — the MOST expensive path |
@@ -504,7 +504,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 📈 Market probability chart over time
 
 **Say to the bot:** `polymarket chart 654412`
-**By button:** markets list → 📈 N
+**By button:** market card → 📈 Probability
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
 **What you get:** an image: how the probability changed, the 50% line separating "more likely yes" from "more likely no"
@@ -528,7 +528,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 📖 Polymarket order book
 
 **Say to the bot:** `polymarket orderbook 654412`
-**By button:** markets list → 📖 N
+**By button:** market card → 📖 Orderbook
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
 **What you get:** order levels by side and a depth line
@@ -552,7 +552,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 ## 🎭 Who holds the market and how they guessed before
 
 **Say to the bot:** `market reputation 654412` · `who holds market 654412`
-**By button:** markets list → 🎭 N
+**By button:** market card → 🎭 Who holds it
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 **In the mini-app:** a screen of its own — it renders this same dictionary, so the chart cannot drift from the sentence.
 

@@ -309,19 +309,33 @@ function localFixture(scene, done) {
    Пусто (репетиция, старый конверт) - кнопки перехода нет вовсе, а не ведёт в никуда. */
 var BOTUN = '';
 
-/* ПЕРЕХОД В БОТА ОДНОЙ ФУНКЦИЕЙ. -> true, если ушли.
-   `openTelegramLink` закрывает мини-апп и открывает чат с ботом, передав ему payload - то есть
-   человек ПОПАДАЕТ на карточку, а не получает сообщение, которого не видит из холста.
-   Оболочки без этого метода (обычный браузер у судьи) получают обычный переход по ссылке: экран
-   обязан работать и там, иначе публичная страница выжимки станет наполовину мёртвой. */
-function openInBot(payload) {
-  if (!BOTUN) { return false; }
-  var url = 'https://t.me/' + BOTUN + '?start=' + encodeURIComponent(payload);
-  try {
-    if (TG && TG.openTelegramLink) { TG.openTelegramLink(url); return true; }
-  } catch (e) {}
-  try { window.open(url, '_blank'); return true; } catch (e2) {}
-  return false;
+/* ═══ ПЕРЕХОД В БОТА: ОДНА ДВЕРЬ НА ВСЕ ТРИ ПРЕДМЕТА (токен, рынок, кошелёк) ═══
+   ЗДЕСЬ БЫЛА ССЫЛКА-ПЕРЕХОД, И ОНА НЕ РАБОТАЛА. Первая редакция открывала оболочкой адрес
+   `t.me/<бот>?start=…`. Живой прогон владельца: «Кнопочки Open in the bot, Open на Холсте не
+   открывают в Гробовщике ничего». Причина в оболочке, а не у нас: ссылка ведёт в чат ТОГО ЖЕ
+   бота, чей мини-апп открыт, и Telegram такой переход не выполняет - для него это «уже здесь».
+   Проверить это со стороны страницы нельзя: метод не возвращает ничего, и отказ оболочки
+   выглядит как исправный вызов. Поэтому кнопка, которая «иногда ничего не делает», заменена на
+   ту механику, которая в этом проекте УЖЕ проверена живьём - «попроси бота» (так работает
+   отправка карты ликвидаций картинкой в чат).
+   ПРАВИЛО ЗДЕСЬ ОДНО: страница НИКОГДА не обещает успех заранее, а пишет, что ответил бот, и
+   ГДЕ искать результат. */
+function askBotCard(fields, noteFn, okText) {
+  if (REHEARSAL) {
+    noteFn('Rehearsal mode: nothing is sent. In live mode the bot posts this card in your chat'
+           + (BOTUN ? (' with @' + BOTUN) : '') + '.');
+    return;
+  }
+  noteFn('Asking the bot…');
+  askScene(fields, function (env) {
+    if (env && env.outcome === 'ok') {
+      noteFn(okText + ' — look in your chat'
+             + (BOTUN ? (' with @' + BOTUN) : ' with the bot') + '.');
+    } else {
+      noteFn('The bot did not open it: '
+             + plain((env && env.refusal) || 'no reason given'));
+    }
+  });
 }
 
 function askScene(fields, done) {
@@ -532,7 +546,7 @@ var HERO = { market: (qp('market') || qp('mk') || ''), env: null, open: -1, list
                 взять у УЖЕ ОТКРЫТОЙ карточки. Живое замечание владельца: «я смотрю опять
                 идентификатор маркет заставляешь искать юзера». Отдельный таб неизбежно снова
                 спрашивал бы номер, потому что при входе в него рынок не выбран. */
-             pos: null, posOn: false, posBusy: false };
+             pos: null, posOn: false, posBusy: false, msg: '' };
 
 /* СБРОС РАЗБОРА ПРИ СМЕНЕ РЫНКА - ОДНОЙ ФУНКЦИЕЙ, А НЕ ТРЕМЯ КОПИЯМИ. В hero приходят из трёх
    мест (список рынков, экран острых денег, кнопка «назад»), и забыть обнулить один экран из
@@ -540,6 +554,9 @@ var HERO = { market: (qp('market') || qp('mk') || ''), env: null, open: -1, list
    сбрасывается в нескольких местах, и одно из них однажды отстаёт. */
 function heroReset() {
   HERO.env = null; HERO.open = -1; HERO.pos = null; HERO.posOn = false;
+  /* СТРОКА СТАТУСА СБРАСЫВАЕТСЯ ВМЕСТЕ С РЫНКОМ: «отправил карточку» под НОВЫМ рынком - это
+     сообщение про предыдущий, то есть ложь ровно того вида, которую мы ловим у флагов. */
+  HERO.msg = '';
 }
 
 function posHTML(env) {
@@ -570,7 +587,18 @@ function posHTML(env) {
        + (r.entry !== null && r.entry !== undefined && r.px !== null && r.px !== undefined
           ? (' · entry ' + Math.round(r.entry) + '¢ → ' + Math.round(r.px) + '¢') : '')
        + (r.open_usd ? (' · open $' + usd(r.open_usd)) : '')
-       + '</div></div>';
+       + '</div>'
+       /* ТОТ ЖЕ ВЫХОД, ЧТО У ДЕРЖАТЕЛЕЙ ВЫШЕ. Список «кто в рынке и с каким PnL» - такой же
+          тупик: видно, что кошелёк в плюсе на $128K, и нельзя ни посмотреть его, ни поставить
+          на отслеживание. Механика та же (просим бота), а вот СПИСОК другой - здесь строки
+          `position-detail`, а не топ-держатели, - поэтому в просьбе едет метка `p`: бот обязан
+          перечитать ИМЕННО ТОТ список, из которого человек тапнул, иначе номер строки укажет
+          на другого человека. */
+       + '<div class="btns" style="margin:4px 0 0"><span class="btn" data-pos="' + i
+       + '" data-psh="' + esc(String(r.who || '').replace(/[^0-9a-zA-Z]/g, '').slice(0, 6))
+       + '">📲 open this wallet in the bot</span></div>'
+       + '<div id="pn' + i + '"></div>'
+       + '</div>';
   }
   /* ИТОГ - ВЕЛИЧИНОЙ, И СЧИТАЕТ ЕГО БОТ. Страница печатает `net_pnl` из словаря: сложи она
      сама, и «в сумме» в чате разошлось бы с «в сумме» на картинке. */
@@ -688,6 +716,20 @@ function heroHTML(env) {
           ? ' · entry ' + Math.round(x.entry * 100) + '¢ → ' + Math.round(x.px * 100) + '¢'
           : '')
        + (x.status && x.status !== 'ok' ? ' · ' + esc(x.status) : '')
+       /* ═══ ВЫХОД ИЗ СТРОКИ ДЕРЖАТЕЛЯ В БОТА ═══
+          ЖИВОЕ ЗАМЕЧАНИЕ ВЛАДЕЛЬЦА: «номер кошельков холдеров с винрейтом можно раскрыть,
+          только увидеть строчку, но нельзя зайти в него в бот чтобы начать сразу отслеживать
+          в Гробовщике или этот номер себе на отслежку поставить». Верно: винрейт и PnL мы
+          печатаем, а сам кошелёк был тупиком - полного адреса на странице НЕТ НАРОЧНО (он не
+          уезжает в браузер), значит и скопировать его отсюда нельзя даже вручную.
+          ПОЭТОМУ АДРЕС НЕ ПОКАЗЫВАЕМ, А ПРОСИМ БОТА ОТКРЫТЬ КАРТОЧКУ СЧЁТА: в ней и полный
+          адрес, и метки, и отслеживание. Наверх едет НОМЕР СТРОКИ и первые символы обрезка -
+          по ним бот сверяет, что открывает того самого держателя, а не соседа (список мог
+          перечитаться). Ни одного полного адреса в браузере при этом не появляется. */
+       + '<div class="btns" style="margin:6px 0 2px"><span class="btn" data-hold="' + i
+       + '" data-hsh="' + esc(String(x.who || '').replace(/[^0-9a-zA-Z]/g, '').slice(0, 6))
+       + '">📲 open this wallet in the bot</span></div>'
+       + '<div id="hn' + i + '"></div>'
        + '</div>';
   }
   var thrUp2 = env.threshold_strong_wr || 60;
@@ -725,6 +767,21 @@ function marketsHTML() {
   return h;
 }
 
+/* СТРОКА СТАТУСА ЭКРАНА РЫНКА. Отдельная от строки таба More нарочно: ответ обязан появляться
+   ТАМ, ГДЕ НАЖАЛИ. Одна общая строка внизу страницы - это ответ не туда, и человек читает
+   «ничего не произошло» (ровно так и прочитал владелец). */
+function heroNote(t) {
+  HERO.msg = String(t || '');
+  var el = document.getElementById('mkbotnote');
+  if (el) { el.innerHTML = HERO.msg ? '<div class="warn">' + esc(HERO.msg) + '</div>' : ''; }
+}
+
+/* СТРОКА СТАТУСА У КОНКРЕТНОГО ДЕРЖАТЕЛЯ: своя на каждую строку. */
+function holderNote(i, t) {
+  var el = document.getElementById('hn' + i);
+  if (el) { el.innerHTML = t ? '<div class="warn">' + esc(String(t)) + '</div>' : ''; }
+}
+
 function heroRender() {
   var el = document.getElementById('scr_hero');
   /* ЗАГОЛОВОК НЕ НАЗЫВАЕТ ЧИСЕЛ, КОТОРЫХ НЕ МЕРИЛ. Тут стояло «A market says 90% YES»
@@ -751,13 +808,10 @@ function heroRender() {
              карточка Полимаркет маркета внутри Гробовщика». Холст отвечал на один вопрос (чьи
              деньги за ценой) и заканчивался, хотя по ЭТОМУ ЖЕ рынку в боте есть ещё четыре
              экрана: вероятность во времени, стакан, кто держит, кто в нём сейчас.
-             ВЕДЁМ DEEP-LINK'ОМ, А НЕ СООБЩЕНИЕМ В ЧАТ: `openTelegramLink` закрывает мини-апп и
-             ОТКРЫВАЕТ БОТА на карточке - человек попадает туда, куда просил. Сообщение в чат он
-             бы не увидел, стоя в полноэкранном холсте. Идентификатор рынка служебный и
-             публичный, поэтому едет в payload ссылки прямо (в отличие от адресов).
-             Нет имени бота (репетиция) - кнопки нет: ссылка в никуда хуже отсутствия кнопки. */
-          + (BOTUN ? ('<span class="btn" id="mkbot">📲 open in the bot</span>') : '')
-          + '</div>')
+             ПРОСИМ БОТА, А НЕ ВЕДЁМ ССЫЛКОЙ - почему именно так, написано у `askBotCard`:
+             ссылка на самого себя оболочкой не выполняется, и страница этого не видит. */
+          + '<span class="btn" id="mkbot">📲 open this market in the bot</span>'
+          + '</div><div id="mkbotnote"></div>')
        : '')
     + '</div>';
   // НИ ОДНОГО «Asking Nansen…» БЕЗ ЗАПРОСА. Раньше пустой экран показывал строку загрузки,
@@ -782,7 +836,8 @@ function heroRender() {
   var mb = document.getElementById('mkbot');
   if (mb) {
     mb.onclick = function () {
-      openInBot('pmid_' + HERO.market);
+      askBotCard({ sc: 'pm_card', mk: HERO.market, lg: 'en' }, heroNote,
+                 'Sent the market card');
     };
   }
   var mk = el.querySelectorAll('.mkrow[data-mk]');
@@ -809,6 +864,38 @@ function heroRender() {
         if (d && HERO.open === n) d.className = 'det on';
       };
     })(i);
+  }
+  /* КНОПКА ВНУТРИ РАСКРЫТОЙ ДЕТАЛИ НЕ ДОЛЖНА ЗАКРЫВАТЬ ДЕТАЛЬ: тап по ней всплыл бы до
+     строки-переключателя, деталь свернулась бы, и человек увидел бы «кнопка закрыла экран»
+     вместо ответа. Поэтому всплытие останавливаем явно. */
+  var pb2 = el.querySelectorAll('.btn[data-pos]');
+  for (var q = 0; q < pb2.length; q++) {
+    pb2[q].onclick = (function (n, sh) {
+      return function (ev) {
+        if (ev && ev.stopPropagation) { ev.stopPropagation(); }
+        askBotCard({ sc: 'holder_card',
+                     mk: HERO.market + '-p' + (n + 1) + '-' + sh, lg: 'en' },
+                   function (t) {
+                     var e2 = document.getElementById('pn' + n);
+                     if (e2) {
+                       e2.innerHTML = t ? '<div class="warn">' + esc(String(t)) + '</div>' : '';
+                     }
+                   },
+                   'Sent the account card');
+      };
+    })(Number(pb2[q].getAttribute('data-pos')), pb2[q].getAttribute('data-psh') || '');
+  }
+  var hb = el.querySelectorAll('.btn[data-hold]');
+  for (var j = 0; j < hb.length; j++) {
+    hb[j].onclick = (function (n, sh) {
+      return function (ev) {
+        if (ev && ev.stopPropagation) { ev.stopPropagation(); }
+        askBotCard({ sc: 'holder_card',
+                     mk: HERO.market + '-h' + (n + 1) + '-' + sh, lg: 'en' },
+                   function (t) { holderNote(n, t); },
+                   'Sent the account card');
+      };
+    })(Number(hb[j].getAttribute('data-hold')), hb[j].getAttribute('data-hsh') || '');
   }
 }
 
@@ -1813,25 +1900,18 @@ function tokAskable(sym) {
    видит на экране, - а контракт находит бот в ТОМ ЖЕ списке сделок (кэш-хит, без второго
    запроса). Контракт при этом печатается КОПИРУЕМЫМ в карточке бота, то есть вторая половина
    просьбы («ни контракт скопировать») тоже закрыта - просто не в браузере. */
-function moreTok(sym) {
+function moreTok(sym, i) {
+  var note = function (t) {
+    var el = document.getElementById('tn' + i);
+    if (el) { el.innerHTML = t ? '<div class="warn">' + esc(String(t)) + '</div>' : ''; }
+    else { moreNote(t); }
+  };
   if (!tokAskable(sym)) {
-    moreNote('This row has no plain ticker, so there is nothing to look up by.');
+    note('This row has no plain ticker, so there is nothing to look up by.');
     return;
   }
-  if (REHEARSAL) {
-    moreNote('Rehearsal mode: nothing is sent. In live mode the bot posts the ' + sym
-             + ' card in your chat — contract, chart, holders, and the buttons that go deeper.');
-    return;
-  }
-  moreNote('Asking the bot for the ' + sym + ' card…');
-  askScene({ sc: 'tok_card', tk: sym, lg: 'en' }, function (env) {
-    if (env && env.outcome === 'ok') {
-      moreNote('Sent. The ' + sym + ' card is in your chat with the bot: the contract is there '
-               + 'to copy, and its buttons continue the breakdown.');
-    } else {
-      moreNote('The bot could not open it: ' + plain((env && env.refusal) || 'no reason given'));
-    }
-  });
+  askBotCard({ sc: 'tok_card', tk: sym, lg: 'en' }, note,
+             'Sent the ' + sym + ' card (contract inside, ready to copy)');
 }
 
 /* СДЕЛКИ SMART MONEY - ФЛАГМАНСКИЙ СИГНАЛ НАБОРА, И ДО СИХ ПОР ЕГО НЕ БЫЛО НИ НА ОДНОМ ТАБЕ.
@@ -1869,10 +1949,13 @@ function tradesHTML(env) {
          + Math.max(2, Math.min(100, Math.round(pct))) + '%;background:var(--nsn)"></div></div>';
     }
     /* СТРОКА БОЛЬШЕ НЕ ТУПИК. Кнопка есть только там, где по чему спрашивать - у строки с
-       обычным тикером; у остальных её нет, и это сказано словом, а не пустым местом. */
+       обычным тикером; у остальных её нет, и это сказано словом, а не пустым местом.
+       СТРОКА СТАТУСА - СВОЯ У КАЖДОЙ КНОПКИ. Одна общая внизу карточки уже подвела: владелец
+       тапнул кнопку в середине списка, ответ появился вне экрана, и вывод был «не работает». */
     if (tokAskable(r.sym)) {
       h += '<div class="btns" style="margin:4px 0 2px"><span class="btn" data-tok="'
-         + esc(r.sym) + '">📲 open ' + esc(r.sym) + ' in the bot</span></div>';
+         + esc(r.sym) + '">📲 open ' + esc(r.sym) + ' in the bot</span></div>'
+         + '<div id="tn' + i + '"></div>';
     } else {
       h += '<div class="dim" style="margin:4px 0 2px">No plain ticker in this row — the bot '
          + 'cannot be asked for its card by name.</div>';
@@ -1975,9 +2058,15 @@ function moreRender() {
      привязанная один раз при загрузке, после первого же ответа перестала бы работать молча. */
   var bs = el.querySelectorAll('.btn[data-tok]');
   for (var i = 0; i < bs.length; i++) {
-    bs[i].onclick = (function (sym) {
-      return function () { moreTok(sym); };
-    })(bs[i].getAttribute('data-tok'));
+    bs[i].onclick = (function (sym, node) {
+      /* НОМЕР СТРОКИ БЕРЁМ ИЗ ID СОСЕДНЕЙ СТРОКИ СТАТУСА, а не из порядка кнопок: у части
+         строк кнопки нет вовсе (нет обычного тикера), и счётчик кнопок разошёлся бы с
+         номерами строк - ответ ушёл бы к чужой строке. */
+      var nid = (node.parentNode && node.parentNode.nextSibling
+                 && node.parentNode.nextSibling.id) || '';
+      var n = nid.replace('tn', '');
+      return function () { moreTok(sym, n); };
+    })(bs[i].getAttribute('data-tok'), bs[i]);
   }
   moreNote(MORE.msg);
 }

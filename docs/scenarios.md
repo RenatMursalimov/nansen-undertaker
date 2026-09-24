@@ -149,16 +149,26 @@ and self-explanatory.
 ```
 🎲 Trending Polymarket markets (24h volume):
 1. Will the Fed cut rates in September? · 68% · vol24 $4.10M
-   654412
 2. Government shutdown before October? · 31% · vol24 $1.882M
-   654987
 ...
-Trader breakdown: «polymarket profile 0x…».
+Tap a market below — I will open its card: price, volume, the id the commands take, and four
+breakdowns of that market.
+
+[1. Will the Fed cut rates in September?]
+[2. Government shutdown before October?]
 ```
 
 **Why.** A separate category of Nansen data that almost nobody in the chat knows. Price-as-
-probability is the most vivid way to explain what a prediction market is. The copyable
-`market_id` under each row is what makes the next three screens reachable.
+probability is the most vivid way to explain what a prediction market is.
+
+**What changed on 27 Sep, and why.** This list used to print the `market_id` under every row and
+carry a grid of numbered buttons (`📈 3 / 📖 3 / 🎭 3 / 🧾 3`) — forty buttons under ten rows. Both
+halves put service values on the reader: the id is needed by *commands*, not by a person reading
+a list, and picking `3` required remembering that three was the third row of text above. Now
+there is one button per market carrying the question itself, and it opens the card of that
+market, where the id is printed to be copied and the four breakdowns are labelled with words.
+The list is shorter (six markets) for a reason: every row shown now has a button, whereas rows
+6–10 used to have none at all.
 
 ---
 
@@ -187,8 +197,8 @@ money. A good teaching scenario, and it is effectively free for the person.
 - **Ask:** `market leaders <market_id>`
 - **Price:** **not measured**. Endpoint `prediction-market/pnl-by-market`
 - **Code:** `oc_dm.py:1447`, formatter `nansen_api.py:1578`
-- **The `market_id` now comes from scenario 6**, which prints it under each market — the chain
-  that used to be broken is closed.
+- **The `market_id` now comes from the market card** (scenario 6 → tap the market), which prints
+  it as a copyable line — the chain that used to be broken is closed.
 
 ```
 🏆 Market top traders
@@ -206,8 +216,10 @@ Will the Fed cut rates in September?:
 1. **A source and freshness label in each answer.** Format: `per Nansen, captured 14 minutes
    ago` — or `captured just now` if the request went out to the network. (Delivered: every
    screen now ends with a `Source: Nansen` line via `with_source`.)
-2. **Buttons for scenarios 7 and 8**, and `market_id` in the output of scenario 6. (Delivered:
-   the `🎭 N`/`📈 N`/`📖 N` buttons under the markets list, and the id printed per row.)
+2. **Buttons for scenarios 7 and 8**, and a reachable `market_id`. (Delivered: one button per
+   market under the list, and on the market card the four breakdowns plus the id printed to be
+   copied. The first delivery was a grid of numbered buttons with the id under every row; it was
+   replaced on 27 Sep because both halves made the reader carry a service value.)
 3. **An honest refusal instead of "no data"** (A3-2, A3-3). Separately and mandatorily —
    "out of credits": during the contest that is the most likely refusal.
 4. **Help.** By law 25, whatever is not in help does not exist for the user.
@@ -408,11 +420,12 @@ bars look like a measurement and lie harder than the absence of an image.
 
 **What to type:** `polymarket chart 654412`
 
-**Or by button:** `📈 N` under the markets list, where N is the market's number in the list.
+**Or by button:** `📈 Probability` on the market card (`polymarket markets` → tap the market).
 
-**Where to get the market_id:** it is printed as a copyable line under each market in the
-`polymarket markets` list. Earlier the hint promised "from the market screener", and the
-screener did not print the id at all — the command existed only formally.
+**Where to get the market_id:** it is printed as a copyable line on the market card. Earlier the
+hint promised "from the market screener", and the screener did not print the id at all — the
+command existed only formally. Then the screener printed it under every row, which made the list
+technical to read; now it lives one tap deeper, where it is needed.
 
 **Comes back:** a photo — how the probability changed over 72 hours, the 50% line separating
 "more likely yes" from "more likely no", the caption with the current value and the shift in
@@ -428,7 +441,7 @@ nothing.
 
 **What to type:** `market reputation 654412` (or `who holds market 654412`)
 
-**Or by button:** `🎭 N` under the markets list.
+**Or by button:** `🎭 Who holds it` on the market card.
 
 **Comes back** (`nansen_api.py:pm_reputation_block`):
 ```

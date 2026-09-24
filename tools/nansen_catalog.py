@@ -241,7 +241,7 @@ SCENARIOS = [
              'breakdowns of that market - reachable from the list, from the mini app, or by '
              'command.'},
     {'id': 'pmchart', 'title': '📈 График вероятности рынка во времени',
-     'cmds': ['полимаркет график 654412'], 'btns': ['список рынков → 📈 N'],
+     'cmds': ['полимаркет график 654412'], 'btns': ['карточка рынка → 📈 Вероятность'],
      'eps': ['prediction-market/ohlcv'], 'scene': 'pm_chart', 'menu': 'pm_chart',
      'price': 'цена не названа в официальном списке',
      'gives': 'картинку: как менялась вероятность, линия 50% отделяет «скорее да» от «скорее '
@@ -251,7 +251,7 @@ SCENARIOS = [
      'hook': '45% after 20% and 45% after 70% are opposite stories. One number cannot tell '
              'them apart, so we draw the path.'},
     {'id': 'pmbook', 'title': '📖 Стакан рынка Polymarket',
-     'cmds': ['полимаркет стакан 654412'], 'btns': ['список рынков → 📖 N'],
+     'cmds': ['полимаркет стакан 654412'], 'btns': ['карточка рынка → 📖 Стакан'],
      'eps': ['prediction-market/orderbook'], 'scene': 'pm_orderbook', 'menu': 'pm_book',
      'price': 'цена не названа в официальном списке',
      'gives': 'уровни заявок по сторонам и строку глубины',
@@ -262,7 +262,7 @@ SCENARIOS = [
     {'id': 'pmrep', 'app': True, 'title': '🎭 Кто держит рынок и как угадывал раньше',
      'cmds': ['репутация рынка 654412', 'кто держит рынок 654412',
               'market reputation 654412', 'who holds market 654412'],
-     'btns': ['список рынков → 🎭 N'],
+     'btns': ['карточка рынка → 🎭 Кто держит'],
      'eps': ['prediction-market/top-holders', 'prediction-market/address-summary'],
      'scene': 'pm_reputation', 'menu': 'pm_rep',
      'price': '6 запросов (держатели + лайфтайм-история каждого из пяти)',
@@ -547,14 +547,14 @@ _EN = {
                            'market_id; three rows of buttons under the list',
                   'why': 'without printing the market_id three neighbouring screens existed '
                          'only formally: there was nothing to call them with'},
-    'pmchart': {'cmds': ['polymarket chart 654412'], 'btns': ['markets list → 📈 N'],
+    'pmchart': {'cmds': ['polymarket chart 654412'], 'btns': ['market card → 📈 Probability'],
                 'title': '📈 Market probability chart over time',
                 'price': 'price not named in the official list',
                 'gives': 'an image: how the probability changed, the 50% line separating "more '
                          'likely yes" from "more likely no"',
                 'why': '45% after 20% and 45% after 70% are opposite stories, and one number '
                        'cannot tell them apart'},
-    'pmbook': {'cmds': ['polymarket orderbook 654412'], 'btns': ['markets list → 📖 N'],
+    'pmbook': {'cmds': ['polymarket orderbook 654412'], 'btns': ['market card → 📖 Orderbook'],
                'title': '📖 Polymarket order book',
                'price': 'price not named in the official list',
                'gives': 'order levels by side and a depth line',
@@ -562,7 +562,7 @@ _EN = {
                       'things: the price says what people believe, the book says how much it '
                       'costs to test that with money'},
     'pmrep': {'cmds': ['market reputation 654412', 'who holds market 654412'],
-              'btns': ['markets list → 🎭 N'],
+              'btns': ['market card → 🎭 Who holds it'],
               'title': '🎭 Who holds the market and how they guessed before',
               'price': '6 requests (holders + lifetime history of each of the five)',
               'gives': 'how much money sits with wallets below the win-rate threshold, a '
