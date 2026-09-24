@@ -281,6 +281,9 @@ Nansen Usage Analytics screenshot shows **5,484 calls on Sep 20** (inside the co
 13,850 total in 30D. Save a cropped copy of the dashboard panel before submission; do not publish
 the raw screenshot with browser chrome/bookmarks/wallet area.
 
+<img width="1170" height="659" alt="image" src="https://github.com/user-attachments/assets/6bf0deb1-2994-4d72-a5f7-dbc8ab9f5d62" />
+
+
 See [`docs/WINNER_PLAN.md`](docs/WINNER_PLAN.md) and [`docs/submission.md`](docs/submission.md).
 
 ---
