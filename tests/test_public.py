@@ -509,7 +509,11 @@ def t_docs_are_here_and_name_prices():
     man = os.path.join(_ROOT, 'MANIFEST.md')
     if os.path.exists(man):
         txt = open(man, encoding='utf-8').read()
-        check('DOCS: manifest says byte-for-byte', 'байт-в-байт' in txt, txt[:200])
+        # МАНИФЕСТ ПО-АНГЛИЙСКИ С 27.09 (замечание владельца: основной документ публичного
+        # репозитория не должен быть на языке, которого читатель не знает). Сторожим то же
+        # утверждение, только в его новой форме - и НЕ обе сразу: «или то, или то» перестало
+        # бы ловить пропажу утверждения вовсе.
+        check('DOCS: manifest says byte-for-byte', 'byte-for-byte' in txt, txt[:200])
         for rel in required[4:]:
             check('DOCS: manifest tracks %s' % rel, ('`%s`' % rel) in txt, rel)
 

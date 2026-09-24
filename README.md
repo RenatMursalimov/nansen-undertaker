@@ -281,8 +281,11 @@ Nansen Usage Analytics screenshot shows **5,484 calls on Sep 20** (inside the co
 13,850 total in 30D. Save a cropped copy of the dashboard panel before submission; do not publish
 the raw screenshot with browser chrome/bookmarks/wallet area.
 
-<img width="1170" height="659" alt="image" src="https://github.com/user-attachments/assets/6bf0deb1-2994-4d72-a5f7-dbc8ab9f5d62" />
-
+<!-- ДОБАВЛЕНО ВЛАДЕЛЬЦЕМ ПРЯМО НА GITHUB (коммит 6e93622, 24.09) И ПЕРЕНЕСЕНО СЮДА, В ИСТОЧНИК.
+     Публичный README - ГЕНЕРИРУЕМЫЙ файл: правка, сделанная только в публичном репозитории,
+     исчезла бы при следующей сборке выжимки МОЛЧА, и выглядело бы это как «картинка пропала
+     сама». Пока строка лежит здесь, генератор её сохраняет. -->
+<img width="1170" height="659" alt="Nansen Usage Analytics: 5,484 calls on Sep 20" src="https://github.com/user-attachments/assets/6bf0deb1-2994-4d72-a5f7-dbc8ab9f5d62" />
 
 See [`docs/WINNER_PLAN.md`](docs/WINNER_PLAN.md) and [`docs/submission.md`](docs/submission.md).
 
@@ -290,12 +293,22 @@ See [`docs/WINNER_PLAN.md`](docs/WINNER_PLAN.md) and [`docs/submission.md`](docs
 
 ## Language and safety
 
-`NANSEN_LANG=en` selects English where production formatters support it. The judge-facing
-documents are English-primary; a Russian analog of each sits next to it as `*_ru.md`
+`NANSEN_LANG=en` selects English where production formatters support it. Every English-primary
+document — this README, `MANIFEST.md`, everything under `docs/` without an `_ru` suffix — is
+English throughout; a Russian analog of each judge-facing document sits next to it as `*_ru.md`
 (`docs/CATALOG_ru.md`, `docs/scenarios_ru.md`, `docs/WINNER_PLAN_ru.md`,
-`docs/submission-checklist_ru.md`), generated from the same source. In-code documentation comments
-remain mostly Russian because they preserve the reasoning that led to each guard rail; replacing
-that reasoning with a thinner translation would lose the useful part.
+`docs/submission-checklist_ru.md`), generated from the same source.
+
+Two things here are deliberately Russian and it is worth saying which, so nothing looks like an
+oversight:
+
+- **In-code documentation comments.** The modules arrive byte-for-byte from the running bot, and
+  the comments carry the reasoning that produced each guard rail — usually a live failure and what
+  it cost. Translating them would mean either losing that reasoning or breaking the byte-for-byte
+  claim, which is the one claim this repository stands on.
+- **Commit messages from the first days of the extract.** They are history and are left alone;
+  rewriting published history would invalidate the audit trail that the manifest hashes point at.
+  Everything committed here from 27 September onward is in English.
 
 No trading action is part of the hero workflow. Tools that spend credits or change external state
 print a plan by default and require a human to remove the explicit safety flag.

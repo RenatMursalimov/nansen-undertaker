@@ -427,3 +427,41 @@ of the most traded markets, side by side), what the two bars are (money held by 
 right more often vs wrong more often, by **lifetime** record), and why the order is by sharp dollars
 rather than by share (90% of \$300 is not a signal). Plus the honest price: this is the expensive
 screen — one request per market and one per holder.
+
+
+## A list with no way out is a dead end (27 Sep)
+
+The owner tapped through the live build and wrote seven remarks. Six of them are one sentence:
+*«должен же быть сквозной сценарий везде»* — every screen answered its own question and stopped.
+You could see that smart money bought a token, that a market is priced at 65%, that a holder has a
+67% win rate — and there was nothing you could do with any of it.
+
+Three crossings were added, all of them landing on a card that already exists in the bot: token →
+token card, market → market card, wallet → account card (full address to copy, labels, tracking).
+
+### The deep link did not work, and the page could not tell
+
+The first implementation built `t.me/<bot>?start=…` and called `openTelegramLink`. The owner's
+verdict: *«Кнопочки Open in the bot, Open на Холсте не открывают в Гробовщике ничего»*. The link
+points at the chat of the **same bot** whose mini app is open, and the shell does not perform that
+navigation — for it, you are already there. Worse, the method returns nothing, so a refusal by the
+shell is indistinguishable from success: the page could not even report the failure.
+
+The crossings now use the mechanism that was already proven live in this project — **ask the bot**.
+The bot posts the card into the chat, and the page prints what the bot answered. A status line is
+attached to **each button**, not one per screen: the first version had a single note at the bottom
+of the card, the owner tapped a button in the middle of a list, the answer appeared off-screen, and
+the conclusion was «ничего не произошло». An answer that arrives somewhere else is not an answer.
+
+### No address leaves the browser, and nothing is guessed
+
+The wallet crossing had to work without ever sending a full address to the page (that rule is why
+the holder rows show `0x676c…e139` and nothing more). So the page sends the **row number** plus the
+first characters of the label it drew, and the bot finds the address in the same provider response
+the canvas was drawn from. If the list moved between drawing and tapping, the prefix no longer
+matches and the bot **refuses**: opening the neighbouring wallet would be a true answer about the
+wrong wallet, and that kind of error is invisible to the person reading it.
+
+The same rule applies to the token crossing: the ticker travels (the person sees it on screen), the
+contract is resolved by the bot in the same cached list of trades, and a ticker that is no longer in
+the fresh list gets an honest refusal rather than a similar-looking token.

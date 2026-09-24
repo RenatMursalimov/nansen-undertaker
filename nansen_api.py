@@ -1745,6 +1745,49 @@ def _who_a(row, bot_un=None):
     return acc_link(_who(row), addr, bot_un)
 
 
+def subject_line(addr, market=None, lang='ru'):
+    """Строка «про КАКОЙ токен этот экран». -> str.
+
+    ЖИВОЙ СЛУЧАЙ 27.09, ИЗ-ЗА КОТОРОГО ОНА ПОЯВИЛАСЬ. Экран печатал ОДИН адрес контракта -
+    `EicWvteVi2fWepEzS3FYWsnuPoP6caZfjnKqNvydLjCH` - и ниже «плеча здесь нет». Адрес приехал из
+    связки «тикер LIT с биржевой карточки -> контракт», и связка ошиблась: это был солановский
+    однофамилец. Ответ был ПРАВДОЙ ПРО ДРУГОЙ ТОКЕН, а выглядел как «у Nansen нет данных» - два
+    разных мира, неразличимые по экрану. Символ и сеть рядом с адресом делают ошибку видимой
+    сразу: «LIT · solana» под карточкой Lighter читается как несоответствие с первого взгляда.
+    """
+    _a = str(addr or '')
+    if not _a:
+        return ''
+    _sym = str((market or {}).get('symbol') or '').strip()[:14]
+    _ch = str((market or {}).get('chain') or '').strip()[:14]
+    if not _sym and not _ch:
+        return '<code>%s</code>' % _esc(_a[:44])
+    _mid = ' · '.join(x for x in ((('<b>%s</b>' % _esc(_sym)) if _sym else ''),
+                                  _esc(_ch) if _ch else '') if x)
+    return '<code>%s</code> · %s' % (_esc(_a[:44]), _mid)
+
+
+def positioning_route(symbol='', lang='ru'):
+    """Куда идти, если плеча по КОНТРАКТУ нет. -> str.
+
+    ПУСТОЙ ЭКРАН ОБЯЗАН НАЗЫВАТЬ СОСЕДА, КОТОРЫЙ ОТВЕЧАЕТ. Эта ручка спрашивает плечо ПО
+    АДРЕСУ КОНТРАКТА, а у мейджоров и перп-онли активов плечо живёт на перп-рынке, где ключ -
+    ТИКЕР. То есть «плеча по контракту нет» и «плеча нет вообще» - разные утверждения, и первое
+    без второго оставляет человека с ощущением, что бот не умеет. Умеет, но другой дверью.
+    """
+    en = (lang == 'en')
+    _s = str(symbol or '').strip()[:12] or ('TICKER' if en else 'ТИКЕР')
+    if en:
+        return ('\n<i>This endpoint asks by CONTRACT. Leverage on a listed asset lives on the perp '
+                'market, where the key is the TICKER: «perp positions %s» or the 💥 Liq. button on '
+                'the exchange card. And if this contract is not the token you meant, send the '
+                'address yourself: «positioning &lt;address&gt;».</i>' % _s)
+    return ('\n<i>Эта ручка спрашивает по КОНТРАКТУ. У листингованного актива плечо живёт на '
+            'перп-рынке, где ключ - ТИКЕР: «перп позиции %s» или кнопка 💥 Ликвид. на биржевой '
+            'карточке. А если этот контракт - не тот токен, что ты имел в виду, пришли адрес '
+            'сам: «чьё плечо &lt;адрес&gt;».</i>' % _s)
+
+
 def tap_hint(lang='ru', what='wallet'):
     """Строка «тапни строку - открою карточку». -> str | '' (если переходов нет).
 
@@ -3188,7 +3231,7 @@ def perp_positioning_data(r):
                              for s in out)}
 
 
-def perp_positioning_block(r, token='', lang='ru'):
+def perp_positioning_block(r, token='', lang='ru', market=None):
     """Позиционирование по сегментам - текстом. -> str | None.
 
     ВЕДЁМ ПЕРЕВЕСОМ, А НЕ ОБЪЁМОМ. «$40M в лонгах» - половина ответа; «киты в лонг на $12M,
@@ -3202,7 +3245,7 @@ def perp_positioning_block(r, token='', lang='ru'):
     L = [('⚖️ <b>Who is positioned on this token, by segment</b>' if en
           else '⚖️ <b>Чьё плечо стоит в этом токене, по сегментам</b>')]
     if token:
-        L.append('<code>%s</code>' % _esc(str(token)[:44]))
+        L.append(subject_line(token, market, lang))
     # ВСЁ ПО НУЛЯМ - ЭТО ОТВЕТ, А НЕ СБОЙ, и он говорится словом: пустая таблица из нулей
     # читается как «мы не смогли», хотя мы посмотрели и там правда никого нет.
     if d.get('empty_all'):
@@ -3210,6 +3253,7 @@ def perp_positioning_block(r, token='', lang='ru'):
                   'public figures. That is an answer, not a failure.' if en else
                   'Nansen не видит здесь плеча ни у китов, ни у смарт-трейдеров, ни у публичных '
                   'фигур. Это ответ, а не сбой.'))
+        L.append(positioning_route((market or {}).get('symbol') or '', lang))
         return with_source('\n'.join(L), lang)
     L.append('')
     for s in d['segments']:
