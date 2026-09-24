@@ -2968,6 +2968,144 @@ def _money(x):
     return '%.4f' % x          # газ и мелочь: $0.0012 это не «$0.00»
 
 
+def perp_positioning(token_address):
+    """ЧЬЁ ПЛЕЧО СТОИТ В ТОКЕНЕ: киты, смарт-трейдеры, публичные фигуры - лонги против шортов.
+    -> dict | None.
+
+    СХЕМА СНЯТА ЖИВОЙ ПРОБОЙ ВЛАДЕЛЬЦА 24.09, НА ЧЕТВЁРТОМ КРУГЕ, и три круга до него были
+    отказами самой площадки - каждый назвал имя поля, которого она НЕ знает:
+      круг 1: «Required field 'body -> token_address' is missing» - значит адрес обязателен;
+      круг 2-3: «Field 'pagination' is not recognized» - пагинации у этой ручки нет вовсе;
+      круг 4: `chain` она тоже не знает. Осталось РОВНО одно поле - `token_address`, и ответ
+      пришёл 200 с одной строкой.
+    Три круга - это не медлительность, а способ: ремонт по словам площадки («не знаю такое поле»)
+    сужает тело до настоящего, тогда как угадывание расширяет его и держит 422 бесконечно.
+
+    ПОЧЕМУ ЭТО ЦЕННО, А НЕ ПРОСТО «ЕЩЁ ОДНА РУЧКА». Соседний `tgm/perp-positions` отвечает «кто
+    стоит и с каким плечом» ПОСТРОЧНО - двенадцать кошельков, которые надо сложить в голове.
+    Здесь тот же вопрос отвечен СЕГМЕНТАМИ: сколько денег в лонгах и шортах у КИТОВ, у СМАРТ-
+    ТРЕЙДЕРОВ и у ПУБЛИЧНЫХ ФИГУР по отдельности. Это разные утверждения: «шортов на $40M» и
+    «шортов на $40M, из них $35M у смарт-трейдеров, а киты стоят в лонг» - второе говорит, КТО
+    против кого, а не только сколько.
+
+    Поля ответа (из пробы, не угаданы): whale_longs_usd, whale_shorts_usd, whale_total_usd,
+    smart_trader_longs_usd, smart_trader_shorts_usd, smart_trader_total_usd,
+    public_figure_longs_usd, public_figure_shorts_usd, public_figure_total_usd.
+
+    ТЕЛО - ОДИН АДРЕС КОНТРАКТА, И ЭТО ВАЖНО ДЛЯ ВХОДА: адрес есть у карточки токена, значит
+    экран открывается кнопкой с карточки, а не вводом руками (тот же закон, по которому мы
+    убрали ручной ввод market_id).
+    """
+    rows = _rows(_post("tgm/position-intelligence",
+                       {"token_address": str(token_address)},
+                       ckey=f"posintel:{token_address}"))
+    if not rows:
+        return None
+    r = rows[0] if isinstance(rows[0], dict) else None
+    if not r:
+        return None
+    _shape('position-intelligence', r)
+    return r
+
+
+#: СЕГМЕНТЫ ОТВЕТА: ключ в ответе -> (RU, EN). Порядок задаёт порядок строк экрана и выбран по
+#: убыванию «веса имени»: кит - это размер, смарт-трейдер - это история, публичная фигура - это
+#: известность. Три разных основания, и смешивать их в одну сумму нельзя.
+_POSINTEL_SEG = (
+    ('whale', ('киты', 'whales')),
+    ('smart_trader', ('смарт-трейдеры', 'smart traders')),
+    ('public_figure', ('публичные фигуры', 'public figures')),
+)
+
+
+def perp_positioning_data(r):
+    """Числа позиционирования по сегментам, БЕЗ СЛОВ. -> dict | None.
+
+    ЧТО СЧИТАЕТСЯ ЗДЕСЬ, А НЕ В ЭКРАНЕ: перевес (лонги минус шорты) и доля лонгов в сегменте.
+    Это выводы, по которым человек принимает решение, и считаться они обязаны в одном месте -
+    иначе текст в чате и картинка на холсте однажды разойдутся знаком.
+
+    СУММУ ПО ТРЁМ СЕГМЕНТАМ НЕ СЧИТАЕМ НАРОЧНО: сегменты пересекаются по устройству (кит может
+    быть смарт-трейдером и публичной фигурой одновременно), и «всего $X» было бы двойным счётом,
+    выглядящим как измерение. Об этом же сказано оговоркой в конверте.
+    """
+    if not isinstance(r, dict):
+        return None
+    out, known = [], 0
+    for key, names in _POSINTEL_SEG:
+        _l = _num_or_none(r.get('%s_longs_usd' % key))
+        _s = _num_or_none(r.get('%s_shorts_usd' % key))
+        _t = _num_or_none(r.get('%s_total_usd' % key))
+        if _l is None and _s is None and _t is None:
+            continue
+        _known_side = (_l is not None and _s is not None)
+        if _known_side and (_l or _s):
+            known += 1
+        out.append({'key': key, 'ru': names[0], 'en': names[1],
+                    'longs': _l, 'shorts': _s, 'total': _t,
+                    # ПЕРЕВЕС ЗНАКОМ: плюс - сегмент стоит в лонг, минус - в шорт. None, если
+                    # хотя бы одной стороны нет: перевес из одной стороны не выводится.
+                    'skew': ((_l - _s) if _known_side else None),
+                    'long_share': ((100.0 * _l / (_l + _s))
+                                   if (_known_side and (_l + _s) > 0) else None)})
+    if not out:
+        return None
+    return {'segments': out, 'with_sides': known,
+            'empty_all': all(not (s.get('longs') or s.get('shorts') or s.get('total'))
+                             for s in out)}
+
+
+def perp_positioning_block(r, token='', lang='ru'):
+    """Позиционирование по сегментам - текстом. -> str | None.
+
+    ВЕДЁМ ПЕРЕВЕСОМ, А НЕ ОБЪЁМОМ. «$40M в лонгах» - половина ответа; «киты в лонг на $12M,
+    смарт-трейдеры в шорт на $9M» отвечает на вопрос, ради которого на плечо и смотрят: кто
+    стоит против кого.
+    """
+    d = r if (isinstance(r, dict) and 'segments' in r) else perp_positioning_data(r)
+    if not d:
+        return None
+    en = (lang == 'en')
+    L = [('⚖️ <b>Who is positioned on this token, by segment</b>' if en
+          else '⚖️ <b>Чьё плечо стоит в этом токене, по сегментам</b>')]
+    if token:
+        L.append('<code>%s</code>' % _esc(str(token)[:44]))
+    # ВСЁ ПО НУЛЯМ - ЭТО ОТВЕТ, А НЕ СБОЙ, и он говорится словом: пустая таблица из нулей
+    # читается как «мы не смогли», хотя мы посмотрели и там правда никого нет.
+    if d.get('empty_all'):
+        L.append(('Nansen sees no leveraged position on this token from whales, smart traders or '
+                  'public figures. That is an answer, not a failure.' if en else
+                  'Nansen не видит здесь плеча ни у китов, ни у смарт-трейдеров, ни у публичных '
+                  'фигур. Это ответ, а не сбой.'))
+        return with_source('\n'.join(L), lang)
+    L.append('')
+    for s in d['segments']:
+        _nm = s['en'] if en else s['ru']
+        seg = []
+        if s['longs'] is not None:
+            seg.append(('longs $%s' if en else 'лонги $%s') % _usd(s['longs']))
+        if s['shorts'] is not None:
+            seg.append(('shorts $%s' if en else 'шорты $%s') % _usd(s['shorts']))
+        L.append('<b>%s</b>: %s' % (_esc(_nm), ' · '.join(seg) or ('no data' if en else 'нет данных')))
+        if s['skew'] is not None and (s['longs'] or s['shorts']):
+            _dir = (('net LONG' if en else 'перевес в ЛОНГ') if s['skew'] > 0
+                    else (('net SHORT' if en else 'перевес в ШОРТ') if s['skew'] < 0
+                          else ('balanced' if en else 'поровну')))
+            L.append('    %s $%s%s' % (_dir, _usd(abs(s['skew'])),
+                                       ('' if s['long_share'] is None
+                                        else ((' · %.0f%% of it long' if en
+                                               else ' · %.0f%% из этого в лонг')
+                                              % s['long_share']))))
+    L.append('')
+    L.append(('<i>Segments overlap by design - a whale can also be a smart trader - so they are '
+              'NOT summed: a total would be double counting that looks like a measurement.</i>'
+              if en else
+              '<i>Сегменты пересекаются по устройству - кит может быть и смарт-трейдером, - '
+              'поэтому они НЕ складываются: «всего» было бы двойным счётом, похожим на '
+              'измерение.</i>'))
+    return with_source('\n'.join(L), lang)
+
+
 def perp_positions_block(rows, token, lang='ru'):
     """Открытые позиции по перп-токену: плечо и ЦЕНА ЛИКВИДАЦИИ. -> str | None.
 
@@ -3083,6 +3221,20 @@ def wallet_perp_block(d, address, lang='ru'):
 MCAP_PCT_MIN = 0.1
 
 
+def _trade_sort_key(it):
+    """Порядок строк сделок: СНАЧАЛА ТО, ЧЕМ ЭКРАН ВЕДЁТ. -> кортеж для сортировки.
+
+    ЖИВОЙ СКРИНШОТ ВЛАДЕЛЬЦА: первыми в списке стояли сделки на $16, $85 и $499, потому что
+    порядок был тот, в каком строки пришли от площадки (по времени). Экран при этом ОБЕЩАЕТ в
+    заголовке долю от капитализации - то есть ведёт величиной, а показывает порядок по времени.
+    Обещание и порядок разошлись, и выглядело это как сломанный экран, хотя каждое число верно.
+    Ведём долей от капитализации, где она измерена, а внутри - размером сделки: обе величины
+    названы в строке, и человек видит, почему порядок такой.
+    """
+    _pct = it.get('pct_of_mcap') if it.get('pct_shown') else None
+    return (0 if _pct is None else 1, _pct or 0.0, it.get('usd') or 0.0)
+
+
 def sm_trades_data(rows, top=12):
     """ЧИСЛА сцены smart_trades: кто, во что, на сколько и какая это доля капитализации.
     -> dict | None.
@@ -3132,8 +3284,17 @@ def sm_trades_data(rows, top=12):
                 _agen = int(float(_age))
             except (TypeError, ValueError):
                 _agen = None
+        # СИМВОЛ ТОКЕНА: ЕСЛИ ЕГО НЕТ - БЕРЁМ ОБРЕЗАННЫЙ АДРЕС, А НЕ «?».
+        # ЖИВОЙ СКРИНШОТ ВЛАДЕЛЬЦА: строка читалась как «suertudo.sol · ? [solana]» - вопросительный
+        # знак вместо названия не говорит НИЧЕГО, тогда как обрезанный адрес контракта хотя бы
+        # опознаёт токен и позволяет его найти. «?» тут значило «в ответе нет поля», и сказать это
+        # адресом честнее, чем знаком, который читается как сбой экрана.
+        _sym = _first(r, ('token_bought_symbol', 'token_symbol', 'symbol'))
+        _tca = _first(r, ('token_bought_address', 'token_address'))
+        if not _sym and _tca:
+            _sym = '%s…%s' % (str(_tca)[:6], str(_tca)[-4:])
         out.append({'i': i, 'who': _who(r),
-                    'sym': _first(r, ('token_bought_symbol', 'token_symbol', 'symbol')) or '?',
+                    'sym': _sym or '?',
                     'addr': (_first(r, ('token_bought_address', 'token_address')) or '').strip(),
                     'chain': _first(r, ('chain',)) or '', 'usd': val,
                     'mcap': _mc, 'mcap_num': _mcn, 'pct_of_mcap': _pct,
@@ -3141,6 +3302,12 @@ def sm_trades_data(rows, top=12):
                     'age_days': _agen})
     if not out:
         return None
+    # ПОРЯДОК - ПО ТОМУ, ЧЕМ ЭКРАН ВЕДЁТ (см. `_trade_sort_key`), а не по времени ответа.
+    # Нумерация переставляется ПОСЛЕ сортировки: номер обязан совпадать с местом в списке, иначе
+    # «1.» окажется третьей строкой и человек будет сверять глазами то, что мы сами перепутали.
+    out.sort(key=_trade_sort_key, reverse=True)
+    for _n, _it in enumerate(out, 1):
+        _it['i'] = _n
     return {'rows': out, 'shown': shown, 'with_val': with_val, 'first_row': first_row}
 
 

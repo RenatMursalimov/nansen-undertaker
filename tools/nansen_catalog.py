@@ -342,6 +342,21 @@ SCENARIOS = [
             'покупках, только на другой площадке',
      'hook': 'Scheduled buying on Solana runs through Jupiter. Same question as DCA elsewhere: '
              'how much of the commitment is still ahead.'},
+    # ── ПОСЛЕДНЯЯ РУЧКА НАБОРА, У КОТОРОЙ ПОЯВИЛАСЬ СХЕМА (круг 4 живой пробы, 24.09) ───
+    {'id': 'posintel', 'title': '⚖️ Чьё плечо стоит в токене: киты, смарт-трейдеры, фигуры',
+     'cmds': ['позиционирование 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', 'чьё плечо <адрес>'],
+     'btns': ['🔍 Nansen по токену → кнопка «⚖️ Чьё плечо»',
+              '🧠 Nansen → ⚔️ Чужое плечо → ⚖️ Чьё плечо стоит в токене'],
+     'where': ('dm', 'group_btn'), 'gcb': 'hs:posi',
+     'eps': ['tgm/position-intelligence'], 'scene': 'perp_positioning', 'menu': 'nsn_posi',
+     'price': 'цена не названа в официальном списке · 1 запрос',
+     'gives': 'плечо по сегментам держателей: киты, смарт-трейдеры и публичные фигуры отдельно, '
+              'лонги против шортов и перевес знаком',
+     'why': 'соседний экран отвечает построчно («кто стоит и где его ликвидация»), а этот - КТО '
+            'ПРОТИВ КОГО: киты в лонг на $12M при смарт-трейдерах в шорт на $9M это утверждение, '
+            'которого в списке позиций не видно',
+     'hook': 'Whales long twelve million while smart traders are short nine. A list of positions '
+             'cannot say that: it does not know which wallet belongs to which class.'},
     # ── СРАВНИТЕЛЬНЫЕ ЭКРАНЫ: не «что по этому объекту», а «какой из них выбрать» ────────
     {'id': 'sharpmarkets', 'app': True,
      'title': '🎯 Где на Polymarket деньги острые (сравнение рынков)',
@@ -577,6 +592,18 @@ _EN = {
                        'price, realized and open',
               'why': 'reputation says how a holder did over a lifetime; this says how the same '
                      'holder is doing right here, and together they separate skill from luck'},
+    'posintel': {'cmds': ['positioning 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+                          'who is positioned <address>'],
+                 'btns': ['🔍 Nansen on a token → the «⚖️ Who is positioned» button',
+                          '🧠 Nansen → ⚔️ Other people\u2019s leverage → ⚖️ Who is positioned'],
+                 'title': '⚖️ Who is positioned on a token: whales, smart traders, public figures',
+                 'price': 'price not named in the official list · 1 request',
+                 'gives': 'leverage split by holder segment: whales, smart traders and public '
+                          'figures separately, longs against shorts and the net skew',
+                 'why': 'the neighbouring screen answers row by row (who stands where, and where '
+                        'their liquidation is); this one answers WHO AGAINST WHOM - whales long '
+                        'twelve million while smart traders are short nine is a statement a list '
+                        'of positions cannot make'},
     'jupdca': {'cmds': ['jup dca <mint>'],
                'btns': ['🧠 Nansen → 🧠 Smart money → 🧊 Jupiter DCA by token'],
                'title': '🧊 Jupiter DCA by token (Solana)',

@@ -9,13 +9,22 @@ The registry is checked against `nansen_api.py` on every start:
 
 | Class | Routes | Scheduled behavior |
 |---|---:|---|
-| Structural reads | 47 | fresh POST through production telemetry; all in `complete` |
+| Structural reads | 53 | fresh POST through production telemetry; all in `complete` |
 | Agent | 2 | only with explicit `--include-agents`; 200 + 750 credits |
 | `trade/quote` | 1 | safe read, zero Nansen credits; included in routine/complete |
 | `trade/bridge-status` | 1 | safe read only with an existing tx hash from env |
 | `trade/prepare` | 1 | never scheduled; human-only signable-intent probe |
 | `trade/execute` | 1 | never available in the generic probe; broadcasts real money |
-| **Total** | **53** | every client route is covered or explicitly blocked |
+| **Total** | **59** | every client route is covered or explicitly blocked |
+
+> These six numbers are **counted from the registry**, not typed by hand: the table above had drifted
+> to *47 structural / 53 total* while the tool itself carried 52, and a table that disagrees with the
+> tool it documents is worse than no table. They are now read off `nansen_endpoint_sweep.py` by class
+> (`kind`), and the tool refuses to run if the total is not what it declares.
+>
+> The newest entry is `tgm/position-intelligence`: the last route in the client without a measured
+> schema until 24 September, when the fourth probe round found the body is exactly one field
+> (`token_address`). **Every route in the client now has a schema taken from a live answer.**
 
 Every structural call bypasses the 30-minute response cache but still passes through the normal
 Nansen telemetry throat. The final line reconciles logical attempts against fresh network rows;
@@ -38,7 +47,7 @@ All four commands above are plans: zero network calls.
 
 ## One fresh run
 
-Routine: 50 calls, about 227 planning credits. It omits three expensive structural routes and both
+Routine: 51 calls, about 232 planning credits. It omits three expensive structural routes and both
 Agent routes, but includes a zero-credit trading quote:
 
 ```bash
@@ -47,8 +56,8 @@ cd <BOT_DIR>
   --max-wire 50 --daily-wire-cap 700 --daily-credit-cap 6000 --reserve-credits 15000
 ```
 
-Complete structural run: 52 structural reads + trading quote = 53 fresh calls, conservative planning
-budget about 427 credits:
+Complete structural run: 53 structural reads + trading quote = 54 fresh calls, conservative planning
+budget about 432 credits:
 
 ```bash
 cd <BOT_DIR>
