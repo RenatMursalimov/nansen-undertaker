@@ -425,14 +425,27 @@ def status_line(lang='ru'):
     # ИМЯ СЕРВЕРА В ЧАТ НЕ ОТДАЁМ. В строке состояния стояло полное `host:pid` боевой машины -
     # человеку оно не говорит ничего, а наружу это раскладка инфраструктуры. Нужен ответ на
     # «опрашивает ли КТО-ТО и не умер ли он», и для него достаточно «да/нет + срок аренды».
-    owner = ('есть' if lang != 'en' else 'yes') if owner else None
+    #
+    # ═══ «ОПРОС ЕСТЬ (АРЕНДА ИСТЕКЛА)» БЫЛО ЛОЖЬЮ ═══
+    # ЖИВОЙ ЭКРАН ВЛАДЕЛЬЦА 25.09 ПОКАЗАЛ РОВНО ЭТО: «инструментов за час 0 · события за сутки
+    # 1002 · опрос ЕСТЬ (аренда истекла)». Человек читает «опрос есть» и ищет причину тишины в
+    # своих настройках, а опроса НЕТ - процесс, записавший аренду, умер, и запись осталась
+    # памятником. Флаг «владелец записан» измеряет ПРИСУТСТВИЕ СТРОКИ В БАЗЕ, а не живой опрос.
+    # Это третий случай того же закона в этом проекте (enabled-лидеры при мёртвом пуле,
+    # systemd active при неторгующем движке, redeemable при нулевом payout).
+    # ТЕПЕРЬ ВЕДЁМ ЖИВОСТЬЮ: истёкшая аренда значит «НИКТО НЕ ВЕДЁТ», и говорим это первым
+    # словом, а срок - вторым. Плюс число снимков за час рядом: оно и есть метрика пользы.
+    alive = bool(owner) and until > now
     if lang == 'en':
-        return ('sentinel: instruments in the last hour %d · events in 24h %d · poller %s '
-                '(lease %s) · %s'
-                % (seen, evs, owner or 'none',
-                   ('%ds left' % (until - now)) if until > now else 'expired',
+        return ('sentinel: instruments in the last hour %d · events in 24h %d · poller %s · %s'
+                % (seen, evs,
+                   ('alive, lease %ds left' % (until - now)) if alive else
+                   ('NOBODY (lease expired %dm ago - the poller died)' % ((now - until) // 60)
+                    if owner else 'NOBODY (nobody has taken it)'),
                    store.spend_line('en')))
-    return ('дозор: инструментов за час %d · события за сутки %d · опрос %s (аренда %s) · %s'
-            % (seen, evs, owner or 'никто не ведёт',
-               ('ещё %dс' % (until - now)) if until > now else 'истекла',
+    return ('дозор: инструментов за час %d · события за сутки %d · опрос %s · %s'
+            % (seen, evs,
+               ('идёт, аренда ещё %dс' % (until - now)) if alive else
+               ('НИКТО НЕ ВЕДЁТ (аренда истекла %d мин назад - опрашивающий умер)'
+                % ((now - until) // 60) if owner else 'НИКТО НЕ ВЕДЁТ (аренду не брали)'),
                store.spend_line()))

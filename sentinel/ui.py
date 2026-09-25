@@ -130,6 +130,28 @@ def silence_reasons(uid, lang='ru'):
             out.append(_t('s_novenues', lang))
     except Exception:
         pass
+    # ═══ ИСЧЕРПАННЫЙ ПОТОЛОК - ПРИЧИНА ТИШИНЫ №1, И ОН ДОЛЖЕН БЫТЬ НАЗВАН ПРИЧИНОЙ ═══
+    # ЖИВОЙ ЭКРАН ВЛАДЕЛЬЦА 25.09: «Сегодня доставлено: 147 из 25» - потолок перебран в шесть
+    # раз (он крутил пресеты: «поток» поднимает до 120, «рабочий» опускает до 25, а доставленное
+    # за сутки никуда не девается). Все новые события уходили в сводку, и это было ПРАВИЛЬНО - но
+    # человек полчаса искал причину в настройках, потому что число стояло отдельной строкой
+    # состояния, а не в списке «почему тишина». Числу нужен вывод рядом.
+    try:
+        _cap, _got = store.cap_for(uid), store.sent_today(uid)
+        if _got >= _cap:
+            out.append(_t('s_cap', lang) % (_got, _cap))
+    except Exception:
+        pass
+    # ═══ И ТИШИНА ОТ МЁРТВОГО ОПРОСА - ТОЖЕ ПРИЧИНА, ПРИЧЁМ НЕ ЗАВИСЯЩАЯ ОТ НАСТРОЕК ═══
+    # Её человек своими кнопками не вылечит вовсе, поэтому она обязана быть названа отдельно от
+    # остальных: крутить пороги, когда снимков нет, бессмысленно.
+    try:
+        _owner, _until = store.lease_owner()
+        _now = int(__import__('time').time())
+        if not (_owner and _until > _now):
+            out.append(_t('s_nopoll', lang))
+    except Exception:
+        pass
     return out
 
 
@@ -389,6 +411,16 @@ _T = {
                   'en': 'every event kind is unchecked — switch at least one on'},
     's_novenues': {'ru': 'все площадки сняты — включите хотя бы одну',
                    'en': 'every venue is unchecked — switch at least one on'},
+    's_cap': {'ru': 'суточный потолок исчерпан: доставлено %d из %d. Новое поедет СВОДКОЙ '
+                    'до полуночи UTC — поднимите потолок или ждите смены суток',
+              'en': 'the daily cap is used up: %d of %d delivered. New events will come as a '
+                    'DIGEST until midnight UTC — raise the cap or wait for the day to turn'},
+    's_nopoll': {'ru': 'ПЛОЩАДКИ НИКТО НЕ ОПРАШИВАЕТ (аренда истекла) — кольцо не растёт, '
+                       'движений не будет ни при каких настройках. Это не ваши настройки: '
+                       'проверьте службу sentinel на сервере',
+                 'en': 'NOBODY IS POLLING THE VENUES (lease expired) — the ring is not growing '
+                       'and no move will be detected at any settings. This is not your '
+                       'settings: check the sentinel service on the server'},
     # ── ВЛАДЕЛЬЧЕСКИЕ КАПЫ КРЕДИТОВ (виден только владельцу) ───────────────────────────────
     'cap_nansen': {'ru': '💳 Кап дозора: %s кр/сутки', 'en': '💳 Sentinel cap: %s cr/day'},
     'cap_lab': {'ru': '🧪 Кап лаборатории: %s кр/сутки', 'en': '🧪 Lab cap: %s cr/day'},

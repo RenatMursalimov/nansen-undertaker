@@ -2189,6 +2189,71 @@ def t_repair_must_not_change_the_question():
           '«похоже на фильтр» здесь не годится - список пополняется руками')
 
 
+def t_silence_names_the_cap_and_the_dead_poller():
+    """ПРИЧИНА ТИШИНЫ НАЗЫВАЕТСЯ ПРИЧИНОЙ, А НЕ СТОИТ ЧИСЛОМ В СТОРОНКЕ.
+
+    ═══ ЖИВОЙ ЭКРАН ВЛАДЕЛЬЦА 25.09 ═══
+    «Сегодня доставлено: 147 из 25 · инструментов за час 0 · события за сутки 1002 · опрос ЕСТЬ
+    (аренда истекла)». Алертов не было полчаса, и человек искал причину в настройках - хотя обе
+    причины уже стояли на экране и ни одна не была названа причиной:
+
+    1. ПОТОЛОК ПЕРЕБРАН В ШЕСТЬ РАЗ. Он крутил пресеты: «поток» поднимает потолок до 120,
+       «рабочий» опускает до 25, а доставленное за сутки никуда не девается. Всё новое уходило
+       в сводку - и это ПРАВИЛЬНО, но число стояло отдельной строкой состояния, без вывода.
+    2. «ОПРОС ЕСТЬ» ПРИ ИСТЁКШЕЙ АРЕНДЕ - ЭТО ЛОЖЬ. Строка в базе есть, процесс мёртв. Флаг
+       «владелец записан» измеряет ПРИСУТСТВИЕ ЗАПИСИ, а не живой опрос: третий случай того же
+       закона в проекте (enabled-лидеры при мёртвом пуле, systemd active при неторгующем
+       движке, redeemable при нулевом payout).
+    """
+    now = int(time.time())
+    uid = 660002
+    store.sub_add(uid, store.ALL)
+    store.settings_set(uid, alerts_on=1, daily_cap=25)
+    c = store.conn()
+    for i in range(147):
+        c.execute('INSERT INTO sentinel_deliveries (event_key, user_id, state, attempts, '
+                  'created_at, delivered_at) VALUES (?,?,?,?,?,?)',
+                  ('cap-%d' % i, uid, 'sent', 0, now - 60, now - 60))
+    c.commit()
+    check('WHY: суточный потолок перебран - это факт, а не настройка',
+          store.sent_today(uid) >= store.cap_for(uid),
+          (store.sent_today(uid), store.cap_for(uid)))
+    _why = ui.silence_reasons(uid, 'ru')
+    check('WHY: исчерпанный потолок НАЗВАН причиной тишины',
+          any('потолок исчерпан' in w for w in _why), _why)
+    check('WHY: и назван ЧИСЛАМИ - сколько и из сколька',
+          any('147 из 25' in w for w in _why), _why)
+    check('WHY: и сказано, что события не пропали, а поедут сводкой',
+          any('СВОДКОЙ' in w for w in _why), _why)
+    # ── МЁРТВЫЙ ОПРОС: ВЛАДЕЛЕЦ ЗАПИСАН, АРЕНДА ИСТЕКЛА 40 МИНУТ НАЗАД ───────────────────
+    c.execute('INSERT OR REPLACE INTO sentinel_lease (name, owner, until) VALUES (?,?,?)',
+              ('variational', 'host:12345', now - 2400))
+    c.commit()
+    line = outbox.status_line()
+    check('WHY: строка состояния БОЛЬШЕ НЕ ГОВОРИТ «опрос есть» при мёртвом опросе',
+          'НИКТО НЕ ВЕДЁТ' in line, line)
+    check('WHY: и называет, СКОЛЬКО минут назад он умер', '40 мин назад' in line, line)
+    _why2 = ui.silence_reasons(uid, 'ru')
+    check('WHY: мёртвый опрос назван причиной тишины',
+          any('НИКТО НЕ ОПРАШИВАЕТ' in w for w in _why2), _why2)
+    check('WHY: и сказано, что настройки тут не виноваты',
+          any('не ваши настройки' in w for w in _why2), _why2)
+    # ── ЖИВАЯ АРЕНДА -> ЭТОЙ ПРИЧИНЫ НЕТ (иначе сторож кричал бы всегда) ────────────────
+    c.execute('INSERT OR REPLACE INTO sentinel_lease (name, owner, until) VALUES (?,?,?)',
+              ('variational', 'host:12345', now + 600))
+    c.commit()
+    check('WHY: при живом опросе про опрос не жалуемся',
+          not any('НИКТО НЕ ОПРАШИВАЕТ' in w for w in ui.silence_reasons(uid, 'ru')),
+          'сторож, который кричит всегда, перестают читать')
+    check('WHY: и строка состояния говорит «идёт»', 'идёт' in outbox.status_line(),
+          outbox.status_line())
+    # ── ОБА ОБЪЯСНЕНИЯ ЕСТЬ И ПО-АНГЛИЙСКИ (по экрану ходит обходчик e2e) ───────────────
+    for _k in ('s_cap', 's_nopoll'):
+        _en = ui._t(_k, 'en')
+        check('WHY: %s есть по-английски без кириллицы' % _k,
+              _en != _k and not __import__('re').search(r'[А-Яа-яЁё]', _en), _en)
+
+
 def _pure_only(predict):
     """Замки моста, проверяемые БЕЗ слоя Polymarket. -> None.
 
@@ -2725,7 +2790,8 @@ def main():
                t_lab_body_matches_the_venue_schema,
                # ── круг 10: экран разделён на основное и «Ещё»; ремонт схемы не
                #    имеет права молча сменить ВОПРОС ──
-               t_repair_must_not_change_the_question):
+               t_repair_must_not_change_the_question,
+               t_silence_names_the_cap_and_the_dead_poller):
         print('\n== %s' % fn.__name__)
         try:
             fn()
