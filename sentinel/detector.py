@@ -464,8 +464,30 @@ def detect(listing, rows, now=None, ring=None):
         # ХВОСТ СЧИТАЕМ СТРОГО: «выше 98% замеров» или «ниже 98% замеров». Постоянный ряд даёт
         # обе доли нулём и события НЕ порождает — именно этого не делала первая редакция.
         rank = below
-        if (below is not None and max(below, above) >= 0.98 and len(hist) >= 50):
+        # ═══ АБСОЛЮТНЫЙ ПОРОГ РЯДОМ С ОТНОСИТЕЛЬНЫМ. ТЕПЕРЬ ОН ВОЗМОЖЕН ═══
+        # `config.funding_apr_pct()` (60% годовых) был объявлен девять кругов назад и НИ ОДНИМ
+        # читателем не читался - мёртвый порог, форма «параметр принят, но не применён». Причина
+        # была честной: единица фандинга не измерена, и сравнивать сырое поле с «60% годовых»
+        # было не с чем. Долг №1 закрыт замером 26.09 (`venues.FUNDING_UNIT`), и порог ожил.
+        # ЗАЧЕМ ОН ЗДЕСЬ. Проценти́ль отвечает «необычно ли это ДЛЯ НЕГО», но не отвечает
+        # «дорого ли это». У инструмента с вечно нулевой ставкой 0.3% годовых попадают в верхний
+        # процентиль - арифметика верна, новости нет. Ровно тот же закон, что уже заставил
+        # поставить абсолютные пороги рядом со спредом, объёмом и открытым интересом.
+        # ЕДИНИЦА НЕИЗВЕСТНА -> ПОРОГ НЕ ПРИМЕНЯЕМ, а не считаем нулём: у новой площадки мы
+        # ничего не мерили, и молча отсечь ей все события было бы хуже, чем пропустить шум.
+        _apr = None
+        try:
+            from .venues import funding_apr_pct as _fapr
+            _apr = _fapr(_venue, listing.funding_raw, listing.funding_interval_s)
+        except Exception:
+            _apr = None
+        _apr_ok = (_apr is None) or (abs(_apr) >= config.funding_apr_pct())
+        if (below is not None and max(below, above) >= 0.98 and len(hist) >= 50 and _apr_ok):
             pen = list(base_pen)
+            if _apr is None:
+                # ЧЕГО НЕ ИЗМЕРИЛИ - ГОВОРИМ ВСЛУХ И ШТРАФУЕМ УВЕРЕННОСТЬ, а не замалчиваем.
+                pen.append(('единица фандинга этой площадки не измерена - абсолютную величину '
+                            'проверить нечем', 15))
             # ДИВИДЕНД ВЫГЛЯДИТ КАК ПОЗИЦИОНИРОВАНИЕ, И ЭТО НЕ НАША ДОГАДКА: справка
             # площадки (help.variational.io/en/articles/16038446) прямо говорит, что около
             # даты отсечки дивиденд проводится ОТРИЦАТЕЛЬНЫМ фандингом. Значит по акциям
@@ -479,7 +501,7 @@ def detect(listing, rows, now=None, ring=None):
             out.append({'kind': 'funding_extreme', 'ticker': listing.ticker, 'ts': now,
                         'key': key('funding_extreme', '%s:%s' % (_venue, listing.ticker), _window(now), 1),
                         'severity': conf,
-                        'payload': dict(common, funding_rank=rank,
+                        'payload': dict(common, funding_rank=rank, funding_apr_pct=_apr,
                                         funding_points=len(hist), step=1, penalties=notes)})
 
     # ── ТЕСНАЯ ТОЛПА: ВСЕ В ОДНУ СТОРОНУ И ДОРОГО ПЛАТЯТ ──────────────────────────────────

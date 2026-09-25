@@ -583,8 +583,13 @@ _REFUSAL = {
 _WHAT = {'ru': 'данных', 'en': 'the data'}
 
 
-def provider_said(ep, lang='ru'):
+def provider_said(ep, lang='ru', plain=False):
     """СВОИМИ СЛОВАМИ ПЛОЩАДКИ: последняя ошибка ИМЕННО ЭТОЙ ручки. -> str | ''.
+
+    `plain=True` - БЕЗ РАЗМЕТКИ, для терминала и логов. Появился, когда слова площадки
+    понадобились инструменту командной строки (`sentinel/lab.py`): там `<i>` и `<code>` это
+    мусор на экране, а не оформление. ОДНА ДВЕРЬ С ДВУМЯ ВИДАМИ, а не вторая функция: сверка по
+    пути (ниже) обязана быть в одном месте, иначе копия однажды покажет чужую ошибку.
 
     ЗАЧЕМ ЭТО НУЖНО ЧЕЛОВЕКУ, А НЕ ТОЛЬКО ЛОГУ. Отказ класса `badreq` говорит «это наш баг, он
     в логе бота» - и для владельца это тупик: лога у него под рукой нет, а Nansen В ЭТОТ ЖЕ
@@ -619,12 +624,18 @@ def provider_said(ep, lang='ru'):
                                       _esc(_ei.get('message') or '')) if x)
         _rq = (('\n<i>request_id %s</i>' % _esc(_ei['request_id']))
                if _ei.get('request_id') else '')
+        if plain:
+            _p = ' · '.join(x for x in (_ei.get('code') or '', _ei.get('message') or '') if x)
+            return _p + ((' (request_id %s)' % _ei['request_id'])
+                         if _ei.get('request_id') else '')
         return (('\n<i>Nansen said: %s</i>%s' if lang == 'en' else
                  '\n<i>Площадка ответила: %s</i>%s') % (_mid, _rq))
     # ТЕЛА С КОДОМ НЕТ - ЗНАЧИТ ОТВЕТИЛ НЕ САМ API, А ЧТО-ТО ПЕРЕД НИМ. Это тоже ответ на
     # вопрос «чья сторона», и его надо сказать словом, а не вываливать разметку.
     _flat = re.sub(r'<[^>]{0,120}>', ' ', txt)
     _flat = ' '.join(_flat.split())[:160]
+    if plain:
+        return _flat or ''
     return (('\n<i>Nansen replied without a documented error body (that is the answer of '
              'something in front of their API, not of the API itself): «%s»</i>' if lang == 'en'
              else '\n<i>Ответ пришёл БЕЗ документированного тела ошибки - так отвечает не сам '
@@ -912,7 +923,62 @@ def _apply_hint(body, text):
                 return b, 'значение %r -> %r в поле %r' % (bad, good, k)
         b[spec] = good
         return b, 'поставил %r=%r по подсказке площадки' % (spec, good)
+    # ── ФОРМАТ ДАТЫ: ПОДСКАЗКА ТОЖЕ ИСПОЛНИМАЯ, ПРОСТО МЫ ЕЁ НЕ ЧИТАЛИ ────────────────────
+    # ЖИВОЙ ПРОГОН ВЛАДЕЛЬЦА 26.09, СЛОВА ПЛОЩАДКИ ДОСЛОВНО: «Date format not allowed:
+    # '2026-08-26T00:00:00Z'. Please use YYYY-MM-DD format instead (e.g., '2025-10-01'). Time
+    # components (T, :, Z, +) are not supported for this endpoint». Ремонт ответил «в тексте
+    # ошибки нет исполнимой инструкции» и остановился - но инструкция там ЕСТЬ, и она
+    # однозначная: обрезать время. Здесь у разных ручек ОДНОЙ площадки требования к дате
+    # РАЗНЫЕ (структурные ждут ISO со временем, эта - только календарную дату), и потому это
+    # не «починить `_date_range` один раз», а именно правка по словам площадки.
+    # ЧИНИМ РЕКУРСИВНО: дата лежит не в корне тела, а внутри `date_range: {from, to}`, и
+    # правка только верхнего уровня прошла бы мимо ровно в том случае, ради которого написана.
+    if _RE_DATEFMT.search(text or ''):
+        nb, hit = _trim_dates(b)
+        if hit:
+            return nb, 'обрезал время в датах (%s) - площадка просит YYYY-MM-DD' % ', '.join(hit)
+        return None, 'площадка просит YYYY-MM-DD, но дат со временем в теле не нашлось'
     return None, 'в тексте ошибки нет исполнимой инструкции'
+
+
+#: «Date format not allowed … use YYYY-MM-DD … Time components (T, :, Z, +) are not supported».
+#: Ловим по ДВУМ приметам сразу (запрет формата + требуемый образец), а не по одному слову
+#: «date»: в тексте про дату может прийти и «invalid_date_range», у которого лечение другое.
+_RE_DATEFMT = re.compile(r'date format not allowed.*?YYYY-MM-DD|YYYY-MM-DD format instead',
+                         re.I | re.S)
+#: Похоже на ISO-дату со временем: '2026-08-26T00:00:00Z', '2026-08-26 00:00:00+03:00'.
+_RE_ISO_DT = re.compile(r'^(\d{4}-\d{2}-\d{2})[T ][\d:]+(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$')
+
+
+def _trim_dates(obj, _path=''):
+    """Обрезать время у всех ISO-дат в теле. -> (новое тело, [что поправили]).
+
+    РЕКУРСИЯ ОБЯЗАТЕЛЬНА, А НЕ «НА ВСЯКИЙ СЛУЧАЙ»: ровно тот случай, ради которого функция
+    написана, - `{'date_range': {'from': '...T00:00:00Z', 'to': '...'}}`, то есть дата НЕ в
+    корне. Правка только верхнего уровня молча ничего бы не сделала и вернула «дат не нашлось».
+    ТРОГАЕМ ТОЛЬКО ТО, ЧТО ТОЧНО ДАТА СО ВРЕМЕНЕМ (жёсткий шаблон): строку-адрес или чей-то
+    идентификатор портить нельзя, а «похоже на дату» по подстроке однажды это сделает.
+    """
+    hits = []
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            nv, sub = _trim_dates(v, '%s.%s' % (_path, k) if _path else str(k))
+            out[k] = nv
+            hits += sub
+        return out, hits
+    if isinstance(obj, (list, tuple)):
+        out = []
+        for i, v in enumerate(obj):
+            nv, sub = _trim_dates(v, '%s[%d]' % (_path, i))
+            out.append(nv)
+            hits += sub
+        return (out if isinstance(obj, list) else tuple(out)), hits
+    if isinstance(obj, str):
+        m = _RE_ISO_DT.match(obj.strip())
+        if m:
+            return m.group(1), [_path or 'значение']
+    return obj, hits
 
 
 #: ЧТО ЗАПОМНИЛИ О СХЕМАХ. Не тело целиком, а РАЗНИЦА ФОРМЫ: какие поля площадка не знает

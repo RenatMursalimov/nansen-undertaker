@@ -623,22 +623,225 @@ behaviour the fuse lets 10 of 10 messages through with the "firehose" preset.
 missing` (http 422, `missing_field`). The venue named its own schema — measurement instead of
 guesswork, recorded next to the field.
 
+## 16. Round nine: boundaries became settings, four debts closed by measurement
+
+Owner's requirement, 26.09, verbatim: the per-person fuse must be adjustable somewhere rather than
+hard-wired; the strength floor must be adjustable too; the credit caps must be adjustable as well.
+And: finish everything that is left.
+
+### A setting that does not stop being a boundary
+
+Round eight made the fuse right in substance and awkward in life: it could only be turned from
+`.env` with a restart. Now everything turns by button — and there is a trap here worth naming:
+**a boundary you can wind up to infinity stops being a boundary and becomes a comment.** That is
+exactly the class of "a safety catch removed by the person it restrains".
+
+So the button exists and the ceiling stays:
+
+| What | Button | Ceiling by button | Who lifts the ceiling |
+|---|---|---|---|
+| Messages per window | ±1 | **12** | only `.env` on the server |
+| Fuse window | ±5 min | 5…120 min | only `.env` |
+| Ring threshold (confidence) | ±5 | 0…100, no ceiling | — |
+| Sentinel credit cap | ±100 / off | — | **owner only** |
+| Lab credit cap | ±1000 / off | — | **owner only** |
+
+The ring threshold deliberately has no ceiling: it changes **composition**, not **volume** (the
+pace is held by the fuse), so there is nothing to restrain. The credit caps, by contrast, are not
+a personal setting but **one wallet for everyone**: a "+100" tap by one subscriber would spend
+everyone else's money, and someone who changed nothing would one day meet "cap exhausted" by
+another person's decision. Hence the cap row is visible to the owner only, and the gate stands
+**twice** — at render time (no button at all) and in the handler (a button can be tapped from an
+old message, and "drawn" is not "allowed").
+
+**Hitting the ceiling is stated as a number.** Asked for 30, you get 12 plus the line "cannot go
+above 12 by button: this is a boundary, not a setting". Silently substituting the number would
+leave the person believing they have 30.
+
+### The screen says when the settings mean silence
+
+A live screenshot from the owner: both venues unchecked, almost every event kind unchecked — with
+that set **not a single** alert would ever arrive, and the screen looked healthy. This is the
+project law again: a presence flag (buttons exist, the sentinel is "on") is not a usefulness flag.
+The screen now lists the reasons for silence: nothing watched / alerts off / every kind unchecked /
+every venue unchecked.
+
+Along the way a **silent defect in the screen itself** surfaced: the venue loop used `_k` as its
+loop variable and overwrote the event-kind set read above it. While that set had no second reader
+the bug broke nothing; the silence guard appeared — and exposed it immediately.
+
+### Debt #1 closed: the funding unit is MEASURED
+
+For nine rounds the number travelled into the card under the provider's field name
+(`funding_rate: 0.1095`), and that was right: the unit had been named neither by docs nor by
+measurement.
+
+**The method** (`tools/sentinel_funding_unit.py`, reproducible in one command, no keys required):
+
+1. **Calibration against a known answer.** Lighter's feed contains `exchange=hyperliquid` rows — a
+   restatement of a venue whose unit is documented (fraction per hour). Cross-checking them against
+   our own reading of Hyperliquid gave **×8.0000 across 95 of 95 pairs (100%)**. The method
+   reproduces the known answer; had it not, the tool would have refused to judge further.
+2. **The judgement.** Median |Variational / HL over the same interval| = **2190.00** across 93 pairs.
+3. **A check that fitting cannot pass.** The "annualised rate" hypothesis predicts a **different**
+   number for each instrument group (intervals per year), and **both** must match: 4-hour — 2190.00
+   against a predicted 2190.00 (off by 1.0000); 8-hour — 1046.03 against 1095.00 (off by 1.047).
+   **One fitted constant cannot explain both groups.**
+
+**Verdict: an annualised FRACTION.** The earlier guess "looks like annual percent" was close but
+wrong: 0.4427 is 44.27% a year, not 0.44%. And the venue's help page did **not** contradict the
+measurement — it spoke about something else: "0.005% per 8h" is 5.48% a year, the same order of
+magnitude. The contradiction was in our reading, not in the source.
+
+Live numbers now read: ETH 10.95% a year, BTC 1.36%, XAU 5.19%, US500 zero.
+
+Three venues, three different units — and **one place of knowledge** (`venues.FUNDING_UNIT`, each
+entry stating whether it came from docs or from measurement). Proof of the conversion: three
+different raw numbers (0.1095 / 1.25e-05 / 0.0001) at different intervals (8h / 1h / 8h) yield
+**identical +10.95% a year** — that is one market in three records.
+
+**And a dead threshold came alive.** `config.funding_apr_pct()` (60% a year) had been declared nine
+rounds earlier and read by **no caller** — the "parameter accepted but never applied" shape. The
+reason was honest: there was nothing to compare a raw field against. Now `funding_extreme` requires
+**both** a percentile ≥0.98 **and** an absolute 60% a year. Where the unit is unknown the threshold
+is not applied, but confidence takes a penalty stating that this venue's funding unit is unmeasured.
+
+### The Lighter debt closed: a third venue
+
+The old reason for keeping it off ("the engine reads positions by address, not a market list; that
+endpoint is heavy and we were asked not to spam it") was **true about `oc_perps` and untrue about
+the venue**. Lighter has a public REST, and it simply had to be tried: `orderBookDetails` — 200,
+370 KB, 22 ms, **235 markets in one GET**, 210 of them active with price, dollar volume, open
+interest and funding. Two requests per tick versus 235 — "do not spam" is honoured literally.
+
+What the venue does not provide is not invented: no long/short split of open interest and no size
+quotes. Both go into `missing` and the card stays silent about them. `mark - index` is **not**
+substituted for the spread: that is basis, not spread, and calling one the other is the same
+substitution the word `raw` in the funding field name guards against.
+
+**The instrument path was measured by a browser, and only by it.** Five paths over plain GET
+returned 200 and **exactly 9920 bytes** of the same shell — for a single-page app, status 200
+proves nothing. The proof came from the rendered title: "2,701.35 • ETH • Lighter". Verified across
+four tickers: ETH, BTC, XRP, PAXG — each named itself. The lesson outlives the line: **"200 on a
+path" and "the path works" are different claims.**
+
+A third venue helps beyond event volume: price cross-checking turns from "one against one" (who is
+right is unknown) into "two against one".
+
+### Address clusters (3.6): counting people, not wallets
+
+Ignition counts **distinct addresses**, not trades — that was the module's first honest decision.
+But an address is not a person either: five wallets funded from one are **one participant**, and
+"5 smart addresses bought" overstates the signal by exactly as many wallets as that participant
+carved out for itself.
+
+Built as a **confidence penalty, not a new event** — as the roadmap asked, and that is worth more
+than a new event. Linked addresses do not prove intent: exchanges, funds and bots spread positions
+across addresses as a matter of routine. Cancelling the event would throw away real buying;
+instead the count of independent participants is recomputed, the reason is spelled out, and the
+decision stays with the person.
+
+Design: links are counted **only inside our own set** (any live address has dozens of relatives —
+that is noise from someone else's graph); they merge into **groups, not pairs** (A↔B and B↔C are
+one participant); we check the **three largest** buyers (exactly that many endpoint calls); the cap
+is checked **before** the first call, otherwise half a graph would pass for a whole one. The penalty
+grows with the merged share: "2 of 12 linked" and "3 of 3" are different news. Could not check — a
+**separate line** with a small penalty: the signal is not at fault for our failure.
+
+The card headline now leads with participants: "**3** independent participants (4 addresses)".
+
+### The prediction-market bridge (3.7)
+
+Every sentinel signal answers "what already happened to the price". Polymarket answers something
+else: "what is expected". Next to a move, those are two independent pictures of one event.
+
+The main danger here is semantic: a "ticker → external object" link may be taken **only** from a
+verified mapping, because inferring one from a ticker match has already cost this project three
+screens. On Variational that is not theory — ticker `A` there is the Vaulta token, and `US` is
+Talus.
+
+**Three locks:** search by the full **name** (the venue provides it), never by ticker; short and
+generic names (`A`, `US`, `Gold`, `ETF`) are never mapped; the found market is verified **backwards**
+— the name in the title **and** the category **and** a price-question marker.
+
+The third lock was found by **measurement, not reflection**: the fixture "Will the Bitcoin
+Conference sell out?" passed two locks (the name is there, the category "crypto" too) while the
+market is not about price. The docstring promised the rejection before the code learned it.
+
+**Bridge measured across 13 live instruments:** four matched — BTC ($13.97M volume), ETH ($6.15M),
+SOL ($1.0M), XRP ($0.66M), all correct. Nine stayed silent. **Zero false matches:** Vaulta, Talus,
+XAGS, FWDI, US500, MSTR, MRNA, Gold — each with a stated reason.
+
+Built as **enrichment, not an event**, for a measurable reason: the per-market trade flow comes
+only from `prediction-market/trades`, whose schema has **not** been taken by a live probe, and
+building an alert on an unparsed shape is a presence flag posing as a usefulness flag. The holder
+breakdown uses the existing `pm_reputation` door (its schema has been taken). Market lookup is free
+and always runs; the wallet breakdown costs credits and runs under the cap — with the cap exhausted
+at least the market still arrives.
+
+### The lab: "empty" was an honest answer to the wrong question
+
+The owner's live run returned zero rows with the reason "empty", while the venue had at that very
+moment answered with a meaningful 422 about the date format. The cause was not the venue:
+`fail_reason()` reads the **current** call box, and the call stood **after** leaving
+`with scene(...)` — that is, it asked a different, empty box. The same class as round eight's main
+defect: reading outside the scope where the state lives.
+
+Also:
+* the venue said verbatim that time components are not supported for this endpoint — so this handle
+  got **its own** `_days_range`. The shared `_date_range` was left alone: it has nineteen live
+  readers that need ISO with time, and "fixing" it would have broken them;
+* the body-repair logic was taught this hint — it is **actionable**, we simply were not reading it.
+  `_apply_hint` now trims time from ISO dates recursively (the date sits inside `date_range`, not at
+  the root);
+* **a rejected request no longer burns the cap.** In the live run the balance dropped to 9995 with
+  zero rows returned — the cap shrank because of our own mistake in the body. An empty 200 still
+  burns: the venue did the work;
+* the venue's words are shown **only when it actually complained**. A live probe caught it: a
+  complaint about the date from the **previous** request was being glued onto an empty 200
+  (`_LAST_ERR` lives per process, and matching by path does not save you from that).
+
+### Evidence
+
+426 checks in `tests/test_sentinel.py` (was 348). Two lessons about the tests themselves:
+
+* three checks of the "venue is off with a stated reason" mechanism stood on Lighter and **went red
+  because of good news**. The right answer is not to delete them: the mechanism is still needed, and
+  the next venue will arrive switched off again. The rule is now verified against a **synthetic**
+  venue, while the three real ones are checked for the opposite — that all are live;
+* the check "`judge` does not go to the network" searched for a substring in the source and **went
+  red on a comment** that merely references the module. Guard `gt01` forbids exactly this: a test
+  may be neither green because of a comment nor red because of one. It is now behavioural — we swap
+  the network door for a throwing one and watch whether the judge reaches outside.
+
 ## 12. Limits, debts and refuted hypotheses
 
 **The boundary with the trading contour is hard.** No file in `sentinel/` imports
 `nansen_signer` or calls quote/prepare/execute. The `ISOLATION` test holds it (import graph plus
 a call search). Entering a position happens by hand on the venue.
 
-**Verification debts:**
+**Verification debts.** The first two are CLOSED in round nine — kept here struck through rather
+than deleted: *how* they closed is worth more than the fact that they did.
 
-1. **The unit of `funding_rate`** - not stated by the provider, and the help page contradicts
-   the measurement. Until measured, there is no absolute funding threshold (percentile only).
-2. **A deep link to a single instrument** - not measured (403 on paths, and 200 on a query
-   parameter proves nothing).
+1. ~~**The unit of `funding_rate`**~~ — **CLOSED 26.09 by measurement.** An annualised fraction
+   (0.1095 = 10.95% a year). Method: cross-check against Hyperliquid (documented unit) plus
+   calibration on a known answer plus a two-interval-group check that fitting would have failed.
+   Reproduce with `python3 tools/sentinel_funding_unit.py`. The absolute funding threshold (60% a
+   year) now works alongside the percentile.
+2. ~~**A deep link to a single instrument**~~ — **CLOSED:** Variational in round seven, Lighter in
+   round nine, both by browser. The old verdict "403 on paths" was true in fact and lazy in method:
+   for a single-page app the path is visible only from the rendered page, and status 200 proves
+   nothing (five different Lighter paths returned the same 9920-byte shell).
 3. **Asset class for 461 of 553 instruments** - not derivable from the name. Metals, oil and
    indices sit in `unknown`.
 4. **The hot ring does not survive a restart** - for 90 minutes after a deploy, moves on the
    15-minute window are not published.
+5. **The schema of `prediction-market/trades` has not been taken by a live probe.** Until it is,
+   the prediction-market bridge stays ENRICHMENT rather than an event: building an alert on an
+   unparsed response shape is a presence flag posing as a usefulness flag.
+6. **The "asset → Polymarket market" bridge covers 4 of 13 instruments checked.** That is a
+   measured boundary rather than a defect — there are no XAGS or FWDI markets on Polymarket. But
+   even for crypto the bridge rests on a name search, not on a verified mapping table.
 
 **Refuted hypotheses, written down so they do not come back:**
 
@@ -650,6 +853,19 @@ a call search). Entering a position happens by hand on the venue.
 * "Sigma measured as zero means infinite unusualness." **Wrong and dangerous:** zero sigma more
   often means the provider repeated the same number. The first draft went silent because of it -
   a 4 % move in 15 minutes was not published at all.
+* "Alerts keep coming despite the switch being off, so the presets must be to blame" (round eight).
+  **Wrong:** a preset only touches personal settings. The cause was that ALL checks stood at
+  queueing time while delivery never read settings at all.
+* "Lighter has no public market list, so the venue cannot be taken" (held for eight rounds).
+  **Wrong:** true about our own `oc_perps` engine, untrue about the venue. Its public REST returns
+  235 markets in one request. Lesson: "we have no code for this" and "this does not exist" are
+  different claims.
+* "Variational's `funding_rate` looks like annual PERCENT" (held for nine rounds). **Close but
+  wrong:** it is an annualised FRACTION, i.e. a hundred times larger than it read. This also
+  refuted "the venue's help page contradicts the measurement" — it was talking about something else.
+* "Two locks (asset name in the title plus market category) are enough to map a Polymarket market
+  to an asset." **Wrong:** "Will the Bitcoin Conference sell out?" passes both. A third marker is
+  required — that the market is about price at all.
 
 ---
 

@@ -13,6 +13,7 @@
 ветка возвращает строку, включая «уже в дозоре» и «такого инструмента на площадке нет».
 """
 
+import os
 import re
 
 from . import config, engine, outbox, store
@@ -56,6 +57,19 @@ def parse(text):
         return ('quiet', {'from': int(m.group(1)) % 24, 'to': int(m.group(2)) % 24})
     if re.match(r'^тихо\s+(выкл|off)$', rest):
         return ('quiet', {'from': None, 'to': None})
+    # ПРЕДОХРАНИТЕЛЬ И ПОРОГ ЗВОНКА - СЛОВАМИ ТОЖЕ. Закон этого модуля: у кнопки и команды
+    # ОДИН разбор и одно поведение, иначе «кнопкой одно, словами другое» - и это уже ловили.
+    m = re.match(r'^предохранитель\s+(\d{1,3})(?:\s*/\s*(\d{1,3}))?$', rest)
+    if m:
+        return ('burst', {'n': int(m.group(1)),
+                          'win': int(m.group(2)) if m.group(2) else None})
+    if re.match(r'^предохранитель\s+(сброс|как общий|общий)$', rest):
+        return ('burst', {'n': None, 'win': None})
+    m = re.match(r'^(?:звонок|сила)\s+(?:от\s+)?(\d{1,3})$', rest)
+    if m:
+        return ('minsev', {'sev': int(m.group(1))})
+    if re.match(r'^(?:звонок|сила)\s+(сброс|как общий|общий)$', rest):
+        return ('minsev', {'sev': None})
     if re.match(r'^(отч[её]т|попадания)$', rest):
         return ('report', {})
     if re.match(r'^(стата|состояние|статус)$', rest):
@@ -76,6 +90,8 @@ HELP = (
     'дозор порог 5 — молчать про движения слабее 5%\n'
     'дозор тихо 22 8 — тихие часы (UTC), «дозор тихо выкл» — снять\n'
     'дозор алерты выкл — пауза без потери списка\n'
+    'дозор предохранитель 3 / 10 — не больше 3 сообщений за 10 минут (остальное сводкой)\n'
+    'дозор звонок 75 — звонить только при уверенности от 75/100, слабее — сводкой\n'
     'дозор сводки выкл — только цифры, без Нансена и твиттера\n'
     'дозор отчёт — попадания за неделю (или честное «выборка мала»)\n'
     '\n'
@@ -112,11 +128,17 @@ def status_text(uid):
     # ПРЕДОХРАНИТЕЛЬ ВИДЕН ЧЕЛОВЕКУ И НАЗВАН ГРАНИЦЕЙ. Ограничение, о котором не сказано на
     # экране, человек примет за поломку («почему пришла сводка, а не алерт») - и будет прав:
     # молчащее правило неотличимо от сбоя.
-    _bw, _bm = config.burst_window_sec(), config.burst_max()
+    _bm, _bw, _capped = store.burst_for(uid)
     lines.append('Предохранитель: не больше %d сообщений за %d мин (за %d мин уже %d). '
                  'Остальное — сводкой раз в %d мин.'
                  % (_bm, _bw // 60, _bw // 60, store.sent_in_window(uid, _bw),
                     config.digest_sec() // 60))
+    if _capped:
+        # УПОР В ПОТОЛОК НАЗЫВАЕТСЯ ЧИСЛОМ. Иначе экран показал бы 12 там, где человек просил
+        # 30, и это читалось бы как потерянное нажатие, а не как граница.
+        lines.append('  ⚠️ выше %d кнопкой не поднять: это граница, а не настройка '
+                     '(правится только в .env на сервере)' % store._BURST_HARD)
+    lines.append('Порог звонка: уверенность от %d/100 (ниже — в сводку)' % store.min_sev_for(uid))
     if not config.deliver_on():
         # РУБИЛЬНИК ОБЪЯВЛЯЕТСЯ НА ЭКРАНЕ ПЕРВЫМ ДЕЛОМ: иначе человек крутит свои настройки и
         # не понимает, почему ничего не приходит, а причина лежит в `.env` на сервере.
@@ -197,6 +219,29 @@ def route(uid, text):
             out.append('Горизонт 60 минут: «продолжение движения» значит, что через час цена '
                        'была дальше в ту же сторону. Это НЕ доходность и не обещание.')
             return '\n'.join(out)
+        if act == 'burst':
+            if a['n'] is None:
+                store.settings_set(uid, burst_max=None, burst_win_min=None)
+                n, w, _ = store.burst_for(uid)
+                return ('✅ Предохранитель вернулся к общему: %d сообщений за %d мин' % (n, w // 60))
+            store.settings_set(uid, burst_max=int(a['n']),
+                               burst_win_min=(int(a['win']) if a['win'] else None))
+            n, w, capped = store.burst_for(uid)
+            # УПОР В ПОТОЛОК НАЗЫВАЕТСЯ ЧИСЛОМ, А НЕ МОЛЧА ПОДМЕНЯЕТСЯ. Человек просил 30,
+            # получил 12 - и обязан узнать об этом сразу, иначе будет считать, что у него 30.
+            return ('✅ Предохранитель: %d сообщений за %d мин%s' % (
+                n, w // 60,
+                ('\n⚠️ Просили %d, но выше %d кнопкой нельзя: это граница, а не настройка. '
+                 'Остальное не теряется — приедет сводкой.' % (a['n'], store._BURST_HARD))
+                if capped else ''))
+        if act == 'minsev':
+            if a['sev'] is None:
+                store.settings_set(uid, min_sev=None)
+                return '✅ Порог звонка вернулся к общему: %d/100' % store.min_sev_for(uid)
+            store.settings_set(uid, min_sev=int(a['sev']))
+            v = store.min_sev_for(uid)
+            return ('✅ Звонок от %d/100. Что слабее — приедет сводкой, а не пропадёт.' % v
+                    if v else '✅ Звонок обо всём (порог 0). Темп всё равно держит предохранитель.')
         if act == 'health':
             return outbox.status_line(_lang(uid))
     except Exception as e:
@@ -270,6 +315,29 @@ _T = {
     'nothing': {'ru': 'ничего', 'en': 'nothing'},
     'btn_help': {'ru': '❓ Как это работает', 'en': '❓ How it works'},
     'saved': {'ru': 'Готово', 'en': 'Saved'},
+    # ── КРУГ 9: предохранитель, порог звонка и объяснение тишины ───────────────────────────
+    'fuse_line': {'ru': 'Предохранитель: %d сообщений / %d мин · звонок от %d/100',
+                  'en': 'Fuse: %d messages / %d min · rings from %d/100'},
+    'fuse_capped': {'ru': '  ⚠️ выше %d кнопкой не поднять: это граница, а не настройка',
+                    'en': '  ⚠️ cannot go above %d by button: this is a boundary, not a setting'},
+    'burst': {'ru': '🚦 Не больше: %d сообщений', 'en': '🚦 At most: %d messages'},
+    'bwin': {'ru': '🚦 …за окно: %d мин', 'en': '🚦 …per window: %d min'},
+    'sev': {'ru': '⚖️ Звонок от: %d/100', 'en': '⚖️ Rings from: %d/100'},
+    # ЗАГОЛОВОК ГОВОРИТ О ПОСЛЕДСТВИИ, А НЕ О НАСТРОЙКЕ: человеку важно «алертов не будет»,
+    # а не «набор пуст» - второе он и так видит по галочкам, но не делает из этого вывода.
+    's_head': {'ru': '⚠️ При этих настройках алертов НЕ БУДЕТ:',
+               'en': '⚠️ With these settings NO alerts will arrive:'},
+    's_nosubs': {'ru': 'ни один инструмент не под дозором — «дозор BTC» или «Вся площадка»',
+                 'en': 'nothing is being watched — try "watch BTC" or "Whole venue"'},
+    's_off': {'ru': 'алерты выключены тумблером', 'en': 'alerts are switched off'},
+    's_nokinds': {'ru': 'все виды событий сняты — включите хотя бы один',
+                  'en': 'every event kind is unchecked — switch at least one on'},
+    's_novenues': {'ru': 'все площадки сняты — включите хотя бы одну',
+                   'en': 'every venue is unchecked — switch at least one on'},
+    # ── ВЛАДЕЛЬЧЕСКИЕ КАПЫ КРЕДИТОВ (виден только владельцу) ───────────────────────────────
+    'cap_nansen': {'ru': '💳 Кап дозора: %s кр/сутки', 'en': '💳 Sentinel cap: %s cr/day'},
+    'cap_lab': {'ru': '🧪 Кап лаборатории: %s кр/сутки', 'en': '🧪 Lab cap: %s cr/day'},
+    'cap_off': {'ru': 'Выключить кап', 'en': 'Cap off'},
     'free': {'ru': 'Nansen на время хакатона бесплатен: суточный кап расхода выключен, '
                    'но расход измеряется и виден строкой выше.',
              'en': 'Nansen is free for the hackathon: the daily spend cap is off, but spend is '
@@ -280,6 +348,24 @@ _T = {
 def _t(key, lang='ru'):
     v = _T.get(key) or {}
     return v.get('en' if lang == 'en' else 'ru') or key
+
+
+def _is_owner(uid):
+    """Владелец/админ. -> bool. Читаем `ADMIN_IDS` из окружения, а не импортируем `bot`.
+
+    ПОЧЕМУ НЕ `import bot`: этот модуль импортируется САМИМ ботом, и обратный импорт замкнул бы
+    круг. Плюс `sentinel/` уезжает в публичную выжимку, где `bot.py` нет вовсе.
+    ПОЧЕМУ ГЕЙТ ВООБЩЕ: кнопки ниже меняют ОБЩИЙ кошелёк кредитов, а не личную настройку. Без
+    гейта любой подписчик потратил бы чужие деньги, и владелец узнал бы об этом строкой «кап
+    исчерпан» на своём экране.
+    ПУСТОЙ СПИСОК = НИКОМУ, а не всем: ошибка в `.env` не имеет права открыть общий кошелёк.
+    """
+    try:
+        raw = os.getenv('ADMIN_IDS') or ''
+        ids = {int(x) for x in re.findall(r'-?\d+', raw)}
+    except Exception:
+        ids = set()
+    return bool(ids) and int(uid) in ids
 
 
 def _lang(uid):
@@ -323,6 +409,11 @@ def menu_text(uid, lang=None):
     else:
         out.append(_t('watch_n', lang) % (len(subs), ', '.join(subs)))
     out.append(_t('today', lang) % (store.sent_today(uid), store.cap_for(uid)))
+    # ПРЕДОХРАНИТЕЛЬ И ПОРОГ ЗВОНКА - ЧИСЛАМИ НА ЭКРАНЕ, РЯДОМ СО СВОИМИ КНОПКАМИ.
+    _bm, _bw, _capped = store.burst_for(uid)
+    out.append(_t('fuse_line', lang) % (_bm, _bw // 60, store.min_sev_for(uid)))
+    if _capped:
+        out.append(_t('fuse_capped', lang) % store._BURST_HARD)
     _k = store.kinds_for(uid)
     _p = store.parts_for(uid)
     _kn = {'move_up': _t('k_move', lang), 'vol_surge': _t('k_vol', lang),
@@ -344,9 +435,12 @@ def menu_text(uid, lang=None):
         _off = [(k, _vv.why_off(k, lang)) for k in _vv.VENUES
                 if not (_vv.VENUES[k] or {}).get('fetch')]
         _tpl = ' · %s not yet (%s)' if lang == 'en' else ' · %s пока нет (%s)'
-        for _k, _w in _off:
+        # ИМЯ ЦИКЛА СВОЁ (`_vk`), А НЕ `_k`: раньше здесь стояло `_k`, и цикл затирал набор ВИДОВ
+        # событий, прочитанный выше. Ошибка тихая - набор дальше по функции уже не читался, - и
+        # она немедленно всплыла, как только читатель появился (сторож тишины ниже).
+        for _vk, _w in _off:
             if _w:
-                _vline += _tpl % (_vv.title(_k), _w)
+                _vline += _tpl % (_vv.title(_vk), _w)
         out.append('%s %s' % (_t('venues', lang), _vline))
     except Exception as _ve:
         print('[sentinel] строка площадок не собралась: %s' % str(_ve)[:90])
@@ -366,6 +460,33 @@ def menu_text(uid, lang=None):
                               else _t('nothing', lang)))
     except Exception as _e:
         print('[sentinel] разрез событий не собрался: %s' % str(_e)[:90])
+    # ═══ НАСТРОЙКИ, ОЗНАЧАЮЩИЕ ТИШИНУ, НАЗЫВАЮТСЯ ВСЛУХ ═══
+    # ЖИВОЙ СКРИНШОТ ВЛАДЕЛЬЦА 26.09: обе площадки ✗ и почти все виды ✗ - при таком наборе не
+    # придёт НИ ОДНОГО алерта никогда, а экран об этом молчал и выглядел рабочим. Это тот самый
+    # закон проекта: признак наличия (кнопки есть, дозор «включён») не равен признаку пользы.
+    # ПОРЯДОК ПРИЧИН - ОТ САМОЙ СИЛЬНОЙ: выключенные алерты глушат всё, поэтому о них первыми.
+    # ПЕРЕСПРАШИВАЕМ НАБОР ВИДОВ, А НЕ БЕРЁМ `_k` ИЗ КОДА ВЫШЕ. Живая проба 26.09 показала, что
+    # `_k` к этому месту УЖЕ НЕ ТОТ: цикл площадок выше использует `_k` как переменную цикла и
+    # затирает набор видов именем площадки. Проверка «виды сняты» молча не срабатывала - то есть
+    # сторож тишины сам был тихо сломан. Своё имя стоит дешевле, чем разбор такого второй раз.
+    _kinds_now = store.kinds_for(uid)
+    _why_silent = []
+    if not subs:
+        _why_silent.append(_t('s_nosubs', lang))
+    if not s.get('alerts_on'):
+        _why_silent.append(_t('s_off', lang))
+    if not _kinds_now:
+        _why_silent.append(_t('s_nokinds', lang))
+    try:
+        if not store.venues_for(uid):
+            _why_silent.append(_t('s_novenues', lang))
+    except Exception:
+        pass
+    if _why_silent:
+        out.append('')
+        out.append(_t('s_head', lang))
+        for _w in _why_silent:
+            out.append('  • %s' % _w)
     out.append('')
     out.append(outbox.status_line(lang))
     out.append('')
@@ -390,6 +511,7 @@ def menu_kb(uid, lang=None):
     mp = s.get('min_pct')
     cd = int(s.get('cooldown_min') or (config.cooldown_sec() // 60))
     cap = store.cap_for(uid)
+    bm, bw, _bcap = store.burst_for(uid)
     q = (_t('quiet_off', lang) if s.get('quiet_from') is None
          else '%02d-%02d UTC' % (int(s['quiet_from']), int(s['quiet_to'])))
     kinds = store.kinds_for(uid)
@@ -412,6 +534,22 @@ def menu_kb(uid, lang=None):
          B('+', callback_data='sen:cd:15')],
         [B('−', callback_data='sen:cap:-5'), B(_t('cap', lang) % cap, callback_data='sen:cap:0'),
          B('+', callback_data='sen:cap:5')],
+        # ═══ ПРЕДОХРАНИТЕЛЬ И ПОРОГ ЗВОНКА - КНОПКАМИ. ТРЕБОВАНИЕ ВЛАДЕЛЬЦА 26.09 ═══
+        # «Предохранитель на ЧЕЛОВЕКА нужно где-то настраивать, а не хардкодом зашивать»,
+        # «порог силы тоже надо настраивать». Раньше крутилось только из `.env` с рестартом.
+        # ДВА РЯДА, А НЕ ОДИН: у предохранителя ДВА числа (сколько и за какое окно), и
+        # склеивать их в одну кнопку значило бы прятать половину настройки.
+        # Средняя кнопка СБРАСЫВАЕТ В ОБЩЕЕ значение - так же, как у порога и паузы выше:
+        # «вернуть как было» обязано быть одним тапом, иначе человек подбирает число обратно.
+        [B('−', callback_data='sen:bm:-1'),
+         B(_t('burst', lang) % bm, callback_data='sen:bm:0'),
+         B('+', callback_data='sen:bm:1')],
+        [B('−', callback_data='sen:bw:-5'),
+         B(_t('bwin', lang) % (bw // 60), callback_data='sen:bw:0'),
+         B('+', callback_data='sen:bw:5')],
+        [B('−', callback_data='sen:sv:-5'),
+         B(_t('sev', lang) % store.min_sev_for(uid), callback_data='sen:sv:0'),
+         B('+', callback_data='sen:sv:5')],
         [B(_t('quiet', lang) % q, callback_data='sen:q:next')],
         # ЧТО ПРИСЫЛАТЬ - ТУМБЛЕРАМИ С ГАЛОЧКОЙ. Просьба владельца дословно: «настраивать, что
         # приходят алерты движения плюс нансен движения существенные, или просто Нансен сигналы,
@@ -446,7 +584,39 @@ def menu_kb(uid, lang=None):
         [B(_t('btn_help', lang), callback_data='sen:help')],
         [B(_t('btn_refresh', lang), callback_data='sen:home')],
     ]
+    # ═══ ВЛАДЕЛЬЧЕСКИЙ РАЗДЕЛ: КАПЫ КРЕДИТОВ. Требование владельца 26.09 - «капа тоже
+    # настраиваться где-то должна». Кредиты - ОДИН кошелёк на всех, поэтому не в личных
+    # настройках: кнопка «+100» у одного подписчика потратила бы деньги остальных.
+    # РЯДА НЕТ У ТЕХ, КОМУ ОН НЕ ПОЛОЖЕН - не «есть, но с отказом при нажатии»: кнопка,
+    # которая всегда отвечает «нельзя», это обещание, которого мы не держим.
+    if _is_owner(uid):
+        _nc, _lc = store.nansen_cap(), store.lab_cap()
+        rows.insert(-1, [B(_t('cap_nansen', lang) % _capw(_nc, lang),
+                           callback_data='sen:gn:0')])
+        rows.insert(-1, [B('−100', callback_data='sen:gn:-100'),
+                         B('+100', callback_data='sen:gn:100'),
+                         B(_t('cap_off', lang), callback_data='sen:gn:off')])
+        rows.insert(-1, [B(_t('cap_lab', lang) % _capw(_lc, lang), callback_data='sen:gl:0')])
+        rows.insert(-1, [B('−1000', callback_data='sen:gl:-1000'),
+                         B('+1000', callback_data='sen:gl:1000'),
+                         B(_t('cap_off', lang), callback_data='sen:gl:off')])
     return InlineKeyboardMarkup(rows)
+
+
+def _capw(v, lang='ru'):
+    """Кап словами: ноль — это «выключен», а не «нулевой остаток». -> str.
+
+    РАЗНИЦА НЕ КОСМЕТИЧЕСКАЯ: «0» на кнопке читается как исчерпанный лимит, то есть ровно
+    наоборот. Этот же класс ошибки уже ловили в `budget_left` (ноль капа отдавал ноль остатка,
+    и «лимита нет» было неотличимо от «лимит кончился»).
+
+    ЯЗЫК АРГУМЕНТОМ, А НЕ РУССКОЕ СЛОВО НАСОВСЕМ: строка попадает НА КНОПКУ, а по экранам
+    ходит обходчик e2e и требует, чтобы на `lang=en` не было кириллицы. Русское слово внутри
+    английского экрана покраснело бы в ЧУЖОМ тесте и выглядело бы как его поломка.
+    """
+    if v:
+        return '%d' % v
+    return 'off' if lang == 'en' else 'выключен'
 
 
 #: ЛЕСТНИЦА ТИХИХ ЧАСОВ - ЗАКРЫТЫЙ СПИСОК, А НЕ ВВОД ЧИСЛА. Ввод часов кнопками требует двух
@@ -535,6 +705,49 @@ async def handle_callback(update, context):
             else:
                 store.settings_set(uid, daily_cap=max(1, min(200,
                                                              store.cap_for(uid) + int(arg))))
+        elif act == 'bm':
+            # ПРЕДОХРАНИТЕЛЬ: СКОЛЬКО СООБЩЕНИЙ. Требование владельца 26.09 - настройка, а не
+            # хардкод. ПОТОЛОК ОСТАЁТСЯ: `store.burst_for` клампит и говорит об упоре на экране,
+            # иначе граница превратилась бы в комментарий (закон о предохранителях).
+            if arg == '0':
+                store.settings_set(uid, burst_max=None)       # вернуть общее значение
+            else:
+                _cur = store.burst_for(uid)[0]
+                store.settings_set(uid, burst_max=max(1, min(store._BURST_HARD,
+                                                             _cur + int(arg))))
+        elif act == 'bw':
+            # ПРЕДОХРАНИТЕЛЬ: ОКНО. Ниже 5 минут окно теряет смысл (оно перестаёт отличаться от
+            # паузы по инструменту), выше двух часов - становится суточным потолком под чужим
+            # именем. Обе границы названы в `store`.
+            if arg == '0':
+                store.settings_set(uid, burst_win_min=None)
+            else:
+                _cur = store.burst_for(uid)[1] // 60
+                store.settings_set(uid, burst_win_min=max(5, min(store._WIN_HARD_MIN,
+                                                                 _cur + int(arg))))
+        elif act in ('gn', 'gl'):
+            # ОБЩИЕ КАПЫ КРЕДИТОВ - ТОЛЬКО ВЛАДЕЛЬЦУ. Гейт стоит И на отрисовке (ряда нет), И
+            # здесь: кнопку можно нажать по старому сообщению после того, как права изменились,
+            # и «нарисовано» не равно «разрешено». Этот класс в проекте уже ловили.
+            if not _is_owner(uid):
+                await _send(q, context, 'Общие капы кредитов меняет только владелец.')
+                return
+            _name = store._CAP_NANSEN if act == 'gn' else store._CAP_LAB
+            if arg == 'off':
+                store.gcap_set(_name, 0)          # 0 = потолка нет (см. budget_left)
+            elif arg == '0':
+                store.gcap_set(_name, None)       # вернуть управление .env
+            else:
+                _cur = store.nansen_cap() if act == 'gn' else store.lab_cap()
+                store.gcap_set(_name, max(0, _cur + int(arg)))
+        elif act == 'sv':
+            # ПОРОГ ЗВОНКА. Меняет СОСТАВ, а не количество (темп держит предохранитель), поэтому
+            # потолка сверху нет и ноль разрешён: ноль значит «звони обо всём, что нашёл».
+            if arg == '0':
+                store.settings_set(uid, min_sev=None)
+            else:
+                store.settings_set(uid, min_sev=max(0, min(100,
+                                                           store.min_sev_for(uid) + int(arg))))
         elif act == 'k':
             # ДВИЖЕНИЯ - ОДИН ТУМБЛЕР НА ДВА ВИДА. Разделять «вверх» и «вниз» кнопками значит
             # предлагать человеку подписку на половину рынка: тот, кто хочет знать о падении,

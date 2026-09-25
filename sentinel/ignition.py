@@ -101,9 +101,16 @@ def group(trades, now=None, window_min=None):
         g = out.setdefault(k, {'chain': chain, 'address': addr, 'symbol': sym,
                                'wallets': set(), 'labels': [], 'usd': 0.0, 'trades': 0,
                                'mcap': None, 'age_days': None, 'last_ts': None,
-                               'txs': set()})
+                               'txs': set(),
+                               # ОБЪЁМ ПО КАЖДОМУ АДРЕСУ. Нужен проверке связей (`clusters`):
+                               # она смотрит не все адреса, а три САМЫХ КРУПНЫХ - именно они
+                               # делают объём, и именно про них важно знать, не один ли это
+                               # человек. Без этого поля «три самых крупных» было бы «три
+                               # первых по алфавиту», то есть обещанием, которого код не держит.
+                               'usd_by': {}})
         if who:
             g['wallets'].add(who)
+            g['usd_by'][who] = g['usd_by'].get(who, 0.0) + usd
         lb = str(t.get('trader_address_label') or '').strip()
         if lb and lb not in g['labels']:
             g['labels'].append(lb)
@@ -165,7 +172,26 @@ def judge(agg, now=None):
                         'usd': usd, 'trades': agg.get('trades'), 'mcap': mcap,
                         'mcap_bps': bps, 'age_days': age, 'lag_s': lag,
                         'window_min': config.ign_window_min(), 'step': step,
+                        # АДРЕСА ПОКУПАТЕЛЕЙ, ОТСОРТИРОВАННЫЕ ПО ОБЪЁМУ - для проверки связей
+                        # (`sentinel/clusters.py`, пункт 3.6 роудмапа). В карточку они НЕ
+                        # печатаются: человеку нужен вывод («независимых участников 3»), а не
+                        # двенадцать хэшей, и место в карточке конечно.
+                        'wallet_addrs': _top_wallets(agg, 6),
                         'penalties': notes}}
+
+
+def _top_wallets(agg, limit=6):
+    """Адреса покупателей по убыванию их объёма. -> [str].
+
+    ПО ОБЪЁМУ, А НЕ ПО ПОРЯДКУ ПОЯВЛЕНИЯ: проверка связей смотрит первые три, и «первые» обязаны
+    значить «крупнейшие», иначе мы проверяем случайных, а объём делают другие. Множество в
+    Python не упорядочено вовсе, так что без сортировки набор менялся бы между запусками.
+    """
+    by = agg.get('usd_by') or {}
+    ws = list(agg.get('wallets') or ())
+    # ВТОРОЙ КЛЮЧ СОРТИРОВКИ - САМ АДРЕС: при равных объёмах порядок обязан быть устойчивым,
+    # иначе один и тот же набор даёт разные ответы, и расследование расхождения невозможно.
+    return sorted(ws, key=lambda a: (-float(by.get(a) or 0.0), a))[:int(limit)]
 
 
 def scan(now=None, fetch=None):
