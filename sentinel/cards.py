@@ -41,6 +41,7 @@ _KIND_TITLE = {
     'move_up': '📈',
     'move_down': '📉',
     'oi_surge': '🧱',
+    'vol_surge': '💧',
     'funding_extreme': '💸',
     'spread_shock': '⚠️',
     'ignition': '🔥',
@@ -50,6 +51,7 @@ _KIND_WORD = {
     'move_up': 'вверх',
     'move_down': 'вниз',
     'oi_surge': 'открытый интерес',
+    'vol_surge': 'всплеск оборота',
     'funding_extreme': 'ставка в хвосте',
     'spread_shock': 'котировка разъехалась',
     'ignition': 'смарт-зажигание',
@@ -173,6 +175,10 @@ def card(ev, lang='ru', bot_un=None):
         lines.append('%s <b>%s</b>  интерес <b>%s</b> за час (%s)'
                      % (icon, tick, _pct(p.get('oi_change_pct')),
                         _usd(p.get('oi_change_usd'))))
+    elif kind == 'vol_surge':
+        lines.append('%s <b>%s</b>  оборот <b>%s</b> за час (+%s)'
+                     % (icon, tick, _pct(p.get('vol_change_pct')),
+                        _usd(p.get('vol_change_usd'))))
     elif kind == 'ignition':
         lines.append('%s <b>%s</b>  %d умных адреса купили на <b>%s</b>'
                      % (icon, tick, int(p.get('wallets') or 0), _usd(p.get('usd'))))
@@ -216,6 +222,11 @@ def card(ev, lang='ru', bot_un=None):
                                                    esc(p['address'])))
     else:
         _row = ['Цена <b>%s</b>' % _price(p.get('mark'))]
+        if kind == 'vol_surge' and p.get('ret60_pct') is not None:
+            # ПРИ ВСПЛЕСКЕ ОБОРОТА ГЛАВНЫЙ ВОПРОС - «А ЦЕНА-ТО ПОШЛА?». Оборот без движения это
+            # спор на месте, оборот с движением - направление; не сказать этого значит оставить
+            # человека с половиной картины.
+            _row.append('цена за час %s' % _pct(p['ret60_pct']))
         if kind in ('move_up', 'move_down'):
             if p.get('ret60_pct') is not None:
                 _row.append('60м %s' % _pct(p['ret60_pct']))

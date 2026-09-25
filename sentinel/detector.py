@@ -46,7 +46,8 @@ W15, W60 = 900, 3600
 #: объявляется НЕДОСТУПНЫМ (а не «0%»): отсутствие замера не равно отсутствию движения.
 TOL = 180
 
-KINDS = ('move_up', 'move_down', 'oi_surge', 'funding_extreme', 'spread_shock')
+KINDS = ('move_up', 'move_down', 'oi_surge', 'vol_surge', 'funding_extreme',
+         'spread_shock', 'ignition')
 
 
 # ── ЭЛЕМЕНТАРНАЯ АРИФМЕТИКА, ВЫНЕСЕННАЯ РАДИ ОДНОГО: ДЕЛЕНИЯ НА НОЛЬ ──────────────────────
@@ -328,6 +329,28 @@ def detect(listing, rows, now=None, ring=None):
                         'payload': dict(common, oi_change_pct=d_oi, oi_then=oi_then,
                                         oi_now=oi_now, oi_change_usd=d_usd, step=step,
                                         penalties=notes)})
+
+    # ── ОБОРОТ: ДЕНЬГИ ПРИХОДЯТ РАНЬШЕ, ЧЕМ ДВИГАЕТСЯ ЦЕНА ────────────────────────────────
+    # ЗАМЕР 25.09 объясняет, зачем этот вид вообще нужен: марк-цена на площадке стоит минутами
+    # (за три минуты ни один из 553 инструментов её не изменил), а оборот растёт непрерывно.
+    # То есть по цене мы узнаём о приходе денег ПОЗЖЕ, чем по объёму. Просьба владельца -
+    # «или просто алерты по объёму» - совпала с тем, что показывает рынок.
+    if listing.volume_24h and r60 is not None:
+        v_then = r60[2]
+        d_vol = pct(listing.volume_24h, v_then if v_then else None)
+        d_vusd = (listing.volume_24h - (v_then or 0))
+        if (d_vol is not None and d_vol >= config.vol_pct()
+                and d_vusd >= config.vol_min_usd()):
+            pen = list(base_pen)
+            if p60 is None:
+                pen.append(('движение цены за тот же час не измерено', 10))
+            conf, notes = confidence(85, pen)
+            step = _step(d_vol, config.vol_pct())
+            out.append({'kind': 'vol_surge', 'ticker': listing.ticker, 'ts': now,
+                        'key': key('vol_surge', listing.ticker, _window(now), step),
+                        'severity': conf,
+                        'payload': dict(common, vol_change_pct=d_vol, vol_then=v_then,
+                                        vol_change_usd=d_vusd, step=step, penalties=notes)})
 
     # ── ФАНДИНГ: ХВОСТ СВОЕГО ЖЕ РАСПРЕДЕЛЕНИЯ ────────────────────────────────────────────
     if listing.funding_raw is not None and len(ring) >= config.sigma_min_points():

@@ -227,6 +227,7 @@ _T = {
     'btn_report': {'ru': '📊 Попадания', 'en': '📊 Hit rate'},
     'k_move': {'ru': 'Движения', 'en': 'Moves'},
     'k_oi': {'ru': 'Интерес', 'en': 'Open interest'},
+    'k_vol': {'ru': 'Объём', 'en': 'Volume'},
     'k_ign': {'ru': 'Зажигание', 'en': 'Ignition'},
     'k_fund': {'ru': 'Фандинг', 'en': 'Funding'},
     'k_spread': {'ru': 'Спред', 'en': 'Spread'},
@@ -235,6 +236,9 @@ _T = {
     'what_comes': {'ru': 'Что присылать:', 'en': 'What to send:'},
     'what_inside': {'ru': 'Что внутри алерта:', 'en': 'Inside the alert:'},
     'btn_refresh': {'ru': '🔄 Обновить', 'en': '🔄 Refresh'},
+    'btn_now': {'ru': '📈 Что сейчас', 'en': '📈 Market now'},
+    'day': {'ru': 'За сутки:', 'en': 'Last 24h:'},
+    'nothing': {'ru': 'ничего', 'en': 'nothing'},
     'btn_help': {'ru': '❓ Как это работает', 'en': '❓ How it works'},
     'saved': {'ru': 'Готово', 'en': 'Saved'},
     'free': {'ru': 'Nansen на время хакатона бесплатен: суточный кап расхода выключен, '
@@ -282,7 +286,8 @@ def menu_text(uid, lang=None):
     out.append(_t('today', lang) % (store.sent_today(uid), store.cap_for(uid)))
     _k = store.kinds_for(uid)
     _p = store.parts_for(uid)
-    _kn = {'move_up': _t('k_move', lang), 'oi_surge': _t('k_oi', lang),
+    _kn = {'move_up': _t('k_move', lang), 'vol_surge': _t('k_vol', lang),
+           'oi_surge': _t('k_oi', lang),
            'ignition': _t('k_ign', lang), 'funding_extreme': _t('k_fund', lang),
            'spread_shock': _t('k_spread', lang)}
     _on = [v for k, v in _kn.items() if k in _k]
@@ -292,6 +297,18 @@ def menu_text(uid, lang=None):
                           ', '.join([_t('p_nansen', lang)] if 'nansen' in _p else [])
                           + (', ' if ('nansen' in _p and 'news' in _p) else '')
                           + (_t('p_news', lang) if 'news' in _p else '')))
+    # СОБЫТИЯ ЗА СУТКИ - РАЗРЕЗОМ ПО ВИДАМ. «Событий 12» не отвечает на вопрос «а движения-то
+    # были?»: двенадцать спредов и ноль движений выглядят как двенадцать событий. Живой случай
+    # 25.09 разобрался бы этой строкой за секунду.
+    try:
+        import time as _tm
+        _by = store.events_by_kind(int(_tm.time()) - 86400)
+        _parts = ['%s %d' % (_kn.get(k, k), v) for k, v in sorted(_by.items(), key=lambda x: -x[1])
+                  if k in _kn]
+        out.append('%s %s' % (_t('day', lang), ', '.join(_parts) if _parts
+                              else _t('nothing', lang)))
+    except Exception as _e:
+        print('[sentinel] разрез событий не собрался: %s' % str(_e)[:90])
     out.append('')
     out.append(outbox.status_line(lang))
     out.append('')
@@ -344,16 +361,21 @@ def menu_kb(uid, lang=None):
         # или просто алерты по объёму». Галочка в подписи говорит СОСТОЯНИЕ: кнопка «Движения»
         # без отметки не отвечает на вопрос «а сейчас они идут?».
         [B(_mark(_t('k_move', lang), 'move_up' in kinds), callback_data='sen:k:move'),
-         B(_mark(_t('k_oi', lang), 'oi_surge' in kinds), callback_data='sen:k:oi'),
-         B(_mark(_t('k_ign', lang), 'ignition' in kinds), callback_data='sen:k:ign')],
-        [B(_mark(_t('k_fund', lang), 'funding_extreme' in kinds), callback_data='sen:k:fund'),
+         B(_mark(_t('k_vol', lang), 'vol_surge' in kinds), callback_data='sen:k:vol'),
+         B(_mark(_t('k_oi', lang), 'oi_surge' in kinds), callback_data='sen:k:oi')],
+        [B(_mark(_t('k_ign', lang), 'ignition' in kinds), callback_data='sen:k:ign'),
+         B(_mark(_t('k_fund', lang), 'funding_extreme' in kinds), callback_data='sen:k:fund'),
          B(_mark(_t('k_spread', lang), 'spread_shock' in kinds), callback_data='sen:k:spread')],
         # ЧТО ВНУТРИ АЛЕРТА. 'card' (числа площадки) в тумблерах НЕТ нарочно: алерт без чисел -
         # это уведомление «что-то случилось» без ответа «что именно». Выключается дорогое.
         [B(_mark(_t('p_nansen', lang), 'nansen' in parts), callback_data='sen:p:nansen'),
          B(_mark(_t('p_news', lang), 'news' in parts), callback_data='sen:p:news')],
-        [B(_t('btn_report', lang), callback_data='sen:rep'),
-         B(_t('btn_help', lang), callback_data='sen:help')],
+        # «ЧТО СЕЙЧАС» - ПЕРВОЙ КНОПКОЙ В ЭТОМ РЯДУ. Она отвечает на вопрос, который человек
+        # задаёт раньше всех остальных: «оно вообще работает?». Молчание дозорного и его смерть
+        # выглядят одинаково, и только числа рынка их различают.
+        [B(_t('btn_now', lang), callback_data='sen:now'),
+         B(_t('btn_report', lang), callback_data='sen:rep')],
+        [B(_t('btn_help', lang), callback_data='sen:help')],
         [B(_t('btn_refresh', lang), callback_data='sen:home')],
     ]
     return InlineKeyboardMarkup(rows)
@@ -444,6 +466,7 @@ async def handle_callback(update, context):
             # предлагать человеку подписку на половину рынка: тот, кто хочет знать о падении,
             # хочет знать и о росте.
             _map = {'move': ('move_up', 'move_down'), 'oi': ('oi_surge',),
+                    'vol': ('vol_surge',),
                     'ign': ('ignition',), 'fund': ('funding_extreme',),
                     'spread': ('spread_shock',)}
             cur = store.kinds_for(uid)
@@ -458,6 +481,8 @@ async def handle_callback(update, context):
         elif act == 'q':
             f, t = _quiet_next(store.settings(uid))
             store.settings_set(uid, quiet_from=f, quiet_to=t)
+        elif act == 'now':
+            return await _send(q, context, now_text(lang))
         elif act == 'rep':
             return await _send(q, context, report_text(lang))
         elif act == 'help':
@@ -530,6 +555,71 @@ async def _send(q, context, text, kb=None):
     if chat is None:
         return
     await context.bot.send_message(chat_id=chat, text=text, reply_markup=kb)
+
+
+def now_text(lang='ru'):
+    """СРЕЗ РЫНКА ИЗ НАШЕГО КОЛЬЦА. -> str. Ни одного запроса к площадке, ни одного кредита.
+
+    ГЛАВНАЯ СТРОКА ЗДЕСЬ - ПОСЛЕДНЯЯ: насколько лучший кандидат далёк от порога. Живой случай
+    25.09 («включил, пока ничего не пришло») был правдой про рынок - за три минуты ни один из
+    553 инструментов не изменил марк-цену, - но узнать это человеку было негде. Ответ «ближайшее
+    движение 0.4% против порога 1.2%» закрывает вопрос числом, а не обещанием.
+    """
+    m = engine.market_now()
+    ru = lang != 'en'
+    out = ['📈 <b>%s</b>' % ('Что сейчас на площадке' if ru else 'Market right now')]
+    if not m['tickers']:
+        out.append('Кольцо пустое: дозорный только что запущен, первые точки появятся через '
+                   'минуту.' if ru else
+                   'The ring is empty: the sentinel has just started; first points in a minute.')
+        return '\n'.join(out)
+    out.append('<i>%s: %d %s, %d %s</i>'
+               % ('в кольце' if ru else 'in the ring', m['tickers'],
+                  'инструментов' if ru else 'instruments', m['points'],
+                  'точек на инструмент' if ru else 'points per instrument'))
+    out.append('')
+    out.append('<b>%s</b>' % ('Сильнее всего двигались' if ru else 'Biggest moves'))
+    if m['moves']:
+        for _a, t, best, p15, p60 in m['moves']:
+            bits = []
+            if p15 is not None:
+                bits.append('15м %+.2f%%' % p15)
+            if p60 is not None:
+                bits.append('60м %+.2f%%' % p60)
+            out.append('• <b>%s</b> %s' % (t, ' · '.join(bits)))
+    else:
+        out.append('• %s' % ('движений не измерено (кольцо ещё набирается)' if ru
+                             else 'no moves measured yet'))
+    if m['vols']:
+        out.append('')
+        out.append('<b>%s</b>' % ('Растёт оборот' if ru else 'Turnover growing'))
+        for dv, t, dusd in m['vols']:
+            out.append('• <b>%s</b> +%.0f%% (+%s)' % (t, dv, _money(dusd)))
+    out.append('')
+    # ГЛАВНАЯ СТРОКА ТИХОГО ЧАСА - СКОЛЬКО ИНСТРУМЕНТОВ ВООБЩЕ СДВИНУЛОСЬ. «Сильнейшее движение
+    # 0.00%» само по себе читается как сломанный счётчик; рядом с «из 192 измеренных сдвинулись
+    # 0» это уже факт про площадку, и вопрос «а дозорный жив?» закрывается числом.
+    if m.get('measured'):
+        out.append(('Сдвинулись с места: <b>%d</b> из %d измеренных.' if ru else
+                    'Moved at all: <b>%d</b> of %d measured.')
+                   % (m.get('stirred') or 0, m['measured']))
+    if m.get('best') is not None:
+        if m['best'] >= m['thr15']:
+            out.append('Сильнейшее движение <b>%.2f%%</b> — порог %.2f%% взят, событие записано '
+                       'или ждёт паузы и фильтров.' % (m['best'], m['thr15']) if ru else
+                       'Strongest move <b>%.2f%%</b> — the %.2f%% threshold is met; the event is '
+                       'stored or waiting on cooldown and filters.' % (m['best'], m['thr15']))
+        else:
+            out.append(('Сильнейшее движение <b>%.2f%%</b> против порога %.2f%% — тихо на рынке, '
+                        'а не в дозорном.' if ru else
+                        'Strongest move <b>%.2f%%</b> against a %.2f%% threshold — the market is '
+                        'quiet, not the sentinel.') % (m['best'], m['thr15']))
+    return '\n'.join(out)
+
+
+def _money(v):
+    from .cards import _usd
+    return _usd(v)
 
 
 def report_text(lang='ru'):

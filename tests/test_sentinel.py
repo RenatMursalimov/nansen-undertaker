@@ -325,7 +325,12 @@ def t_event_key_is_stable_and_step_escalates():
                                     now=now + 60, ring=ring) if e['kind'] == 'move_up'][0]
     check('KEY: движение удвоилось - это НОВОЕ событие', c['key'] != a['key'],
           'ступень %s' % c['payload']['step'])
-    check('KEY: ступень названа числом', c['payload']['step'] == 2, c['payload']['step'])
+    # СТУПЕНЬ СРАВНИВАЕМ С ПРЕДЫДУЩЕЙ, А НЕ С КОНСТАНТОЙ: её величина зависит от порога, а порог
+    # правится замером (25.09 он понижен с 3% до 1.2%). Тест на конкретное «2» ломался бы при
+    # каждой настройке чувствительности и проверял бы конфиг, а не поведение.
+    check('KEY: ступень выросла числом',
+          c['payload']['step'] > a['payload']['step'],
+          (a['payload']['step'], c['payload']['step']))
 
 
 def t_oi_funding_and_spread_have_their_own_reasons():
@@ -490,8 +495,9 @@ def t_delivery_dedupe_cooldown_cap_and_state():
     st = store.delivery_state(ev['key'], UID)
     check('SEND: «доставлено» НЕ поставлено при сбое', st and st['delivered_at'] is None, st)
     check('SEND: причина сбоя записана словами', st and st['last_err'], st)
+    _cd = outbox._cd_kind(ev)        # ключ паузы включает ступень - берём фактический
     check('SEND: пауза НЕ съедена сбоем',
-          store.cooldown_left(UID, 'BTC', 'move_up:1') == 0,
+          store.cooldown_left(UID, 'BTC', _cd) == 0,
           'иначе человек не получил алерт И не получит следующий')
 
     good = FakeBot()
@@ -500,7 +506,7 @@ def t_delivery_dedupe_cooldown_cap_and_state():
     check('SEND: после ретрая алерт ушёл', ok == 1 and len(good.sent) == 1, (ok, err))
     check('SEND: ушёл ИМЕННО подписчику', good.sent[0][0] == UID, good.sent[0][0])
     check('SEND: в тексте есть величина', '+4.00%' in good.sent[0][1])
-    check('SEND: теперь пауза отмечена', store.cooldown_left(UID, 'BTC', 'move_up:1') > 0)
+    check('SEND: теперь пауза отмечена', store.cooldown_left(UID, 'BTC', _cd) > 0)
     check('SEND: суточный счётчик считает ДОСТАВЛЕННЫЕ', store.sent_today(UID) == 1)
 
     # ПАУЗА ПО ПАРЕ (ИНСТРУМЕНТ, ВИД): второе такое же событие в очередь не попадает
@@ -1115,6 +1121,117 @@ def t_locked_diagnosis_prints_measurements():
           diag)
 
 
+def t_silence_is_explained_by_numbers_not_by_faith():
+    """«ВКЛЮЧИЛ, ПОКА НИЧЕГО НЕ ПРИШЛО» ОБЯЗАН ИМЕТЬ ОТВЕТ ЧИСЛОМ.
+
+    ЖИВОЙ СЛУЧАЙ 25.09. Владелец включил дозорного и не получил ни одного алерта о движении.
+    Это была ПРАВДА ПРО РЫНОК, а не поломка: замер пяти снимков с шагом 45 секунд показал, что
+    за ТРИ МИНУТЫ ни один из 553 инструментов не изменил `mark_price`, а у BTC цена держалась
+    две минуты и сдвинулась на 0.016%. Но узнать это человеку было НЕГДЕ - молчание дозорного и
+    его смерть выглядят одинаково.
+
+    ЗДЕСЬ ПРОВЕРЯЕТСЯ ИМЕННО РАЗЛИЧИМОСТЬ: экран обязан назвать, сколько инструментов вообще
+    сдвинулось, каково сильнейшее движение и как оно соотносится с порогом.
+    """
+    # ВРЕМЯ БЕРЁМ НАСТОЯЩЕЕ: экран `now_text` спрашивает рынок «сейчас» и своего аргумента
+    # времени не имеет - он показывает человеку то, что есть в кольце В ЭТУ МИНУТУ. Синтетическое
+    # время из прошлого дало бы пустой срез, и тест проверял бы не экран, а свою фикстуру.
+    now = int(time.time())
+    engine._HOT.clear()
+    # Кольцо из двух точек: один инструмент двинулся на 0.4%, остальные стоят.
+    for t, (p0, p1) in (('AAA', (100.0, 100.4)), ('BBB', (50.0, 50.0)), ('CCC', (7.0, 7.0))):
+        engine._HOT[t] = [(now - 900, p0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 900),
+                          (now, p1, 8e8, 1000.0, 900.0, 0.05, 1.0, now)]
+    m = engine.market_now(now=now)
+    check('NOW: срез не ходит в сеть и считает по кольцу', m['tickers'] == 3, m['tickers'])
+    check('NOW: сильнейшее движение измерено', abs(m['best'] - 0.4) < 0.01, m.get('best'))
+    check('NOW: сказано, сколько инструментов ВООБЩЕ сдвинулось',
+          m['stirred'] == 1 and m['measured'] == 3, (m['stirred'], m['measured']))
+    txt = ui.now_text('ru')
+    check('NOW: экран называет и движение, и порог',
+          '0.40%' in txt and ('%.2f%%' % config.move_pct_15m()) in txt, txt)
+    check('NOW: и говорит, что тихо НА РЫНКЕ, а не в дозорном',
+          'тихо на рынке' in txt, txt)
+    check('NOW: пустое кольцо тоже объяснено словами',
+          'Кольцо пустое' in (engine._HOT.clear() or ui.now_text('ru')), ui.now_text('ru'))
+    check('NOW: на en кириллицы нет',
+          not __import__('re').search(r'[А-Яа-яЁё]', ui.now_text('en')), ui.now_text('en'))
+
+
+def t_hot_ring_actually_grows():
+    """ГОРЯЧЕЕ КОЛЬЦО ОБЯЗАНО РАСТИ. Без второй точки нет доходности - и нет ни одного движения.
+
+    ТИХИЙ БАГ, НАЙДЕННЫЙ ЗАМЕРОМ 25.09: при опросе чаще разрешения кольца последняя точка
+    ПЕРЕЗАПИСЫВАЛАСЬ вместе со своим временем, поэтому интервал до неё никогда не накапливался -
+    каждый следующий опрос снова оказывался «слишком рано». Кольцо на любом инструменте вечно
+    оставалось длиной в ОДНУ точку («в кольце 553 инструментов, 1 точек на инструмент»), а
+    значит доходность за 15 и 60 минут была невычислима и событий движения не возникало НИКОГДА.
+    Тик при этом исправно печатал «опрошено 553 инстр.».
+    """
+    engine._HOT.clear()
+    x = one(ticker='RING', name='Ring Test', mark='100.0')
+    base = 1800000000
+    for i in range(6):
+        engine._hot_put(x, base + i * 30)        # опрос раз в 30с
+    arr = engine._HOT['RING']
+    check('RING: шесть опросов дали шесть точек, а не одну', len(arr) == 6, len(arr))
+    check('RING: время точек растёт', [r[0] for r in arr] == sorted(r[0] for r in arr))
+    engine._hot_put(x, base + 5 * 30)            # тот же миг: наложение тиков
+    check('RING: два тика в одну секунду дают одну точку',
+          len(engine._HOT['RING']) == 6, len(engine._HOT['RING']))
+    old = engine._hot_put(x, base + 200 * 60)    # далеко в будущем - старое выпадает
+    check('RING: точки старше глубины выпадают', len(old) < 7, len(old))
+    engine._HOT.clear()
+
+
+def t_volume_is_its_own_signal():
+    """ОБЪЁМ - ОТДЕЛЬНЫЙ ВИД СОБЫТИЯ, И НА ЭТОЙ ПЛОЩАДКЕ ОН ВАЖНЕЕ ЦЕНЫ.
+
+    Просьба владельца: «или просто алерты по объёму». Замер подтверждает, что это не каприз:
+    марк-цена стоит минутами, а оборот растёт непрерывно - то есть приход денег виден по объёму
+    РАНЬШЕ, чем по цене.
+    """
+    now = 1800000000
+    ring = series(60, now - 60 * 900)
+    hot = [(now - 3600, 100.0, 1.0e6, 1000.0, 900.0, 0.05, 1.0, now - 3600)]
+    evs = detector.detect(one(mark='100.0', vol='2000000', quote_iso=_iso(now)), hot, now=now,
+                          ring=ring)
+    vs = [e for e in evs if e['kind'] == 'vol_surge']
+    check('VOL: оборот вырос вдвое - событие', vs, {e['kind'] for e in evs})
+    check('VOL: прирост назван и в процентах, и в деньгах',
+          vs and abs(vs[0]['payload']['vol_change_pct'] - 100.0) < 1
+          and vs[0]['payload']['vol_change_usd'] == 1.0e6,
+          vs[0]['payload'] if vs else None)
+    txt = cards.card(vs[0]) if vs else ''
+    check('VOL: карточка ведёт оборотом', 'оборот <b>+100.00%</b>' in txt, txt[:140])
+    # МАЛЫЙ ПРИРОСТ В ДЕНЬГАХ - НЕ СОБЫТИЕ (тот же закон, что у спреда и интереса)
+    small = detector.detect(one(mark='100.0', vol='75000', quote_iso=_iso(now)),
+                            [(now - 3600, 100.0, 60000, 1000.0, 900.0, 0.05, 1.0, now - 3600)],
+                            now=now, ring=ring)
+    check('VOL: +25% к обороту в $60k событием НЕ считается',
+          'vol_surge' not in {e['kind'] for e in small}, {e['kind'] for e in small})
+    check('VOL: вид включён по умолчанию', 'vol_surge' in config.DEFAULT_KINDS,
+          config.DEFAULT_KINDS)
+
+
+def t_db_failure_speaks_with_measurements():
+    """ОТКАЗ БАЗЫ ПЕЧАТАЕТ ЗАМЕРЫ РЯДОМ С СОБОЙ, А НЕ ТОЛЬКО ТЕКСТ ОШИБКИ.
+
+    На сервере владельца `database is locked` пришло ДВАЖДЫ: в тесте и в живой доставке
+    («доставка не поставлена: database is locked»). Один этот текст покрывает несколько причин, и
+    прошлая догадка (недочитанные курсоры) была проверена опытом и НЕ подтвердилась. Значит
+    строка отказа обязана нести замеры - иначе следующий круг снова уйдёт на гадание.
+    """
+    d = store.diag()
+    for word in ('backend=', 'file=', 'journal_mode=', 'busy_timeout=', 'поток='):
+        check('DBFAIL: в замерах есть %s' % word, word in d, d)
+    check('DBFAIL: файл назван ЖИВЫМ соединением и он временный', _TMP in d, d)
+    src = open(os.path.join(BASE, 'sentinel', 'store.py'), encoding='utf-8').read()
+    check('DBFAIL: все отказы записи идут через одну дверь с замерами',
+          src.count('_say_fail(') >= 4 and 'def _say_fail' in src,
+          'замеры в каждом except по месту однажды забудут в одном из десяти')
+
+
 def main():
     for fn in (t_parse_is_real_and_names_what_is_missing,
                t_detector_needs_both_percent_and_sigma,
@@ -1142,7 +1259,12 @@ def main():
                t_kinds_and_parts_are_the_subscribers_choice,
                t_news_are_fresh_relevant_and_not_from_nobody,
                t_wallet_sizes_are_read_not_lost,
-               t_locked_diagnosis_prints_measurements):
+               t_locked_diagnosis_prints_measurements,
+               # ── круг 4 (25.09): почему было тихо, и чем это доказано ──
+               t_silence_is_explained_by_numbers_not_by_faith,
+               t_hot_ring_actually_grows,
+               t_volume_is_its_own_signal,
+               t_db_failure_speaks_with_measurements):
         print('\n== %s' % fn.__name__)
         try:
             fn()

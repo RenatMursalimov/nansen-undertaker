@@ -3,7 +3,7 @@
 Live alerts on Variational Omni plus Smart Ignition on Nansen. What is built, on which
 measurements, where the limits are, and what comes next.
 
-Date: 2026-09-25. Package: `sentinel/`. Tests: `python3 tests/test_sentinel.py` (193 checks, no
+Date: 2026-09-25. Package: `sentinel/`. Tests: `python3 tests/test_sentinel.py` (216 checks, no
 network needed) plus `t_live_watcher_has_its_own_cache_door` in `tests/test_nansen_contest.py`.
 Live proof: `python3 nansen/proofs/sentinel_live_proof.py MSTR 4.5`.
 
@@ -55,7 +55,7 @@ while the live response shows MRNA = 0.442690, MSTR = 0.455416, US500 = 0. No hy
 the measurement. **Consequence in code:** the number is printed under the provider's field name
 together with the interval, no annualisation is performed, and funding events are detected by the
 instrument's percentile against itself - a criterion that does not depend on the unit at all.
-Verification debt #1 (see section 11).
+Verification debt #1 (see section 12).
 
 **A negative funding rate on an equity can be a dividend rather than positioning** - the
 provider says so directly
@@ -242,7 +242,7 @@ hourly at :13). That is a deliberate first step: the module and the control pane
 before the move, otherwise the "separate process" would have to be debugged together with new
 logic.
 
-Acceptance on the sandbox: pull, run `tests/test_sentinel.py` (expect 193 PASS / 0 FAIL), run
+Acceptance on the sandbox: pull, run `tests/test_sentinel.py` (expect 216 PASS / 0 FAIL), run
 the live proof, restart the test service, check it is `active`, then grep `[sentinel]` in
 `bot.log` and use the commands in the test bot's direct messages. Production repeats the same
 steps only after the sandbox run is green.
@@ -340,7 +340,47 @@ not recorded as refuted comes back the next day. Instead of a guess there is now
 any failure the test prints the database path, backend, journal mode, `busy_timeout` and thread
 name.
 
-## 11. Limits, debts and refuted hypotheses
+## 11. Round four: "switched it on, nothing arrived" - and that was true about the market
+
+The owner switched the sentinel on and received no move alerts at all. The review produced
+**three** findings, and the threshold is not the main one.
+
+**The measurement that explained the silence.** Five venue snapshots 45 seconds apart: over
+**three minutes not one of 553 instruments changed its `mark_price`**. BTC held the same price for
+two minutes and then moved 0.016 %. So mark price here lives in steps of one to two minutes, and
+3 % in 15 minutes is not a strict threshold but an event that happens once a month. Consequently
+the move threshold is now 1.2 % over 15 minutes and 2.5 % over an hour (the `z>=2.5` sigma gate
+stays and cuts noise per instrument), and polling moved from 15 to 30 seconds - polling twice as
+often as the data changes wastes somebody else's rate limit for no new point.
+
+**A silent bug that would have suppressed moves at any threshold.** The hot ring was not growing:
+when polled more often than its own resolution, the last point was **overwritten together with its
+timestamp**, so the interval never accumulated - every next poll was "too early" again. The ring
+stayed **one point long** forever ("553 instruments in the ring, 1 point per instrument"), which
+made 15- and 60-minute returns incomputable and move events impossible. The tick meanwhile printed
+"polled 553 instruments" quite happily. Now there is a point per poll, and thinning is left to the
+cold ring, which exists for exactly that.
+
+**A new event kind: volume.** The owner's request ("or just volume alerts") matched what the market
+shows: price stands still for minutes while turnover grows continuously, so money arrives visibly
+in volume **before** it arrives in price. Threshold: +25 % of 24-hour turnover within an hour
+**and** at least $500k in money. On by default.
+
+**And the thing that matters most to a human: silence is now explainable with a number.** A "Market
+now" button shows a slice of our own ring (no venue request, no credits): what moved most, where
+turnover is growing, **how many instruments moved at all**, and how the strongest move compares to
+the threshold. The line "moved at all: 0 of 192 measured, strongest move 0.00 % against a 1.20 %
+threshold - the market is quiet, not the sentinel" closes the question in a second. The status
+screen also gained a per-kind breakdown of the last 24 hours: "twelve events" and "twelve spreads
+and zero moves" are different news.
+
+**Database failures now speak in measurements.** `database is locked` appeared twice (in the test
+and in live delivery), and that single text covers several causes. Every write in the module goes
+through one door that prints, next to the failure: backend, the **file taken from the live
+connection** (`PRAGMA database_list` - the setting says what we requested, the pragma says where
+the engine actually writes), journal mode, `busy_timeout` and thread name.
+
+## 12. Limits, debts and refuted hypotheses
 
 **The boundary with the trading contour is hard.** No file in `sentinel/` imports
 `nansen_signer` or calls quote/prepare/execute. The `ISOLATION` test holds it (import graph plus
@@ -370,7 +410,7 @@ a call search). Entering a position happens by hand on the venue.
 
 ---
 
-## 12. Roadmap, ordered by value over cost
+## 13. Roadmap, ordered by value over cost
 
 **Step 1 - finish the sentinel (1-2 days).** Sandbox acceptance, then production. The separate
 `sentinel.main` unit plus lease (code is ready; only the unit file and the owner's decision are
@@ -411,7 +451,7 @@ token.
 
 ---
 
-## 13. Reconciliation with the scouting report
+## 14. Reconciliation with the scouting report
 
 Nine requested items. Fully delivered here: the alert engine stages 0-2 (dedupe by
 `transaction_hash`, a Nansen daily cap, per-token cooldown, one outcome row per alert), the
