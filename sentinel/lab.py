@@ -118,7 +118,12 @@ def holdings(chain, token_address, days=30, dry_run=True):
                                 #     list of chain names, e.g., ["ethereum", "solana"]» (422,
                                 #     missing_field) - то есть поле зовётся `chains` и это
                                 #     СПИСОК, а не строка `chain`, как у всех остальных ручек.
-                                {'chains': [_n._nc(chain)], 'token_address': token_address,
+                                #  4) «Field 'token_address' is not recognized» (422,
+                                #     unknown_field) - и ЭТО САМОЕ ВАЖНОЕ ИЗ ЧЕТЫРЁХ. Ручка не
+                                #     принимает токен ВООБЩЕ: она отдаёт СРЕЗ ПО СЕТИ - топ
+                                #     holdings смарт-денег на дату. Наш токен в ответе есть, но
+                                #     как ОДНА ИЗ СТРОК, а не как предмет запроса.
+                                {'chains': [_n._nc(chain)],
                                  'date_range': _days_range(days),
                                  'pagination': {'page': 1, 'per_page': 100}},
                                 ckey=None)
@@ -161,7 +166,64 @@ def holdings(chain, token_address, days=30, dry_run=True):
         # не та». Поэтому причина берётся из коробки вызова, а не придумывается.
         return [], ('%s%s' % (_why or 'пусто',
                               (' — площадка сказала: %s' % _said) if _said else ''))
-    return (rows if isinstance(rows, list) else [rows]), None
+    # ═══ ОТВЕЧАЕМ НА СВОЙ ВОПРОС, А НЕ НА ТОТ, КОТОРЫЙ ПОЛУЧИЛСЯ ═══
+    # ЖИВОЙ ПРОГОН ВЛАДЕЛЬЦА 26.09 ВСКРЫЛ ДЕФЕКТ ХУЖЕ ПРЕЖНИХ. Ремонт схемы убрал поле
+    # `token_address` (площадка его не знает), запрос прошёл, и функция вернула «строк: 1,
+    # отказ: None» - то есть УСПЕХ. Но в этой одной строке лежал топ-100 holdings смарт-денег
+    # ПО ВСЕЙ СЕТИ, а спрашивали мы про один токен. Ответ был не на наш вопрос, и никто об этом
+    # не сказал: ровно «признак наличия не равен признаку пользы», только в самой злой форме -
+    # данные есть, они настоящие, и они про другое.
+    # УРОК ШИРЕ ЭТОЙ ФУНКЦИИ: ремонт тела запроса, убирающий СУЖАЮЩЕЕ поле, меняет СМЫСЛ
+    # ответа. Молча принимать такой результат нельзя нигде.
+    return _pick(rows, token_address, chain)
+
+
+def _flatten(rows):
+    """Строки ответа из вложенного `data`. -> list[dict].
+
+    ФОРМА СНЯТА ЖИВЫМ ВЫЗОВОМ 26.09, а не предположена: ответ приходит как
+    `[{'data': [...], 'pagination': {...}}]`, то есть один элемент с вложенным списком. Поля
+    каждой строки: `date`, `chain`, `token_address`, `token_symbol`, `token_sectors`,
+    `smart_money_labels`, `balance`, `value_usd`, `balance_24h_percent_change`,
+    `holders_count`, `share_of_holdings_percent`, `token_age_days`, `market_cap_usd`.
+    """
+    out = []
+    for r in (rows if isinstance(rows, list) else [rows]):
+        if isinstance(r, dict) and isinstance(r.get('data'), list):
+            out += [x for x in r['data'] if isinstance(x, dict)]
+        elif isinstance(r, dict):
+            out.append(r)
+    return out
+
+
+def _pick(rows, token_address, chain):
+    """Наш токен из среза по сети. -> (строки, отказ).
+
+    ТРИ РАЗНЫХ ОТВЕТА, И ПУТАТЬ ИХ НЕЛЬЗЯ:
+      * токен найден -> отдаём ЕГО строку плюс место в списке (место и есть смысл: «седьмой по
+        деньгам умных среди всех токенов сети» говорит больше, чем сам баланс);
+      * токена в срезе нет -> это НЕ пустота и НЕ отказ, а осмысленный ответ: умные деньги его
+        не держат (в топе, который вернула площадка). Так и говорим;
+      * токен не назван вовсе -> отдаём срез целиком, потому что именно его и просили.
+    """
+    data = _flatten(rows)
+    if not data:
+        return [], 'ответ есть, но строк в нём нет - форма ответа могла смениться'
+    if not token_address:
+        return data, None
+    want = str(token_address or '').strip().lower()
+    # СОРТИРУЕМ САМИ ПО `value_usd`: площадка отдаёт уже по убыванию, но полагаться на чужой
+    # порядок для утверждения «он седьмой» нельзя - это наше утверждение, и считать его нам.
+    ordered = sorted(data, key=lambda x: -float(x.get('value_usd') or 0))
+    for i, x in enumerate(ordered, 1):
+        if str(x.get('token_address') or '').strip().lower() == want:
+            row = dict(x)
+            row['rank'] = i
+            row['of'] = len(ordered)
+            return [row], None
+    return [], ('токена %s нет среди %d позиций умных денег на %s - они его не держат '
+                '(это ответ, а не пустота)'
+                % (token_address[:12] + '…', len(ordered), chain))
 
 
 def _days_range(days):

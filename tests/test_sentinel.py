@@ -739,8 +739,22 @@ def t_commands_are_parsed_exactly_and_refuse_with_words():
     check('CMD: подписка на несуществующее отбита СЛОВАМИ',
           r and 'нет инструмента' in r, r)
     st = ui.route(UID, 'дозор')
+    # КОМАНДА «ДОЗОР» ВЕДЁТ В ТОТ ЖЕ ЭКРАН, ЧТО И КНОПКА. Раньше `route` отдавал `status_text`,
+    # а человек получал `menu_text` - два источника правды на один экран, и тест охранял текст,
+    # которого никто не видел. Проверяем ВЕЛИЧИНЫ, а не конкретную строку конкретной функции.
     check('CMD: состояние ведёт величинами, а не флагами',
-          st and 'Сегодня доставлено' in st and 'Пороги сейчас' in st, st)
+          st and 'Сегодня доставлено' in st and 'Предохранитель' in st, st)
+    check('CMD: и это ТОТ ЖЕ текст, что уходит с клавиатурой',
+          st == ui.menu_text(UID, 'ru'),
+          'иначе тест проверяет один экран, а человек читает другой')
+    # ПОЛНЫЙ РАЗРЕЗ (общие пороги) ОСТАЛСЯ ДОСТУПЕН - в развёрнутом виде и без клавиатуры.
+    check('CMD: общие пороги видны в развёрнутом виде',
+          'Общие пороги' in (ui.menu_text(UID, 'ru') if ui._ADV.get(UID) else
+                             (ui._ADV.__setitem__(UID, True) or ui.menu_text(UID, 'ru'))),
+          'их кнопками не крутят, но знать по чему работает дозор человек должен')
+    ui._ADV.pop(UID, None)
+    check('CMD: и в бесклавиатурной сводке тоже',
+          'Пороги сейчас' in ui.status_text(UID), ui.status_text(UID))
     check('CMD: в помощи сказано, что дозорный не торгует',
           'НЕ торгует' in ui.HELP or 'НЕ советует' in ui.HELP)
 
@@ -913,18 +927,54 @@ def t_menu_has_buttons_for_everything_the_words_can_do():
     uid = 991200
     store.settings_set(uid, alerts_on=1, enrich_on=1, min_pct=None, daily_cap=None,
                        cooldown_min=None, quiet_from=None, quiet_to=None)
+    # ═══ ДОСТИЖИМОСТЬ ПРОВЕРЯЕМ НА ОБЪЕДИНЕНИИ ДВУХ ЭКРАНОВ, А НЕ НА ОДНОМ ═══
+    # Круг 10 разделил клавиатуру: частое сразу, редкое под «Ещё» (замечание владельца - экран
+    # дорос до двадцати рядов). Требование «всё, что умеют слова, доступно кнопками» от этого
+    # не изменилось - изменилось ЧИСЛО ТАПОВ до кнопки. Поэтому проверяем, что каждая кнопка
+    # достижима ХОТЯ БЫ В ОДНОМ из двух видов, и отдельно - что редкие лежат именно под «Ещё».
+    ui._ADV.pop(uid, None)
     kb = ui.menu_kb(uid, 'ru')
-    data = [b.callback_data for row in kb.inline_keyboard for b in row]
+    main_data = [b.callback_data for row in kb.inline_keyboard for b in row]
+    ui._ADV[uid] = True
+    kb_adv = ui.menu_kb(uid, 'ru')
+    data = main_data + [b.callback_data for row in kb_adv.inline_keyboard for b in row]
     for need in ('sen:t:al', 'sen:t:br', 'sen:t:all', 'sen:mp:1', 'sen:mp:-1', 'sen:cd:15',
-                 'sen:cap:5', 'sen:q:next', 'sen:rep', 'sen:home'):
-        check('MENU: кнопка %s есть' % need, need in data, data)
+                 'sen:cap:5', 'sen:q:next', 'sen:rep', 'sen:home', 'sen:adv:x',
+                 'sen:bm:1', 'sen:bw:5', 'sen:sv:5'):
+        check('MENU: кнопка %s достижима' % need, need in data, data)
+    # ── ОСНОВНОЙ ЭКРАН КОРОТКИЙ, И ЭТО ИЗМЕРИМО ──────────────────────────────────────────
+    check('MENU: основной экран не больше 7 рядов', len(kb.inline_keyboard) <= 7,
+          'было 20 - экран, на котором всё одинаково важно, не помогает решать')
+    check('MENU: главный тумблер стоит ПЕРВЫМ и один в ряду',
+          len(kb.inline_keyboard[0]) == 1
+          and kb.inline_keyboard[0][0].callback_data == 'sen:t:al',
+          [b.text for b in kb.inline_keyboard[0]])
+    check('MENU: пресеты на основном экране (самый частый способ настроить)',
+          'sen:pr:normal' in main_data, main_data)
+    for _rare in ('sen:bm:1', 'sen:bw:5', 'sen:sv:5', 'sen:cd:15', 'sen:q:next'):
+        check('MENU: редкая настройка %s спрятана под «Ещё»' % _rare,
+              _rare not in main_data and _rare in data, _rare)
+    # ── ГРУППЫ ПОДПИСАНЫ, И ЗАГОЛОВОК НЕ МОЛЧИТ ──────────────────────────────────────────
+    _hints = [b.callback_data for row in kb_adv.inline_keyboard for b in row
+              if (b.callback_data or '').startswith('sen:hint:')]
+    check('MENU: продвинутое разбито на подписанные группы', len(_hints) >= 4, _hints)
+    for _h in _hints:
+        _key = 'h_%s' % _h.split(':')[-1]
+        check('MENU: заголовок %s отвечает подсказкой, а не молчит' % _h,
+              ui._t(_key, 'ru') != _key and len(ui._t(_key, 'ru')) > 20, ui._t(_key, 'ru'))
     txt = ui.menu_text(uid, 'ru')
     check('MENU: подпись тумблера говорит СОСТОЯНИЕ, а не действие',
           any('Алерты: вкл' in b.text for row in kb.inline_keyboard for b in row),
           [b.text for row in kb.inline_keyboard for b in row])
+    # СЛУЖЕБНЫЕ СТРОКИ - В РАЗВЁРНУТОМ ВИДЕ (их читают один раз, а место занимают всегда).
     check('MENU: экран называет общие пороги (их кнопками не крутят)',
           'Общие пороги' in txt, txt)
     check('MENU: и говорит, что Nansen сейчас бесплатен', 'бесплат' in txt.lower(), txt)
+    ui._ADV.pop(uid, None)
+    _short = ui.menu_text(uid, 'ru')
+    check('MENU: в свёрнутом виде текст короче', len(_short) < len(txt), (len(_short), len(txt)))
+    check('MENU: но состояние в нём есть (что под дозором, сколько дошло)',
+          'Под дозором' in _short and 'доставлено' in _short, _short)
 
     # ── КНОПКИ РЕАЛЬНО МЕНЯЮТ НАСТРОЙКУ (гоняем сам роутер с фальшивым callback) ──
     class Q:
@@ -2070,6 +2120,75 @@ def t_lab_body_matches_the_venue_schema():
           _nb2 is None and '_SINGULAR_OF' in _why2, _why2)
 
 
+def t_repair_must_not_change_the_question():
+    """РЕМОНТ СХЕМЫ НЕ ИМЕЕТ ПРАВА МОЛЧА СМЕНИТЬ ВОПРОС.
+
+    ═══ ЖИВОЙ ПРОГОН ВЛАДЕЛЬЦА 26.09: САМАЯ ТИХАЯ ФОРМА ЛЖИ ═══
+    Площадка ответила «Field 'token_address' is not recognized», ремонт поле убрал, запрос
+    прошёл - и функция вернула «строк: 1, отказ: None», то есть УСПЕХ. Но в этой строке лежал
+    топ-100 holdings умных денег ПО ВСЕЙ СЕТИ, а спрашивали про ОДИН токен.
+
+    Формально всё верно: код 200, данные настоящие, отказа нет. Фактически ответ не на наш
+    вопрос, и никто об этом не сказал. Это «признак наличия не равен признаку пользы» в самом
+    злом виде - потому что здесь нет ни ошибки, ни пустоты, которые можно заметить.
+
+    ЧЕТВЁРТАЯ СХЕМА ЭТОЙ РУЧКИ, СНЯТАЯ ЖИВЬЁМ: `date_range` -> формат даты -> `chains` списком
+    -> `token_address` не принимается вовсе.
+    """
+    import nansen_api as _n
+    # АДРЕС СИНТЕТИЧЕСКИЙ, А НЕ ЖИВОЙ. Первая редакция взяла настоящий токен из прогона
+    # владельца, и скруббер публичной выжимки это поймал: чужие адреса в код не уезжают. Для
+    # фикстуры это ничего не меняет - проверяется МЕХАНИКА поиска по адресу (регистр, место в
+    # списке, «его тут нет»), а не конкретный токен.
+    SEND = '0xCcCc000000000000000000000000000000000003'
+    # ── ФИКСТУРА - ФОРМА И ЧИСЛА ИЗ ЖИВОГО ОТВЕТА, а не придуманные ──────────────────────
+    live = [{'data': [
+        {'token_address': '0xaaaa000000000000000000000000000000000001',
+         'token_symbol': 'STRCX', 'value_usd': 1967958.67, 'holders_count': 2,
+         'token_age_days': 316},
+        {'token_address': '0xbbbb000000000000000000000000000000000002',
+         'token_symbol': 'FP', 'value_usd': 1803664.95, 'holders_count': 28,
+         'token_age_days': 356},
+        {'token_address': '0xcccc000000000000000000000000000000000003',
+         'token_symbol': 'SEND', 'value_usd': 104982.61, 'holders_count': 11,
+         'token_age_days': 15},
+    ], 'pagination': {'page': 1, 'per_page': 100, 'is_last_page': False}}]
+    check('ASK: вложенный `data` распаковывается', len(lab._flatten(live)) == 3,
+          len(lab._flatten(live)))
+    rows, refused = lab._pick(live, SEND, 'ethereum')
+    check('ASK: вернулась ОДНА строка - наш токен, а не срез по сети', len(rows) == 1, len(rows))
+    check('ASK: и это правда он', rows[0]['token_symbol'] == 'SEND', rows[0])
+    check('ASK: регистр адреса не помешал (запрос EIP-55, ответ в нижнем)',
+          rows[0]['token_address'] != SEND, 'иначе живой вызов молча не нашёл бы токен')
+    check('ASK: место в списке названо числом - в нём и смысл',
+          rows[0]['rank'] == 3 and rows[0]['of'] == 3, rows[0].get('rank'))
+    # ── «ЕГО НЕТ В СРЕЗЕ» - ЭТО ОТВЕТ, А НЕ ПУСТОТА ──────────────────────────────────────
+    _rows2, _why2 = lab._pick(live, '0x3333000000000000000000000000000000000033', 'ethereum')
+    check('ASK: отсутствие токена названо ОТВЕТОМ, а не отказом',
+          not _rows2 and 'не держат' in _why2, _why2)
+    check('ASK: и в ответе есть число - сколько позиций мы просмотрели',
+          '3 позиц' in _why2, _why2)
+    # ── ТОКЕН НЕ НАЗВАН -> ОТДАЁМ СРЕЗ ЦЕЛИКОМ (его и просили) ───────────────────────────
+    _rows3, _why3 = lab._pick(live, None, 'ethereum')
+    check('ASK: без токена отдаём срез целиком', len(_rows3) == 3 and _why3 is None, _why3)
+    # ── РЕМОНТ ПРЕДУПРЕЖДАЕТ, ЧТО СУЗИЛ ВОПРОС ──────────────────────────────────────────
+    ERR = "Field 'token_address' is not recognized. Please check the API documentation."
+    nb, why = _n._apply_hint({'chains': ['ethereum'], 'token_address': SEND}, ERR)
+    check('ASK: поле убрано (иначе запрос не пройдёт вовсе)',
+          nb is not None and 'token_address' not in nb, nb)
+    check('ASK: но ремонт СКАЗАЛ, что ответ придёт шире запроса',
+          'сужало' in (why or ''), why)
+    # ── И СУЖАЮЩЕЕ ПОЛЕ НЕ ПОДСТАВЛЯЕТСЯ ДЕФОЛТОМ ───────────────────────────────────────
+    _nb4, _why4 = _n._apply_hint({'chains': ['ethereum']},
+                                 "Required field 'body -> date_range' is missing")
+    check('ASK: сужающее поле дефолтом НЕ подставляется',
+          _nb4 is None and 'СУЖАЕТ' in _why4,
+          'окно «за 7 дней» вместо спрошенного - ответ на другой вопрос')
+    check('ASK: реестр сужающих полей заведён явно',
+          'token_address' in _n._NARROWING and 'date_range' in _n._NARROWING,
+          '«похоже на фильтр» здесь не годится - список пополняется руками')
+
+
 def _pure_only(predict):
     """Замки моста, проверяемые БЕЗ слоя Polymarket. -> None.
 
@@ -2603,7 +2722,10 @@ def main():
                #    locked`, зависимость теста от .env машины, третья схема тела ──
                t_one_connection_per_thread_not_per_call,
                t_thresholds_do_not_depend_on_the_machine,
-               t_lab_body_matches_the_venue_schema):
+               t_lab_body_matches_the_venue_schema,
+               # ── круг 10: экран разделён на основное и «Ещё»; ремонт схемы не
+               #    имеет права молча сменить ВОПРОС ──
+               t_repair_must_not_change_the_question):
         print('\n== %s' % fn.__name__)
         try:
             fn()
