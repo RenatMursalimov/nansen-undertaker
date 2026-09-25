@@ -3,7 +3,7 @@
 Live alerts on Variational Omni plus Smart Ignition on Nansen. What is built, on which
 measurements, where the limits are, and what comes next.
 
-Date: 2026-09-25. Package: `sentinel/`. Tests: `python3 tests/test_sentinel.py` (248 checks, no
+Date: 2026-09-25. Package: `sentinel/`. Tests: `python3 tests/test_sentinel.py` (281 checks, no
 network needed) plus `t_live_watcher_has_its_own_cache_door` in `tests/test_nansen_contest.py`.
 Live proof: `python3 nansen/proofs/sentinel_live_proof.py MSTR 4.5`.
 
@@ -242,7 +242,7 @@ hourly at :13). That is a deliberate first step: the module and the control pane
 before the move, otherwise the "separate process" would have to be debugged together with new
 logic.
 
-Acceptance on the sandbox: pull, run `tests/test_sentinel.py` (expect 248 PASS / 0 FAIL), run
+Acceptance on the sandbox: pull, run `tests/test_sentinel.py` (expect 281 PASS / 0 FAIL), run
 the live proof, restart the test service, check it is `active`, then grep `[sentinel]` in
 `bot.log` and use the commands in the test bot's direct messages. Production repeats the same
 steps only after the sandbox run is green.
@@ -441,6 +441,51 @@ sqlite under test-only concurrency. The tick therefore runs in one thread in tes
 substitution is declared out loud so nobody mistakes it for a fix. The earlier guess about
 unfinished cursors remains **refuted**: a replay on clean sqlite produces no lock.
 
+## 13. Round six: every screen leads further, readable tweets, honest penalties, two new kinds
+
+**A screen is no longer a dead end.** Ticker buttons now sit under the "Market now" slice, and
+a tap leads into our own token card (chart, passport, favourites). The jump is **lazy and
+price-based**: putting a link in the text would need the address BEFORE sending, i.e. five
+resolutions - other people's requests and credits - for rows nobody may tap. A button pays
+only for the ticker that was opened. Resolution goes through the shared
+`oc_passport.canonical_contract` door, which verifies candidates BY PRICE and picks the
+largest market cap; the price is already in our ring. A refusal names its cause: "no price in
+the ring", "no contract matched the price" and "the door failed" call for different actions,
+while "did not work" calls for none.
+
+**Tweets became readable.** The live brief carried three defects at once: a paid signal
+channel (leverage, take-profit levels, stop loss), vote farming for a listing leaderboard,
+and THREE IDENTICAL posts from three different accounts. Deduplication by author does not
+catch those (different authors), nor does deduplication by link (different links) - only the
+text does, normalised to a comparable form: no case, no links, no punctuation. The format was
+rebuilt: the first line answers who and when (author as a LINK, account weight, age in hours
+when older than an hour) and the text itself is a QUOTE, which Telegram renders with an
+indent. What was filtered out is stated in numbers.
+
+**"The venue does not provide this" is not a defect of the event.** Cards from the second
+venue arrived at 40/100 confidence with three penalties that were all about one thing: those
+fields do not exist there at all. We were penalising an event for a property of its source,
+so a strong move on the most liquid venue looked doubtful. Now what a venue NEVER provides is
+named in one line WITHOUT a penalty, while penalties remain where a field exists but is bad:
+a stale quote, an expensive entry. The distinction matters - "not measured" and "measured and
+bad" lead to different decisions. The same card now reads 75/100 with a single honest line.
+The cost-of-entry line stopped complaining too: where depth quotes exist we show them, where
+they do not but an impact spread does, we show the spread - instead of two complaints in place
+of a number we already had.
+
+**Two new kinds from the roadmap.** *Crowded* (step 2, item 2) fires when at least 92 % of
+open interest sits on one side AND that side pays in the top percentile of the funding rate.
+Both conditions are required: a skew without payment is often structural, and an alert on it
+alone would be an alert on market structure. The card describes the STRUCTURE, not a
+direction: "the liquidation cascade runs against the crowd; the sentinel does not predict
+direction". *Absorption* (step 2, item 3) fires when open interest grows by at least 12 % in
+an hour while price stands still - the only signal of ours that triggers on the ABSENCE of a
+price move: somebody is accumulating against the flow and so far has enough. Visible BEFORE
+the move, which is its value and its weakness, and the card says so plainly.
+
+**The test prints the list of failures.** "11 FAIL" without names forces scrolling through a
+thousand lines of output; a single summary line is cheaper for everyone.
+
 ## 12. Limits, debts and refuted hypotheses
 
 **The boundary with the trading contour is hard.** No file in `sentinel/` imports
@@ -471,7 +516,7 @@ a call search). Entering a position happens by hand on the venue.
 
 ---
 
-## 14. Roadmap, ordered by value over cost
+## 15. Roadmap, ordered by value over cost
 
 **Step 1 - finish the sentinel (1-2 days).** Sandbox acceptance, then production. The separate
 `sentinel.main` unit plus lease (code is ready; only the unit file and the owner's decision are
@@ -512,7 +557,7 @@ token.
 
 ---
 
-## 15. Reconciliation with the scouting report
+## 16. Reconciliation with the scouting report
 
 Nine requested items. Fully delivered here: the alert engine stages 0-2 (dedupe by
 `transaction_hash`, a Nansen daily cap, per-token cooldown, one outcome row per alert), the
