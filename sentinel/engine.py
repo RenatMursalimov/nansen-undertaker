@@ -31,6 +31,7 @@
 import time
 
 from . import cards, config, detector, ignition, outbox, store, variational_feed as feed
+from . import venues
 
 #: Глубина горячего кольца. 90 минут — ровно чтобы закрыть 60-минутное окно с запасом на
 #: пропуски опроса. Разрешение кольца равно темпу опроса: точка на каждый опрос (см. `_hot_put`,
@@ -49,6 +50,15 @@ _TICK_BUSY = False   # свой замок поверх max_instances: тик н
 def _row(x, ts):
     return (int(ts), x.mark, x.volume_24h, x.oi_long, x.oi_short, x.funding_raw,
             x.spread_bps, int(x.quote_ts) if x.quote_ts else None)
+
+
+def _rk(x):
+    # КЛЮЧ ИНСТРУМЕНТА В КОЛЬЦАХ - ПАРА «площадка:тикер», А НЕ ТИКЕР.
+    # Без площадки «BTC» с Variational и «BTC» с Hyperliquid легли бы в ОДИН ряд, и на
+    # каждом тике ряд прыгал бы между двумя разными ценами: детектор увидел бы
+    # «движения», которых на рынке нет. Тот же класс, что склейка однофамильцев токенов,
+    # только дороже - там врал один экран, здесь врал бы весь дозор.
+    return venues.key(getattr(x, 'venue', 'variational') or 'variational', x.ticker)
 
 
 def _hot_put(x, ts):
@@ -70,7 +80,7 @@ def _hot_put(x, ts):
     она меньше, чем неработающий дозор.
     ЗАЩИТА ОТ НАЛОЖЕНИЯ ТИКОВ ОСТАЛАСЬ: два тика в одну секунду дают одну точку.
     """
-    arr = _HOT.setdefault(x.ticker, [])
+    arr = _HOT.setdefault(_rk(x), [])
     if arr and ts <= arr[-1][0]:
         arr[-1] = _row(x, ts)
         return arr
@@ -101,12 +111,12 @@ def _cold(ticker):
 def _cold_due(x, ts):
     """Пора ли писать точку в базу. -> True/False."""
     b = int(ts) // COLD_RES
-    return _COLD_BUCKET.get(x.ticker) != b
+    return _COLD_BUCKET.get(_rk(x)) != b
 
 
 def _cold_put(x, ts):
-    _COLD_BUCKET[x.ticker] = int(ts) // COLD_RES
-    arr = _COLD.setdefault(x.ticker, [])
+    _COLD_BUCKET[_rk(x)] = int(ts) // COLD_RES
+    arr = _COLD.setdefault(_rk(x), [])
     arr.append(_row(x, ts))
     cut = ts - config.ring_days() * 86400
     while arr and arr[0][0] < cut:
@@ -149,13 +159,19 @@ async def _ingest():
     if not store.lease('variational'):
         owner, until = store.lease_owner('variational')
         return 'опрос не наш: аренда у %s ещё %dс' % (owner, max(0, until - now))
-    try:
-        rows, meta = await asyncio.to_thread(feed.fetch)
-    except feed.FeedError as e:
-        # КЛАСС ОТКАЗА ФИДА НАЗЫВАЕМ. 'http 403' (нужен UA), 'net' (сеть) и 'shape' (площадка
-        # сменила форму ответа) требуют совершенно разных действий, и склеить их в «не
-        # получилось» значит потерять сутки на следующем разборе.
-        return 'площадка не прочитана [%s] %s' % (e.kind, e.detail)
+    # ОПРАШИВАЕМ ВСЕ ВКЛЮЧЁННЫЕ ПЛОЩАДКИ, И ОТКАЗ ОДНОЙ НЕ РОНЯЕТ ОСТАЛЬНЫЕ. Класс отказа
+    # называется по каждой отдельно: «Hyperliquid молчит» и «дозорный сломался» - разные
+    # новости, и первую человек должен увидеть строкой, а не догадкой.
+    rows, notes = await venues.fetch_all()
+    _bad = ['%s [%s] %s' % (venues.title(v), n.kind, n.detail)
+            for v, n in notes.items() if isinstance(n, feed.FeedError)]
+    if not rows:
+        return ('ни одна площадка не прочитана: %s'
+                % ('; '.join(_bad) or 'причина не названа'))
+    meta = {'latency_ms': 0}
+    for _v, _n in notes.items():
+        if isinstance(_n, dict):
+            meta['latency_ms'] = max(meta['latency_ms'], int(_n.get('latency_ms') or 0))
     watched = store.watched()
     if not watched:
         # СНИМКИ ПИШЕМ ВСЁ РАВНО: кольцо нужно ПЕРВОМУ подписчику, а он появится позже. Без
@@ -174,12 +190,20 @@ async def _ingest():
         if not keep(x.ticker):
             continue
         try:
-            evs = detector.detect(x, hot, now=now, ring=_cold(x.ticker))
+            evs = detector.detect(x, hot, now=now, ring=_cold(_rk(x)))
         except Exception as e:
             print('[sentinel] детектор упал на %s: %s: %s'
                   % (x.ticker, type(e).__name__, str(e)[:110]))
             continue
         events += evs
+    # РАСХОЖДЕНИЕ МЕЖДУ ПЛОЩАДКАМИ - ОДИН РАЗ НА ТИК, А НЕ НА ИНСТРУМЕНТ: оно живёт между
+    # рынками, и считать его в цикле по тикерам значило бы сравнить каждую пару дважды.
+    if len(set(getattr(x, 'venue', '') for x in rows)) > 1:
+        try:
+            events += detector.cross_venue([x for x in rows if keep(x.ticker)], now=now)
+        except Exception as e:
+            print('[sentinel] сравнение площадок упало: %s: %s'
+                  % (type(e).__name__, str(e)[:110]))
     if cold_written:
         await asyncio.to_thread(_flush_cold, rows, now)
     planned, skipped = 0, []
@@ -192,12 +216,17 @@ async def _ingest():
         planned += n
         skipped += why
     store.spend_add(events=fresh)
-    note = ('опрошено %d инстр. за %dмс; в дозоре %s; событий новых %d; доставок в очередь %d'
-            % (len(rows), meta.get('latency_ms') or 0,
+    _ok_v = [venues.title(v) for v, n in notes.items()
+             if not isinstance(n, feed.FeedError)]
+    note = ('опрошено %d инстр. (%s) за %dмс; в дозоре %s; событий новых %d; '
+            'доставок в очередь %d'
+            % (len(rows), ', '.join(_ok_v) or 'никого', meta.get('latency_ms') or 0,
                ('вся площадка' if store.ALL in watched else str(len(watched))),
                fresh, planned))
     if skipped:
         note += '; не отправлено: ' + '; '.join(skipped[:4])
+    if _bad:
+        note += '; отказ площадок: ' + '; '.join(_bad)
     return note
 
 
@@ -216,7 +245,7 @@ def _seed(rows, now):
 def _flush_cold(rows, now):
     """Записать в базу те инструменты, у которых окно сменилось. Одним проходом, в потоке."""
     b = int(now) // COLD_RES
-    due = [x for x in rows if _COLD_BUCKET.get(x.ticker) == b]
+    due = [x for x in rows if _COLD_BUCKET.get(_rk(x)) == b]
     if due:
         store.snapshot_put(due, ts=now)
 
@@ -387,7 +416,8 @@ def market_now(limit=5, now=None):
     """
     now = int(now if now is not None else time.time())
     moves, vols = [], []
-    for ticker, rows in _HOT.items():
+    for rkey, rows in _HOT.items():
+        _v, ticker = venues.split(rkey)
         if len(rows) < 2:
             continue
         cur = rows[-1]
@@ -399,11 +429,11 @@ def market_now(limit=5, now=None):
         p60 = detector.pct(cur[1], r60[1]) if r60 else None
         best = p15 if p15 is not None else p60
         if best is not None:
-            moves.append((abs(best), ticker, best, p15, p60))
+            moves.append((abs(best), ticker, best, p15, p60, _v))
         if r60 and r60[2]:
             dv = detector.pct(cur[2], r60[2])
             if dv is not None and dv > 0:
-                vols.append((dv, ticker, (cur[2] or 0) - (r60[2] or 0)))
+                vols.append((dv, ticker, (cur[2] or 0) - (r60[2] or 0), _v))
     moves.sort(reverse=True)
     vols.sort(reverse=True)
     # СКОЛЬКО ИНСТРУМЕНТОВ ВООБЩЕ СДВИНУЛОСЬ - ОТДЕЛЬНОЕ ЧИСЛО, И ОНО ГЛАВНОЕ В ТИХИЙ ЧАС.

@@ -228,6 +228,7 @@ _T = {
     'k_move': {'ru': 'Движения', 'en': 'Moves'},
     'k_oi': {'ru': 'Интерес', 'en': 'Open interest'},
     'k_vol': {'ru': 'Объём', 'en': 'Volume'},
+    'k_gap': {'ru': 'Расхождение', 'en': 'Venue gap'},
     'k_ign': {'ru': 'Зажигание', 'en': 'Ignition'},
     'k_fund': {'ru': 'Фандинг', 'en': 'Funding'},
     'k_spread': {'ru': 'Спред', 'en': 'Spread'},
@@ -237,6 +238,11 @@ _T = {
     'what_inside': {'ru': 'Что внутри алерта:', 'en': 'Inside the alert:'},
     'btn_refresh': {'ru': '🔄 Обновить', 'en': '🔄 Refresh'},
     'btn_now': {'ru': '📈 Что сейчас', 'en': '📈 Market now'},
+    'venues': {'ru': 'Площадки:', 'en': 'Venues:'},
+    'preset': {'ru': '⚙️ Пресет: %s', 'en': '⚙️ Preset: %s'},
+    'p_test': {'ru': 'поток', 'en': 'firehose'},
+    'p_normal': {'ru': 'рабочий', 'en': 'normal'},
+    'p_quiet': {'ru': 'тихий', 'en': 'quiet'},
     'day': {'ru': 'За сутки:', 'en': 'Last 24h:'},
     'nothing': {'ru': 'ничего', 'en': 'nothing'},
     'btn_help': {'ru': '❓ Как это работает', 'en': '❓ How it works'},
@@ -260,6 +266,16 @@ def _lang(uid):
         return oc_menu.lang_of(uid)
     except Exception:
         return 'ru'
+
+
+def _venue_row(lang, uid):
+    """Ряд тумблеров площадок. -> [InlineKeyboardButton]. Выключенные площадки
+    показываются с причиной в тексте экрана, а не пропадают молча."""
+    from telegram import InlineKeyboardButton as B
+    from . import venues as _v
+    on = store.venues_for(uid)
+    return [B(_mark(_v.title(k), k in on), callback_data='sen:v:%s' % k)
+            for k in _v.live()]
 
 
 def _mark(text, on):
@@ -287,12 +303,29 @@ def menu_text(uid, lang=None):
     _k = store.kinds_for(uid)
     _p = store.parts_for(uid)
     _kn = {'move_up': _t('k_move', lang), 'vol_surge': _t('k_vol', lang),
+           'venue_gap': _t('k_gap', lang),
            'oi_surge': _t('k_oi', lang),
            'ignition': _t('k_ign', lang), 'funding_extreme': _t('k_fund', lang),
            'spread_shock': _t('k_spread', lang)}
     _on = [v for k, v in _kn.items() if k in _k]
     out.append('%s %s' % (_t('what_comes', lang),
                           ', '.join(_on) if _on else _t('quiet_off', lang)))
+    try:
+        from . import venues as _vv
+        _on = store.venues_for(uid)
+        _vline = ', '.join(('%s ✓' if k in _on else '%s ✗') % _vv.title(k)
+                           for k in _vv.enabled())
+        # ВЫКЛЮЧЕННАЯ ПЛОЩАДКА НАЗЫВАЕТ ПРИЧИНУ. «Её тут нет» человек читает как
+        # «забыли», а причина превращает это в решение.
+        _off = [(k, _vv.why_off(k, lang)) for k in _vv.VENUES
+                if not (_vv.VENUES[k] or {}).get('fetch')]
+        _tpl = ' · %s not yet (%s)' if lang == 'en' else ' · %s пока нет (%s)'
+        for _k, _w in _off:
+            if _w:
+                _vline += _tpl % (_vv.title(_k), _w)
+        out.append('%s %s' % (_t('venues', lang), _vline))
+    except Exception as _ve:
+        print('[sentinel] строка площадок не собралась: %s' % str(_ve)[:90])
     out.append('%s %s' % (_t('what_inside', lang),
                           ', '.join([_t('p_nansen', lang)] if 'nansen' in _p else [])
                           + (', ' if ('nansen' in _p and 'news' in _p) else '')
@@ -364,6 +397,7 @@ def menu_kb(uid, lang=None):
          B(_mark(_t('k_vol', lang), 'vol_surge' in kinds), callback_data='sen:k:vol'),
          B(_mark(_t('k_oi', lang), 'oi_surge' in kinds), callback_data='sen:k:oi')],
         [B(_mark(_t('k_ign', lang), 'ignition' in kinds), callback_data='sen:k:ign'),
+         B(_mark(_t('k_gap', lang), 'venue_gap' in kinds), callback_data='sen:k:gap'),
          B(_mark(_t('k_fund', lang), 'funding_extreme' in kinds), callback_data='sen:k:fund'),
          B(_mark(_t('k_spread', lang), 'spread_shock' in kinds), callback_data='sen:k:spread')],
         # ЧТО ВНУТРИ АЛЕРТА. 'card' (числа площадки) в тумблерах НЕТ нарочно: алерт без чисел -
@@ -373,6 +407,13 @@ def menu_kb(uid, lang=None):
         # «ЧТО СЕЙЧАС» - ПЕРВОЙ КНОПКОЙ В ЭТОМ РЯДУ. Она отвечает на вопрос, который человек
         # задаёт раньше всех остальных: «оно вообще работает?». Молчание дозорного и его смерть
         # выглядят одинаково, и только числа рынка их различают.
+        # ПЛОЩАДКИ ТУМБЛЕРАМИ. Отдельный ряд, а не строка в тексте: человек их включает и
+        # выключает так же часто, как виды событий, и чужая площадка в потоке мешает ровно
+        # так же, как чужой вид.
+        _venue_row(lang, uid),
+        [B(_t('preset', lang) % _t('p_test', lang), callback_data='sen:pr:test'),
+         B(_t('preset', lang) % _t('p_normal', lang), callback_data='sen:pr:normal'),
+         B(_t('preset', lang) % _t('p_quiet', lang), callback_data='sen:pr:quiet')],
         [B(_t('btn_now', lang), callback_data='sen:now'),
          B(_t('btn_report', lang), callback_data='sen:rep')],
         [B(_t('btn_help', lang), callback_data='sen:help')],
@@ -466,7 +507,7 @@ async def handle_callback(update, context):
             # предлагать человеку подписку на половину рынка: тот, кто хочет знать о падении,
             # хочет знать и о росте.
             _map = {'move': ('move_up', 'move_down'), 'oi': ('oi_surge',),
-                    'vol': ('vol_surge',),
+                    'vol': ('vol_surge',), 'gap': ('venue_gap',),
                     'ign': ('ignition',), 'fund': ('funding_extreme',),
                     'spread': ('spread_shock',)}
             cur = store.kinds_for(uid)
@@ -478,6 +519,13 @@ async def handle_callback(update, context):
             store.kinds_set(uid, cur)
         elif act == 'p':
             store.part_toggle(uid, arg)
+        elif act == 'v':
+            store.venue_toggle(uid, arg)
+        elif act == 'pr':
+            _nm, _why = store.preset_apply(uid, arg)
+            await _send(q, context,
+                        ('⚙️ Пресет «%s»: %s' % (_nm, _why)) if _nm else
+                        ('Не вышло: %s' % _why))
         elif act == 'q':
             f, t = _quiet_next(store.settings(uid))
             store.settings_set(uid, quiet_from=f, quiet_to=t)
@@ -518,18 +566,21 @@ async def route_send(bot, uid, text):
     # подтверждение) короткие и одноразовые; клавиатура под ними только копила бы экраны.
     if act == 'status':
         await bot.send_message(chat_id=uid, text=menu_text(uid, lang),
-                               reply_markup=menu_kb(uid, lang))
+                               reply_markup=menu_kb(uid, lang), parse_mode='HTML',
+                               disable_web_page_preview=True)
         return True
     txt = route(uid, text)
     if not txt:
         return False
-    await bot.send_message(chat_id=uid, text=txt)
+    await bot.send_message(chat_id=uid, text=txt, parse_mode='HTML',
+                           disable_web_page_preview=True)
     # ПОСЛЕ ЛЮБОЙ ПРАВКИ ПОКАЗЫВАЕМ ЭКРАН: человек, сказавший «дозор порог 5», хочет увидеть,
     # что изменилось, а не только слово «готово». Это же и путь к кнопкам для того, кто про
     # них не знал.
     if act in ('add', 'del', 'alerts', 'enrich', 'minpct', 'quiet'):
         await bot.send_message(chat_id=uid, text=menu_text(uid, lang),
-                               reply_markup=menu_kb(uid, lang))
+                               reply_markup=menu_kb(uid, lang), parse_mode='HTML',
+                               disable_web_page_preview=True)
     return True
 
 
@@ -539,7 +590,8 @@ async def _show(q, context, uid, lang):
     kb = menu_kb(uid, lang)
     txt = menu_text(uid, lang)
     try:
-        await q.edit_message_text(txt, reply_markup=kb)
+        await q.edit_message_text(txt, reply_markup=kb, parse_mode='HTML',
+                                  disable_web_page_preview=True)
         return
     except Exception as e:
         # «Message is not modified» - не ошибка: человек вернул значение к прежнему.
@@ -550,11 +602,20 @@ async def _show(q, context, uid, lang):
 
 
 async def _send(q, context, text, kb=None):
+    """Сообщение экрана. ВСЕГДА с HTML: иначе человек читает теги глазами.
+
+    ЖИВОЙ СЛУЧАЙ 25.09: экран «Что сейчас» пришёл владельцу как `<b>Что сейчас на площадке</b>`
+    - буквально, с тегами в тексте. Карточки алертов ходят через `outbox`, где parse_mode задан,
+    а экраны ui отправлялись здесь БЕЗ него: одна дверь знала про разметку, вторая нет. Класс
+    бага тот же, что «пятая копия тега разъедется с остальными» - разметка обязана жить В ОДНОМ
+    месте на каждый канал отправки, и обе двери должны о ней знать.
+    """
     chat = (getattr(getattr(q, 'message', None), 'chat_id', None)
             or (q.from_user.id if getattr(q, 'from_user', None) else None))
     if chat is None:
         return
-    await context.bot.send_message(chat_id=chat, text=text, reply_markup=kb)
+    await context.bot.send_message(chat_id=chat, text=text, reply_markup=kb,
+                                   parse_mode='HTML', disable_web_page_preview=True)
 
 
 def now_text(lang='ru'):
@@ -580,21 +641,23 @@ def now_text(lang='ru'):
     out.append('')
     out.append('<b>%s</b>' % ('Сильнее всего двигались' if ru else 'Biggest moves'))
     if m['moves']:
-        for _a, t, best, p15, p60 in m['moves']:
+        for _a, t, best, p15, p60, _v in m['moves']:
             bits = []
             if p15 is not None:
                 bits.append('15м %+.2f%%' % p15)
             if p60 is not None:
                 bits.append('60м %+.2f%%' % p60)
-            out.append('• <b>%s</b> %s' % (t, ' · '.join(bits)))
+            out.append('• <b>%s</b> <i>%s</i> %s'
+                       % (t, _vt(_v), ' · '.join(bits)))
     else:
         out.append('• %s' % ('движений не измерено (кольцо ещё набирается)' if ru
                              else 'no moves measured yet'))
     if m['vols']:
         out.append('')
         out.append('<b>%s</b>' % ('Растёт оборот' if ru else 'Turnover growing'))
-        for dv, t, dusd in m['vols']:
-            out.append('• <b>%s</b> +%.0f%% (+%s)' % (t, dv, _money(dusd)))
+        for dv, t, dusd, _v in m['vols']:
+            out.append('• <b>%s</b> <i>%s</i> +%.0f%% (+%s)'
+                       % (t, _vt(_v), dv, _money(dusd)))
     out.append('')
     # ГЛАВНАЯ СТРОКА ТИХОГО ЧАСА - СКОЛЬКО ИНСТРУМЕНТОВ ВООБЩЕ СДВИНУЛОСЬ. «Сильнейшее движение
     # 0.00%» само по себе читается как сломанный счётчик; рядом с «из 192 измеренных сдвинулись
@@ -615,6 +678,12 @@ def now_text(lang='ru'):
                         'Strongest move <b>%.2f%%</b> against a %.2f%% threshold — the market is '
                         'quiet, not the sentinel.') % (m['best'], m['thr15']))
     return '\n'.join(out)
+
+
+def _vt(venue):
+    """Короткое имя площадки для строки списка. Общая дверь - в `venues`."""
+    from .venues import title
+    return title(venue)[:4]
 
 
 def _money(v):

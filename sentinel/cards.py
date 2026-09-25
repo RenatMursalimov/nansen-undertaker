@@ -45,6 +45,7 @@ _KIND_TITLE = {
     'funding_extreme': '💸',
     'spread_shock': '⚠️',
     'ignition': '🔥',
+    'venue_gap': '⚖️',
 }
 
 _KIND_WORD = {
@@ -52,6 +53,7 @@ _KIND_WORD = {
     'move_down': 'вниз',
     'oi_surge': 'открытый интерес',
     'vol_surge': 'всплеск оборота',
+    'venue_gap': 'цена расходится между площадками',
     'funding_extreme': 'ставка в хвосте',
     'spread_shock': 'котировка разъехалась',
     'ignition': 'смарт-зажигание',
@@ -131,6 +133,16 @@ def confidence_line(ev):
     return head + '\n  • ' + '\n  • '.join(str(p) for p in pen)
 
 
+def venue_title(venue):
+    """Человеческое имя площадки. Своего справочника здесь НЕТ: он в `venues`, и второй
+    список названий разъехался бы с первым на первом же переименовании."""
+    try:
+        from .venues import title
+        return title(venue or 'variational')
+    except Exception:
+        return (venue or '').capitalize()
+
+
 def _links(ev, bot_un=None):
     """Ряд ссылок под карточкой. -> str | ''.
 
@@ -138,7 +150,16 @@ def _links(ev, bot_un=None):
     не измерили, здесь не появляются вовсе.
     """
     p = ev.get('payload') or {}
-    out = ['<a href="%s">Площадка</a>' % VAR_URL]
+    # ССЫЛКА ВЕДЁТ НА ТУ ПЛОЩАДКУ, ГДЕ СОБЫТИЕ. Одна ссылка «Площадка» на все источники
+    # отправляла бы человека на Variational по алерту с Hyperliquid - то есть в никуда.
+    _v = p.get('venue') or 'variational'
+    _u = VAR_URL
+    try:
+        from .venues import url as _vurl
+        _u = _vurl(_v) or VAR_URL
+    except Exception:
+        pass
+    out = ['<a href="%s">%s</a>' % (_u, esc(venue_title(_v)))]
     addr = p.get('address')
     if addr and bot_un:
         try:
@@ -179,6 +200,9 @@ def card(ev, lang='ru', bot_un=None):
         lines.append('%s <b>%s</b>  оборот <b>%s</b> за час (+%s)'
                      % (icon, tick, _pct(p.get('vol_change_pct')),
                         _usd(p.get('vol_change_usd'))))
+    elif kind == 'venue_gap':
+        lines.append('%s <b>%s</b>  расхождение <b>%.0f б.п.</b> между площадками'
+                     % (icon, tick, p.get('gap_bps') or 0))
     elif kind == 'ignition':
         lines.append('%s <b>%s</b>  %d умных адреса купили на <b>%s</b>'
                      % (icon, tick, int(p.get('wallets') or 0), _usd(p.get('usd'))))
@@ -192,7 +216,11 @@ def card(ev, lang='ru', bot_un=None):
     # ПОДЗАГОЛОВОК НЕ ПОВТОРЯЕТ ЗАГОЛОВОК. У движения вид события уже сказан иконкой и знаком
     # процента, и слово «вверх» рядом с «+4.50%» - это строка, которая ничего не добавляет.
     # Название вида пишем там, где заголовок его не называет.
-    _sub = [x for x in (name if name != tick else '',
+    # ПЛОЩАДКА - ПЕРВОЙ В ПОДЗАГОЛОВКЕ. Человек заходит руками на КОНКРЕТНОЙ площадке, и
+    # «BTC +2%» без ответа «где» заставляет его угадывать; цена и спред у двух площадок
+    # разные, так что угадывание стоит денег.
+    _sub = [x for x in (venue_title(p.get('venue')),
+                        name if name != tick else '',
                         '' if kind in ('move_up', 'move_down') else _KIND_WORD.get(kind, ''))
             if x]
     if _sub:
@@ -200,7 +228,16 @@ def card(ev, lang='ru', bot_un=None):
     lines.append('')
 
     # ── ЗАМЕРЫ: ТОЛЬКО ТО, ЧТО МЕНЯЕТ РЕШЕНИЕ ─────────────────────────────────────────────
-    if kind == 'ignition':
+    if kind == 'venue_gap':
+        # ДЕШЕВЛЕ И ДОРОЖЕ - СЛОВАМИ И ЦЕНАМИ. «Расхождение 60 б.п.» без ответа «где дешевле»
+        # заставляет человека открывать обе площадки и сравнивать глазами.
+        lines.append('Дешевле: <b>%s</b> %s' % (esc(venue_title(p.get('cheap_venue'))),
+                                               _price(p.get('cheap_mark'))))
+        lines.append('Дороже: <b>%s</b> %s' % (esc(venue_title(p.get('rich_venue'))),
+                                              _price(p.get('rich_mark'))))
+        lines.append('Вход на двух сторонах: %.0f б.п. · меньший оборот 24ч %s'
+                     % (p.get('cost_bps') or 0, _usd(p.get('volume_24h'))))
+    elif kind == 'ignition':
         if p.get('mcap_bps') is not None:
             lines.append('Это <b>%.2f%%</b> капитализации (%s)'
                          % (p['mcap_bps'] / 100.0, _usd(p.get('mcap'))))

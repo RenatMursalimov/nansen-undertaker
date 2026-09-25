@@ -47,7 +47,7 @@ W15, W60 = 900, 3600
 TOL = 180
 
 KINDS = ('move_up', 'move_down', 'oi_surge', 'vol_surge', 'funding_extreme',
-         'spread_shock', 'ignition')
+         'spread_shock', 'ignition', 'venue_gap')
 
 
 # ── ЭЛЕМЕНТАРНАЯ АРИФМЕТИКА, ВЫНЕСЕННАЯ РАДИ ОДНОГО: ДЕЛЕНИЯ НА НОЛЬ ──────────────────────
@@ -220,6 +220,67 @@ def _window(ts):
     return int(ts) // max(300, int(config.cooldown_sec()))
 
 
+def cross_venue(listings, now=None):
+    """Один актив на РАЗНЫХ площадках -> события расхождения цены. ЧИСТАЯ функция.
+
+    ЗАЧЕМ ЭТО ЗДЕСЬ, А НЕ В ОБЩЕМ `detect`. `detect` смотрит на ОДИН инструмент и его
+    историю; расхождение живёт МЕЖДУ инструментами и требует всего среза сразу. Впихнуть
+    его в `detect` значило бы передавать туда весь рынок ради одной проверки - и все
+    остальные виды начали бы зависеть от того, что происходит с чужими тикерами.
+
+    ТИКЕРЫ СРАВНИВАЕМ ТОЛЬКО ОДИНАКОВЫЕ И ТОЛЬКО ЖИВЫЕ. «BTC» и «BTC» - один актив на двух
+    площадках; «US» на Variational это токен Talus, и никакого «US» на Hyperliquid с тем же
+    смыслом может не быть - поэтому пары строятся по точному совпадению тикера, а не по
+    похожести, и обе стороны обязаны иметь оборот (расхождение с мёртвым рынком - это
+    отсутствие рынка, а не возможность).
+    """
+    import time as _t
+    now = int(now if now is not None else _t.time())
+    from . import config as _c
+    by = {}
+    for x in listings or ():
+        if not x.mark or (x.volume_24h or 0) < _c.gap_min_usd():
+            continue
+        by.setdefault(str(x.ticker).upper(), []).append(x)
+    out = []
+    for tick, group in by.items():
+        if len(group) < 2:
+            continue
+        group = sorted(group, key=lambda z: z.mark)
+        lo, hi = group[0], group[-1]
+        if lo.venue == hi.venue or not lo.mark:
+            continue
+        gap = (hi.mark - lo.mark) / lo.mark * 10000.0
+        if gap < _c.gap_bps():
+            continue
+        pen = []
+        # ЧЕСТНАЯ ОГОВОРКА: часть расхождения съедает спред на обеих сторонах. Не сказать
+        # этого значит показать «возможность», которой после издержек может не быть.
+        cost = (lo.depth_bps("size_100k") or lo.spread_bps or 0) + \
+               (hi.depth_bps("size_100k") or hi.spread_bps or 0)
+        if cost >= gap:
+            pen.append(('вход на обеих сторонах стоит %.0f б.п. - больше самого расхождения'
+                        % cost, 40))
+        elif cost > 0:
+            pen.append(('вход на обеих сторонах стоит %.0f б.п.' % cost, 10))
+        for z in (lo, hi):
+            age = z.quote_age(now)
+            if age is not None and age > _c.quote_warn_sec():
+                pen.append(('котировка %s старше %ds' % (z.venue, int(age)), 15))
+        conf, notes = confidence(90, pen)
+        step = _step(gap, _c.gap_bps())
+        out.append({'kind': 'venue_gap', 'ticker': tick, 'ts': now,
+                    'key': key('venue_gap', tick, _window(now), step),
+                    'severity': conf,
+                    'payload': {'ticker': tick, 'venue': hi.venue, 'mark': hi.mark,
+                                'gap_bps': gap, 'cheap_venue': lo.venue,
+                                'cheap_mark': lo.mark, 'rich_venue': hi.venue,
+                                'rich_mark': hi.mark, 'cost_bps': cost,
+                                'volume_24h': min(lo.volume_24h or 0, hi.volume_24h or 0),
+                                'step': step, 'penalties': notes}})
+    return out
+
+
 def detect(listing, rows, now=None, ring=None):
     """Один инструмент -> список событий (может быть пустым).
 
@@ -260,7 +321,12 @@ def detect(listing, rows, now=None, ring=None):
     sigma_usable = bool(sig and sig > 0 and npts >= config.sigma_min_points())
 
     base_pen = _quote_penalties(listing, now)
+    # ПЛОЩАДКА ЕДЕТ В КАЖДОМ СОБЫТИИ. Без неё карточка «BTC +2%» не отвечает на вопрос
+    # «где именно», а он первый: цена, спред и фандинг у двух площадок разные, и заходить
+    # человек будет на одной конкретной.
+    _venue = getattr(listing, 'venue', 'variational') or 'variational'
     common = {'ticker': listing.ticker, 'name': listing.name, 'mark': listing.mark,
+              'venue': _venue,
               'volume_24h': listing.volume_24h, 'oi_long': listing.oi_long,
               'oi_short': listing.oi_short, 'oi_skew': listing.oi_skew,
               'funding_raw': listing.funding_raw,
@@ -300,7 +366,7 @@ def detect(listing, rows, now=None, ring=None):
         kind = 'move_up' if mv > 0 else 'move_down'
         step = _step(mv, thr)
         out.append({'kind': kind, 'ticker': listing.ticker, 'ts': now,
-                    'key': key(kind, listing.ticker, _window(now), step),
+                    'key': key(kind, '%s:%s' % (_venue, listing.ticker), _window(now), step),
                     'severity': conf,
                     'payload': dict(common, window=why, move_pct=mv, threshold_pct=thr,
                                     step=step, penalties=notes)})
@@ -324,7 +390,7 @@ def detect(listing, rows, now=None, ring=None):
             conf, notes = confidence(90, pen)
             step = _step(d_oi, config.oi_pct())
             out.append({'kind': 'oi_surge', 'ticker': listing.ticker, 'ts': now,
-                        'key': key('oi_surge', listing.ticker, _window(now), step),
+                        'key': key('oi_surge', '%s:%s' % (_venue, listing.ticker), _window(now), step),
                         'severity': conf,
                         'payload': dict(common, oi_change_pct=d_oi, oi_then=oi_then,
                                         oi_now=oi_now, oi_change_usd=d_usd, step=step,
@@ -347,7 +413,7 @@ def detect(listing, rows, now=None, ring=None):
             conf, notes = confidence(85, pen)
             step = _step(d_vol, config.vol_pct())
             out.append({'kind': 'vol_surge', 'ticker': listing.ticker, 'ts': now,
-                        'key': key('vol_surge', listing.ticker, _window(now), step),
+                        'key': key('vol_surge', '%s:%s' % (_venue, listing.ticker), _window(now), step),
                         'severity': conf,
                         'payload': dict(common, vol_change_pct=d_vol, vol_then=v_then,
                                         vol_change_usd=d_vusd, step=step, penalties=notes)})
@@ -372,7 +438,7 @@ def detect(listing, rows, now=None, ring=None):
                             30))
             conf, notes = confidence(80, pen)
             out.append({'kind': 'funding_extreme', 'ticker': listing.ticker, 'ts': now,
-                        'key': key('funding_extreme', listing.ticker, _window(now), 1),
+                        'key': key('funding_extreme', '%s:%s' % (_venue, listing.ticker), _window(now), 1),
                         'severity': conf,
                         'payload': dict(common, funding_rank=rank,
                                         funding_points=len(hist), step=1, penalties=notes)})
@@ -389,7 +455,7 @@ def detect(listing, rows, now=None, ring=None):
             conf, notes = confidence(75, base_pen)
             step = _step(listing.spread_bps / med, config.spread_mult())
             out.append({'kind': 'spread_shock', 'ticker': listing.ticker, 'ts': now,
-                        'key': key('spread_shock', listing.ticker, _window(now), step),
+                        'key': key('spread_shock', '%s:%s' % (_venue, listing.ticker), _window(now), step),
                         'severity': conf,
                         'payload': dict(common, spread_median_bps=med,
                                         spread_mult=listing.spread_bps / med,
