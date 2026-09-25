@@ -102,8 +102,49 @@ HELP = (
 )
 
 
+def silence_reasons(uid, lang='ru'):
+    """Почему при этих настройках алертов НЕ БУДЕТ. -> [строки]. Пусто = всё в порядке.
+
+    ═══ ОДНА ДВЕРЬ НА ДВА ЭКРАНА, И ЭТО НЕ КОСМЕТИКА ═══
+    Сторож тишины родился на кнопочном экране (`menu_text`), а команда словами («дозор») ходит
+    в `status_text` - то есть на один и тот же вопрос человека два пути отвечали ПО-РАЗНОМУ:
+    кнопкой он видел «алертов не будет», словами - нет. Этот же класс расхождения в дозорном уже
+    ловили дважды («выключил кнопкой, а шлёт» против «выключил командой, а шлёт»), и правило
+    записано: два пути к одному решению обязаны делать одно и то же.
+
+    ПОРЯДОК ПРИЧИН - ОТ САМОЙ СИЛЬНОЙ: выключенные алерты глушат всё, поэтому о них первыми.
+    НАБОР ВИДОВ ПЕРЕЧИТЫВАЕМ ЗДЕСЬ, а не принимаем аргументом: живая проба 26.09 показала, что
+    в `menu_text` переменная с набором к этому месту уже затиралась циклом площадок, и сторож
+    молча не срабатывал. Своё чтение стоит дешевле, чем разбор такого второй раз.
+    """
+    s = store.settings(uid)
+    out = []
+    if not store.sub_list(uid):
+        out.append(_t('s_nosubs', lang))
+    if not s.get('alerts_on'):
+        out.append(_t('s_off', lang))
+    if not store.kinds_for(uid):
+        out.append(_t('s_nokinds', lang))
+    try:
+        if not store.venues_for(uid):
+            out.append(_t('s_novenues', lang))
+    except Exception:
+        pass
+    return out
+
+
 def status_text(uid):
-    """Что под дозором и в каком состоянии. ВЕДЁМ ВЕЛИЧИНАМИ, а не флагами."""
+    """Состояние дозорного ОДНОЙ СТРОКОЙ-БЛОКОМ, без клавиатуры. -> str.
+
+    ═══ ЧЕМ ЭТО ОТЛИЧАЕТСЯ ОТ `menu_text` И ЗАЧЕМ ОСТАЛОСЬ ═══
+    `menu_text` - экран ПОД КЛАВИАТУРОЙ: он короткий нарочно, потому что под ним двадцать
+    кнопок, и его читают вместе с ними. Эта функция - ответ для мест, где клавиатуры НЕТ:
+    владельческая сводка, лог, ответ на вопрос «как дела у дозорного» в чужом экране. Здесь
+    можно позволить себе полный разрез, включая общие пороги.
+    РАНЬШЕ ОНА БЫЛА ВТОРЫМ ОТВЕТОМ НА ТУ ЖЕ КОМАНДУ, и это был двойной источник правды:
+    `route` отдавал её, а человек получал `menu_text`. Теперь команда «дозор» ведёт в один
+    экран, а эта функция осталась там, где она и полезна - без кнопок.
+    """
     subs = store.sub_list(uid)
     s = store.settings(uid)
     lines = ['👁 Дозорный']
@@ -139,6 +180,13 @@ def status_text(uid):
         lines.append('  ⚠️ выше %d кнопкой не поднять: это граница, а не настройка '
                      '(правится только в .env на сервере)' % store._BURST_HARD)
     lines.append('Порог звонка: уверенность от %d/100 (ниже — в сводку)' % store.min_sev_for(uid))
+    # СТОРОЖ ТИШИНЫ - ТОЙ ЖЕ ДВЕРЬЮ, ЧТО У КНОПОЧНОГО ЭКРАНА. Разбор - в `silence_reasons`.
+    _sil = silence_reasons(uid, _lang(uid))
+    if _sil:
+        lines.append('')
+        lines.append(_t('s_head', _lang(uid)))
+        for _w in _sil:
+            lines.append('  • %s' % _w)
     if not config.deliver_on():
         # РУБИЛЬНИК ОБЪЯВЛЯЕТСЯ НА ЭКРАНЕ ПЕРВЫМ ДЕЛОМ: иначе человек крутит свои настройки и
         # не понимает, почему ничего не приходит, а причина лежит в `.env` на сервере.
@@ -169,7 +217,14 @@ def route(uid, text):
     act, a = got
     try:
         if act == 'status':
-            return status_text(uid)
+            # ═══ ОДИН ЭКРАН - ОДИН ТЕКСТ ═══
+            # Здесь стоял `status_text`, а живой путь (`route_send`) отправляет `menu_text` -
+            # то есть на ОДНУ команду «дозор» тест видел один текст, а человек другой. Два
+            # источника правды на один экран: правка в одном молча расходилась с другим, и
+            # сторож тишины, добавленный в `menu_text`, в ответе словами не появлялся вовсе.
+            # Тот же класс, что «выключил кнопкой, а шлёт»: два пути к одному ответу обязаны
+            # отвечать одинаково, иначе тест охраняет текст, которого никто не видит.
+            return menu_text(uid, _lang(uid))
         if act == 'help':
             return HELP
         if act == 'add':
@@ -338,6 +393,40 @@ _T = {
     'cap_nansen': {'ru': '💳 Кап дозора: %s кр/сутки', 'en': '💳 Sentinel cap: %s cr/day'},
     'cap_lab': {'ru': '🧪 Кап лаборатории: %s кр/сутки', 'en': '🧪 Lab cap: %s cr/day'},
     'cap_off': {'ru': 'Выключить кап', 'en': 'Cap off'},
+    # ── ДВА ЭКРАНА: ОСНОВНОЕ СРАЗУ, РЕДКОЕ ПОД «ЕЩЁ» (замечание владельца 26.09) ──────────
+    'adv_show': {'ru': '🎛 Ещё настройки ▾', 'en': '🎛 More settings ▾'},
+    'adv_hide': {'ru': '🎛 Свернуть ▴', 'en': '🎛 Collapse ▴'},
+    # ЗАГОЛОВКИ ГРУПП. Не украшение: они отвечают на «что здесь крутить», и тап по ним даёт
+    # подсказку (молчащая кнопка - дефект, который мы уже ловили).
+    'g_pace': {'ru': '— — —  🚦 ТЕМП: сколько и как часто  — — —',
+               'en': '— — —  🚦 PACE: how many, how often  — — —'},
+    'g_power': {'ru': '— — —  ⚖️ СИЛА: насколько крупное  — — —',
+                'en': '— — —  ⚖️ STRENGTH: how big  — — —'},
+    'g_kinds': {'ru': '— — —  🔔 ЧТО ПРИСЫЛАТЬ  — — —', 'en': '— — —  🔔 WHAT TO SEND  — — —'},
+    'g_where': {'ru': '— — —  🏛 ГДЕ И ЧТО ВНУТРИ  — — —',
+                'en': '— — —  🏛 WHERE AND WHAT IS INSIDE  — — —'},
+    'g_caps': {'ru': '— — —  💳 КАПЫ КРЕДИТОВ (владелец)  — — —',
+               'en': '— — —  💳 CREDIT CAPS (owner)  — — —'},
+    'h_pace': {'ru': 'Темп: сколько сообщений и как часто. Предохранитель — жёсткая граница '
+                     'на человека; пауза — по инструменту; потолок — за сутки.',
+               'en': 'Pace: how many messages and how often. The fuse is a hard per-person '
+                     'boundary; cooldown is per instrument; the cap is per day.'},
+    'h_power': {'ru': 'Сила: насколько крупным должно быть событие. Это про СОСТАВ, а не про '
+                      'количество — темп держит предохранитель.',
+                'en': 'Strength: how big an event must be. This changes the MIX, not the '
+                      'volume — the pace is held by the fuse.'},
+    'h_kinds': {'ru': 'Виды событий. Галочка — включено. Выключенное не приходит и в сводке '
+                      'не появляется: это ваш выбор, а не отсрочка.',
+                'en': 'Event kinds. A tick means on. What is off does not arrive at all, not '
+                      'even in the digest: that is your choice, not a delay.'},
+    'h_where': {'ru': 'Площадки и состав алерта. Числа площадки идут всегда; Нансен и новости '
+                      'стоят кредитов и выключаются отдельно.',
+                'en': 'Venues and alert contents. Venue numbers always come; Nansen and news '
+                      'cost credits and switch off separately.'},
+    'h_caps': {'ru': 'Суточные капы кредитов. Это ОБЩИЙ кошелёк на всех подписчиков, поэтому '
+                     'меняет только владелец. Ноль = потолка нет.',
+               'en': 'Daily credit caps. This is a SHARED wallet for all subscribers, so only '
+                     'the owner can change it. Zero means no ceiling.'},
     'free': {'ru': 'Nansen на время хакатона бесплатен: суточный кап расхода выключен, '
                    'но расход измеряется и виден строкой выше.',
              'en': 'Nansen is free for the hackathon: the daily spend cap is off, but spend is '
@@ -465,23 +554,7 @@ def menu_text(uid, lang=None):
     # придёт НИ ОДНОГО алерта никогда, а экран об этом молчал и выглядел рабочим. Это тот самый
     # закон проекта: признак наличия (кнопки есть, дозор «включён») не равен признаку пользы.
     # ПОРЯДОК ПРИЧИН - ОТ САМОЙ СИЛЬНОЙ: выключенные алерты глушат всё, поэтому о них первыми.
-    # ПЕРЕСПРАШИВАЕМ НАБОР ВИДОВ, А НЕ БЕРЁМ `_k` ИЗ КОДА ВЫШЕ. Живая проба 26.09 показала, что
-    # `_k` к этому месту УЖЕ НЕ ТОТ: цикл площадок выше использует `_k` как переменную цикла и
-    # затирает набор видов именем площадки. Проверка «виды сняты» молча не срабатывала - то есть
-    # сторож тишины сам был тихо сломан. Своё имя стоит дешевле, чем разбор такого второй раз.
-    _kinds_now = store.kinds_for(uid)
-    _why_silent = []
-    if not subs:
-        _why_silent.append(_t('s_nosubs', lang))
-    if not s.get('alerts_on'):
-        _why_silent.append(_t('s_off', lang))
-    if not _kinds_now:
-        _why_silent.append(_t('s_nokinds', lang))
-    try:
-        if not store.venues_for(uid):
-            _why_silent.append(_t('s_novenues', lang))
-    except Exception:
-        pass
+    _why_silent = silence_reasons(uid, lang)
     if _why_silent:
         out.append('')
         out.append(_t('s_head', lang))
@@ -489,21 +562,56 @@ def menu_text(uid, lang=None):
             out.append('  • %s' % _w)
     out.append('')
     out.append(outbox.status_line(lang))
-    out.append('')
-    out.append(_t('shared', lang) % (config.move_pct_15m(), config.move_pct_60m(),
-                                     config.z_min(), config.oi_pct(),
-                                     config.ign_wallets(), config.ign_usd() / 1000))
-    # ПРО «БЕСПЛАТНО» ГОВОРИМ ВСЛУХ И ТОЛЬКО КОГДА ЭТО ПРАВДА: выключенный кап - решение
-    # владельца, а не дефект, и человек, читающий «кап выключен», должен видеть, что так и
-    # задумано. Как только кап включат числом, строка исчезнет сама.
-    if config.nansen_day_credits() <= 0:
+    # ═══ СЛУЖЕБНОЕ - ТОЛЬКО В РАЗВЁРНУТОМ ВИДЕ ═══
+    # Замечание владельца 26.09 про настройки касается и ТЕКСТА: общие пороги детектора и
+    # строка про бесплатный Nansen человек читает один раз, а занимают они треть экрана над
+    # клавиатурой. В свёрнутом виде остаётся то, что отвечает на «как сейчас»; подробности
+    # появляются там же, где кнопки для них.
+    if _ADV.get(int(uid)):
         out.append('')
-        out.append(_t('free', lang))
+        out.append(_t('shared', lang) % (config.move_pct_15m(), config.move_pct_60m(),
+                                         config.z_min(), config.oi_pct(),
+                                         config.ign_wallets(), config.ign_usd() / 1000))
+        # ПРО «БЕСПЛАТНО» ГОВОРИМ ВСЛУХ И ТОЛЬКО КОГДА ЭТО ПРАВДА: выключенный кап - решение
+        # владельца, а не дефект, и человек, читающий «кап выключен», должен видеть, что так и
+        # задумано. Как только кап включат числом, строка исчезнет сама.
+        if store.nansen_cap() <= 0:
+            out.append('')
+            out.append(_t('free', lang))
     return '\n'.join(out)
 
 
+#: КТО РАЗВЕРНУЛ ПРОДВИНУТЫЕ НАСТРОЙКИ. В ПАМЯТИ ПРОЦЕССА, А НЕ В БАЗЕ - НАРОЧНО.
+#: Это состояние ЭКРАНА, а не человека: «развёрнуто» ничего не меняет в поведении дозорного и
+#: ничего не стоит потерять при рестарте (свернётся - и это правильное начальное состояние).
+#: Колонка в базе ради визуальной мелочи означала бы миграцию и ещё одно поле в четырёх местах.
+_ADV = {}
+
+
 def menu_kb(uid, lang=None):
-    """Клавиатура экрана. -> InlineKeyboardMarkup. Префикс наш: `sen:`."""
+    """Клавиатура экрана. -> InlineKeyboardMarkup. Префикс наш: `sen:`.
+
+    ═══ ДВА ЭКРАНА ВМЕСТО ОДНОГО. ЗАМЕЧАНИЕ ВЛАДЕЛЬЦА 26.09 ═══
+    Дословно: «надо оптимизировать вывод настроек, основные настройки, которые в основном
+    меняются, надо выводить, а продвинутые, которые очень редко меняются, спрятать в "ещё"…
+    и сгруппировать рядом по смыслу».
+
+    Он прав, и это видно по числу: клавиатура доросла до ДВАДЦАТИ ряд��в. Каждый ряд появлялся
+    обоснованно (кнопку просили, и она нужна), а вместе они превратили экран в простыню, где
+    тумблер «Алерты» - первый из двадцати равноправных. Экран, на котором всё одинаково важно,
+    не помогает решать: он заставляет читать целиком, чтобы найти одно.
+
+    ЧТО НАВЕРХУ. Ровно то, что человек трогает регулярно: главный тумблер, вся площадка,
+    сводки, ПРЕСЕТЫ (одним тапом настраивают сразу четыре числа - самый частый способ), и два
+    экрана-ответа («что сейчас», «попадания»).
+    ЧТО ПОД «ЕЩЁ». Отдельные числа темпа и силы, тихие часы, наборы видов и площадок, капы
+    кредитов. Это крутят раз в неделю, а места занимали больше половины.
+
+    ГРУППЫ ПОДПИСАНЫ, И ЗАГОЛОВОК НЕ МОЛЧИТ. Telegram не умеет заголовков внутри клавиатуры,
+    поэтому разделитель - кнопка; но кнопка, которая «ничего не делает», это ровно тот дефект,
+    который мы уже ловили («нажимаю, ничего не происходит»). Поэтому тап по заголовку ОТВЕЧАЕТ
+    подсказкой, что настраивает эта группа.
+    """
     lang = lang or _lang(uid)
     from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup
     s = store.settings(uid)
@@ -516,73 +624,77 @@ def menu_kb(uid, lang=None):
          else '%02d-%02d UTC' % (int(s['quiet_from']), int(s['quiet_to'])))
     kinds = store.kinds_for(uid)
     parts = store.parts_for(uid)
+    adv = bool(_ADV.get(int(uid)))
+    # ── ОСНОВНОЙ ЭКРАН: ТОЛЬКО ТО, ЧТО ТРОГАЮТ РЕГУЛЯРНО ──────────────────────────────────
     rows = [
-        # ТУМБЛЕРЫ ПОДПИСАНЫ ТЕКУЩИМ СОСТОЯНИЕМ, А НЕ ДЕЙСТВИЕМ. «Алерты: вкл» отвечает на
-        # вопрос «как сейчас»; кнопка «Выключить алерты» на него не отвечает, и человек жмёт
-        # её, чтобы проверить, что было (класс бага «кнопка режима включает режим из своей
-        # подписи» в этом проекте уже ловили).
+        # ГЛАВНЫЙ ТУМБЛЕР ОДИН В РЯДУ: он решает, будет ли вообще что-то приходить, и рядом с
+        # ним не должно стоять ничего равновеликого.
         [B(_t('alerts_on' if s.get('alerts_on') else 'alerts_off', lang),
            callback_data='sen:t:al')],
-        [B(_t('brief_on' if s.get('enrich_on') else 'brief_off', lang),
-           callback_data='sen:t:br'),
-         B(_t('all_on' if store.ALL in subs else 'all_off', lang), callback_data='sen:t:all')],
-        [B('−', callback_data='sen:mp:-1'),
-         B(_t('mp', lang) % (('%.1f%%' % float(mp)) if mp else _t('mp_off', lang)),
-           callback_data='sen:mp:0'),
-         B('+', callback_data='sen:mp:1')],
-        [B('−', callback_data='sen:cd:-15'), B(_t('cd', lang) % cd, callback_data='sen:cd:0'),
-         B('+', callback_data='sen:cd:15')],
-        [B('−', callback_data='sen:cap:-5'), B(_t('cap', lang) % cap, callback_data='sen:cap:0'),
-         B('+', callback_data='sen:cap:5')],
-        # ═══ ПРЕДОХРАНИТЕЛЬ И ПОРОГ ЗВОНКА - КНОПКАМИ. ТРЕБОВАНИЕ ВЛАДЕЛЬЦА 26.09 ═══
-        # «Предохранитель на ЧЕЛОВЕКА нужно где-то настраивать, а не хардкодом зашивать»,
-        # «порог силы тоже надо настраивать». Раньше крутилось только из `.env` с рестартом.
-        # ДВА РЯДА, А НЕ ОДИН: у предохранителя ДВА числа (сколько и за какое окно), и
-        # склеивать их в одну кнопку значило бы прятать половину настройки.
-        # Средняя кнопка СБРАСЫВАЕТ В ОБЩЕЕ значение - так же, как у порога и паузы выше:
-        # «вернуть как было» обязано быть одним тапом, иначе человек подбирает число обратно.
-        [B('−', callback_data='sen:bm:-1'),
-         B(_t('burst', lang) % bm, callback_data='sen:bm:0'),
-         B('+', callback_data='sen:bm:1')],
-        [B('−', callback_data='sen:bw:-5'),
-         B(_t('bwin', lang) % (bw // 60), callback_data='sen:bw:0'),
-         B('+', callback_data='sen:bw:5')],
-        [B('−', callback_data='sen:sv:-5'),
-         B(_t('sev', lang) % store.min_sev_for(uid), callback_data='sen:sv:0'),
-         B('+', callback_data='sen:sv:5')],
-        [B(_t('quiet', lang) % q, callback_data='sen:q:next')],
-        # ЧТО ПРИСЫЛАТЬ - ТУМБЛЕРАМИ С ГАЛОЧКОЙ. Просьба владельца дословно: «настраивать, что
-        # приходят алерты движения плюс нансен движения существенные, или просто Нансен сигналы,
-        # или просто алерты по объёму». Галочка в подписи говорит СОСТОЯНИЕ: кнопка «Движения»
-        # без отметки не отвечает на вопрос «а сейчас они идут?».
-        [B(_mark(_t('k_move', lang), 'move_up' in kinds), callback_data='sen:k:move'),
-         B(_mark(_t('k_vol', lang), 'vol_surge' in kinds), callback_data='sen:k:vol'),
-         B(_mark(_t('k_oi', lang), 'oi_surge' in kinds), callback_data='sen:k:oi')],
-        [B(_mark(_t('k_crowd', lang), 'crowded' in kinds), callback_data='sen:k:crowd'),
-         B(_mark(_t('k_absorb', lang), 'absorption' in kinds),
-           callback_data='sen:k:absorb')],
-        [B(_mark(_t('k_ign', lang), 'ignition' in kinds), callback_data='sen:k:ign'),
-         B(_mark(_t('k_gap', lang), 'venue_gap' in kinds), callback_data='sen:k:gap'),
-         B(_mark(_t('k_fund', lang), 'funding_extreme' in kinds), callback_data='sen:k:fund'),
-         B(_mark(_t('k_spread', lang), 'spread_shock' in kinds), callback_data='sen:k:spread')],
-        # ЧТО ВНУТРИ АЛЕРТА. 'card' (числа площадки) в тумблерах НЕТ нарочно: алерт без чисел -
-        # это уведомление «что-то случилось» без ответа «что именно». Выключается дорогое.
-        [B(_mark(_t('p_nansen', lang), 'nansen' in parts), callback_data='sen:p:nansen'),
-         B(_mark(_t('p_news', lang), 'news' in parts), callback_data='sen:p:news')],
-        # «ЧТО СЕЙЧАС» - ПЕРВОЙ КНОПКОЙ В ЭТОМ РЯДУ. Она отвечает на вопрос, который человек
-        # задаёт раньше всех остальных: «оно вообще работает?». Молчание дозорного и его смерть
-        # выглядят одинаково, и только числа рынка их различают.
-        # ПЛОЩАДКИ ТУМБЛЕРАМИ. Отдельный ряд, а не строка в тексте: человек их включает и
-        # выключает так же часто, как виды событий, и чужая площадка в потоке мешает ровно
-        # так же, как чужой вид.
-        _venue_row(lang, uid),
+        [B(_t('all_on' if store.ALL in subs else 'all_off', lang), callback_data='sen:t:all'),
+         B(_t('brief_on' if s.get('enrich_on') else 'brief_off', lang),
+           callback_data='sen:t:br')],
+        # ПРЕСЕТЫ ВЫШЕ ОТДЕЛЬНЫХ ЧИСЕЛ, ПОТОМУ ЧТО ЭТО САМЫЙ ЧАСТЫЙ СПОСОБ НАСТРОИТЬ. Один тап
+        # ставит порог, паузу, потолок и набор видов - четыре числа, которые иначе крутят
+        # двенадцатью нажатиями.
         [B(_t('preset', lang) % _t('p_test', lang), callback_data='sen:pr:test'),
          B(_t('preset', lang) % _t('p_normal', lang), callback_data='sen:pr:normal'),
          B(_t('preset', lang) % _t('p_quiet', lang), callback_data='sen:pr:quiet')],
         [B(_t('btn_now', lang), callback_data='sen:now'),
          B(_t('btn_report', lang), callback_data='sen:rep')],
-        [B(_t('btn_help', lang), callback_data='sen:help')],
+        [B(_t('adv_hide' if adv else 'adv_show', lang), callback_data='sen:adv:x'),
+         B(_t('btn_help', lang), callback_data='sen:help')],
         [B(_t('btn_refresh', lang), callback_data='sen:home')],
+    ]
+    if not adv:
+        return InlineKeyboardMarkup(rows)
+    # ── ПРОДВИНУТОЕ: ВСТАВЛЯЕМ ПЕРЕД РЯДОМ «ЕЩЁ», ЧТОБЫ ОН ОСТАЛСЯ ВНИЗУ КАК ВЫХОД ────────
+    adv_rows = [
+        # ── ГРУППА «ТЕМП»: СКОЛЬКО И КАК ЧАСТО. Четыре числа про количество сообщений стоят
+        #    рядом нарочно: человек крутит их вместе («шумно» лечится любым из них), и
+        #    разнесённые по экрану они заставляли сравнивать по памяти.
+        [B(_t('g_pace', lang), callback_data='sen:hint:pace')],
+        [B('\u2212', callback_data='sen:bm:-1'),
+         B(_t('burst', lang) % bm, callback_data='sen:bm:0'),
+         B('+', callback_data='sen:bm:1')],
+        [B('\u2212', callback_data='sen:bw:-5'),
+         B(_t('bwin', lang) % (bw // 60), callback_data='sen:bw:0'),
+         B('+', callback_data='sen:bw:5')],
+        [B('\u2212', callback_data='sen:cd:-15'), B(_t('cd', lang) % cd, callback_data='sen:cd:0'),
+         B('+', callback_data='sen:cd:15')],
+        [B('\u2212', callback_data='sen:cap:-5'), B(_t('cap', lang) % cap, callback_data='sen:cap:0'),
+         B('+', callback_data='sen:cap:5')],
+        [B(_t('quiet', lang) % q, callback_data='sen:q:next')],
+        # ── ГРУППА «СИЛА»: НАСКОЛЬКО КРУПНОЕ. Два порога про КАЧЕСТВО события, а не про его
+        #    количество - и путать эти две группы нельзя: подняв порог, человек не уменьшает
+        #    поток, он меняет его состав.
+        [B(_t('g_power', lang), callback_data='sen:hint:power')],
+        [B('\u2212', callback_data='sen:mp:-1'),
+         B(_t('mp', lang) % (('%.1f%%' % float(mp)) if mp else _t('mp_off', lang)),
+           callback_data='sen:mp:0'),
+         B('+', callback_data='sen:mp:1')],
+        [B('\u2212', callback_data='sen:sv:-5'),
+         B(_t('sev', lang) % store.min_sev_for(uid), callback_data='sen:sv:0'),
+         B('+', callback_data='sen:sv:5')],
+        # ── ГРУППА «ЧТО ПРИСЫЛАТЬ»: виды событий. Галочка в подписи говорит СОСТОЯНИЕ: кнопка
+        #    «Движения» без отметки не отвечает на вопрос «а сейчас они идут?».
+        [B(_t('g_kinds', lang), callback_data='sen:hint:kinds')],
+        [B(_mark(_t('k_move', lang), 'move_up' in kinds), callback_data='sen:k:move'),
+         B(_mark(_t('k_vol', lang), 'vol_surge' in kinds), callback_data='sen:k:vol'),
+         B(_mark(_t('k_oi', lang), 'oi_surge' in kinds), callback_data='sen:k:oi')],
+        [B(_mark(_t('k_crowd', lang), 'crowded' in kinds), callback_data='sen:k:crowd'),
+         B(_mark(_t('k_absorb', lang), 'absorption' in kinds), callback_data='sen:k:absorb'),
+         B(_mark(_t('k_ign', lang), 'ignition' in kinds), callback_data='sen:k:ign')],
+        [B(_mark(_t('k_gap', lang), 'venue_gap' in kinds), callback_data='sen:k:gap'),
+         B(_mark(_t('k_fund', lang), 'funding_extreme' in kinds), callback_data='sen:k:fund'),
+         B(_mark(_t('k_spread', lang), 'spread_shock' in kinds), callback_data='sen:k:spread')],
+        # ── ГРУППА «ГДЕ И ЧТО ВНУТРИ»: площадки и состав алерта. Обе про ИСТОЧНИКИ, поэтому
+        #    рядом. 'card' (числа площадки) тумблера не имеет: алерт без чисел - уведомление
+        #    «что-то случилось» без ответа «что именно». Выключается только дорогое.
+        [B(_t('g_where', lang), callback_data='sen:hint:where')],
+        _venue_row(lang, uid),
+        [B(_mark(_t('p_nansen', lang), 'nansen' in parts), callback_data='sen:p:nansen'),
+         B(_mark(_t('p_news', lang), 'news' in parts), callback_data='sen:p:news')],
     ]
     # ═══ ВЛАДЕЛЬЧЕСКИЙ РАЗДЕЛ: КАПЫ КРЕДИТОВ. Требование владельца 26.09 - «капа тоже
     # настраиваться где-то должна». Кредиты - ОДИН кошелёк на всех, поэтому не в личных
@@ -590,17 +702,20 @@ def menu_kb(uid, lang=None):
     # РЯДА НЕТ У ТЕХ, КОМУ ОН НЕ ПОЛОЖЕН - не «есть, но с отказом при нажатии»: кнопка,
     # которая всегда отвечает «нельзя», это обещание, которого мы не держим.
     if _is_owner(uid):
-        _nc, _lc = store.nansen_cap(), store.lab_cap()
-        rows.insert(-1, [B(_t('cap_nansen', lang) % _capw(_nc, lang),
+        adv_rows.append([B(_t('g_caps', lang), callback_data='sen:hint:caps')])
+        adv_rows.append([B(_t('cap_nansen', lang) % _capw(store.nansen_cap(), lang),
                            callback_data='sen:gn:0')])
-        rows.insert(-1, [B('−100', callback_data='sen:gn:-100'),
+        adv_rows.append([B('\u2212100', callback_data='sen:gn:-100'),
                          B('+100', callback_data='sen:gn:100'),
                          B(_t('cap_off', lang), callback_data='sen:gn:off')])
-        rows.insert(-1, [B(_t('cap_lab', lang) % _capw(_lc, lang), callback_data='sen:gl:0')])
-        rows.insert(-1, [B('−1000', callback_data='sen:gl:-1000'),
+        adv_rows.append([B(_t('cap_lab', lang) % _capw(store.lab_cap(), lang),
+                           callback_data='sen:gl:0')])
+        adv_rows.append([B('\u22121000', callback_data='sen:gl:-1000'),
                          B('+1000', callback_data='sen:gl:1000'),
                          B(_t('cap_off', lang), callback_data='sen:gl:off')])
-    return InlineKeyboardMarkup(rows)
+    # ПРОДВИНУТОЕ ВСТАВЛЯЕМ ПЕРЕД ДВУМЯ ПОСЛЕДНИМИ РЯДАМИ («Ещё/Справка» и «Обновить»), чтобы
+    # выход из раздела остался на дне экрана - там, где человек его ищет после прокрутки.
+    return InlineKeyboardMarkup(rows[:-2] + adv_rows + rows[-2:])
 
 
 def _capw(v, lang='ru'):
@@ -725,6 +840,19 @@ async def handle_callback(update, context):
                 _cur = store.burst_for(uid)[1] // 60
                 store.settings_set(uid, burst_win_min=max(5, min(store._WIN_HARD_MIN,
                                                                  _cur + int(arg))))
+        elif act == 'adv':
+            # РАЗВЕРНУТЬ/СВЕРНУТЬ ПРОДВИНУТОЕ. Состояние в памяти процесса (см. `_ADV`): это
+            # вид экрана, а не настройка человека, и терять его при рестарте безопасно.
+            _ADV[int(uid)] = not _ADV.get(int(uid))
+        elif act == 'hint':
+            # ЗАГОЛОВОК ГРУППЫ ОТВЕЧАЕТ ПОДСКАЗКОЙ, А НЕ МОЛЧИТ. Кнопка, на которую «ничего не
+            # происходит», в этом проекте уже стоила разбора: человек жмёт её второй и третий
+            # раз, считая, что бот сломался. Всплывашка стоит ноль и отвечает на «что это».
+            try:
+                await q.answer(text=_t('h_%s' % arg, lang), show_alert=True)
+            except Exception:
+                pass
+            return
         elif act in ('gn', 'gl'):
             # ОБЩИЕ КАПЫ КРЕДИТОВ - ТОЛЬКО ВЛАДЕЛЬЦУ. Гейт стоит И на отрисовке (ряда нет), И
             # здесь: кнопку можно нажать по старому сообщению после того, как права изменились,
