@@ -10,7 +10,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 | Scenarios | Endpoints used | Telemetry scenes |
 |---|---|---|
-| 34: 32 user-facing on Nansen + 1 background + 1 local | 35 | 31 of 36 in registry |
+| 34: 32 user-facing on Nansen + 1 background + 1 local | 35 | 31 of 38 in registry |
 
 ## Three doors: where Nansen can be asked at all
 
