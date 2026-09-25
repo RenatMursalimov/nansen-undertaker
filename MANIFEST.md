@@ -75,14 +75,14 @@ reading it.
 | `sentinel/ignition.py` | `140934be614c996d` | byte-for-byte from the bot |
 | `sentinel/lab.py` | `e0736135e36216e4` | byte-for-byte from the bot |
 | `sentinel/main.py` | `78b4747b108b7d74` | byte-for-byte from the bot |
-| `sentinel/outbox.py` | `4f43ba719b77c1d3` | byte-for-byte from the bot |
+| `sentinel/outbox.py` | `8290dd01b32fd774` | byte-for-byte from the bot |
 | `sentinel/predict.py` | `9d4808981b9dddb2` | byte-for-byte from the bot |
 | `sentinel/store.py` | `5154dd43b10da484` | byte-for-byte from the bot |
-| `sentinel/ui.py` | `7d1f33b5eda82aca` | byte-for-byte from the bot |
+| `sentinel/ui.py` | `088935dde538abb1` | byte-for-byte from the bot |
 | `sentinel/variational_feed.py` | `bcc5bc71585fe0c5` | byte-for-byte from the bot |
 | `sentinel/venues.py` | `ae629063ac479017` | byte-for-byte from the bot |
 | `tests/test_public.py` | `221c07951d891077` | extract-only, this file does not exist in the bot |
-| `tests/test_sentinel.py` | `8814727bb739fc8a` | byte-for-byte from the bot |
+| `tests/test_sentinel.py` | `fd2c334fe6ce8f82` | byte-for-byte from the bot |
 | `tools/nansen_catalog.py` | `bc3a4ba352f49927` | byte-for-byte from the bot |
 | `tools/nansen_daily.py` | `699fd28d7d76437d` | byte-for-byte from the bot |
 | `tools/nansen_endpoint_sweep.py` | `10511b78461c253c` | byte-for-byte from the bot |
