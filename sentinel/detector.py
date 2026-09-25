@@ -309,7 +309,13 @@ def detect(listing, rows, now=None, ring=None):
     if oi_now and r60 is not None:
         oi_then = (r60[3] or 0) + (r60[4] or 0)
         d_oi = pct(oi_now, oi_then if oi_then else None)
-        if d_oi is not None and abs(d_oi) >= config.oi_pct():
+        # СКАЧОК В ДЕНЬГАХ, А НЕ ТОЛЬКО В ПРОЦЕНТАХ. +20% к интересу, которого было на $30k, -
+        # это $6k: арифметика та же, смысла нет. Интерес площадка отдаёт В КОНТРАКТАХ, поэтому
+        # переводим марк-ценой; без цены проверку не выдумываем, а пропускаем событие (иначе
+        # «денег много» решалось бы догадкой).
+        d_usd = abs(oi_now - oi_then) * (listing.mark or 0)
+        if (d_oi is not None and abs(d_oi) >= config.oi_pct()
+                and d_usd >= config.oi_min_usd()):
             pen = list(base_pen)
             if oi_then and oi_then * (listing.mark or 0) < config.min_volume_usd():
                 pen.append(('час назад интереса почти не было - процент считается от малого',
@@ -320,7 +326,8 @@ def detect(listing, rows, now=None, ring=None):
                         'key': key('oi_surge', listing.ticker, _window(now), step),
                         'severity': conf,
                         'payload': dict(common, oi_change_pct=d_oi, oi_then=oi_then,
-                                        oi_now=oi_now, step=step, penalties=notes)})
+                                        oi_now=oi_now, oi_change_usd=d_usd, step=step,
+                                        penalties=notes)})
 
     # ── ФАНДИНГ: ХВОСТ СВОЕГО ЖЕ РАСПРЕДЕЛЕНИЯ ────────────────────────────────────────────
     if listing.funding_raw is not None and len(ring) >= config.sigma_min_points():
@@ -348,7 +355,12 @@ def detect(listing, rows, now=None, ring=None):
                                         funding_points=len(hist), step=1, penalties=notes)})
 
     # ── СПРЕД: ЭТО ПРЕДОСТЕРЕЖЕНИЕ ────────────────────────────────────────────────────────
-    if listing.spread_bps is not None:
+    if listing.spread_bps is not None and listing.spread_bps >= config.spread_min_bps():
+        # АБСОЛЮТНЫЙ ПОРОГ СТОИТ ПЕРВЫМ, И ЭТО ЗАМЕР, А НЕ ВКУС. Живой час 25.09 дал три алерта
+        # подряд по XAGS: «спред 2.4 б.п. - ×9.5 к медиане 0.3». Арифметика верна, новости нет:
+        # 2.4 б.п. это две сотых процента. Множитель измеряет НЕОБЫЧНОСТЬ, а не ЗНАЧИМОСТЬ, и у
+        # инструмента с идеально узкой книгой любое дыхание даёт «×9». Вердикт владельца:
+        # «походит на спам», «это же не алерт».
         med = median([r[6] for r in ring])
         if med and listing.spread_bps >= med * config.spread_mult() and med > 0:
             conf, notes = confidence(75, base_pen)

@@ -46,6 +46,34 @@ def _bot():
     return _BOT
 
 
+_BOT_UN = {'un': None, 'asked': False}
+
+
+async def bot_un():
+    """username бота для deep-link в свои же экраны. -> str | None.
+
+    СПРАШИВАЕМ ЖИВОГО БОТА (`get_me`) ОДИН РАЗ И КЭШИРУЕМ. Хардкодить прод-имя нельзя: на
+    тест-боте тап по ссылке увёл бы человека В ПРОД - ровно та граница, которую держит
+    `nansen_api.tok_link` («нет имени - нет ссылки, молча»). Спрашиваем один раз: `get_me` это
+    сетевой вызов, а ссылок в карточке три.
+    """
+    if _BOT_UN['un'] or _BOT_UN['asked']:
+        return _BOT_UN['un']
+    _BOT_UN['asked'] = True
+    b = _bot()
+    if b is None:
+        return None
+    try:
+        me = await b.get_me()
+        _BOT_UN['un'] = getattr(me, 'username', None)
+    except Exception as e:
+        # НЕ ПАДАЕМ И НЕ ПОДСТАВЛЯЕМ ЧУЖОЕ ИМЯ: карточка уедет без ссылок, и это честнее, чем
+        # ссылка не в того бота.
+        print('[sentinel] имя бота не прочитано (%s) - карточки пойдут без ссылок'
+              % str(e)[:100])
+    return _BOT_UN['un']
+
+
 def quiet_now(settings, now=None):
     """Тихие часы человека. -> True, если сейчас молчим.
 
@@ -74,10 +102,18 @@ def plan(ev):
     if not uids:
         return 0, ['на %s никто не подписан' % ev.get('ticker')]
     n = 0
+    kind = ev.get('kind') or '?'
     for uid in uids:
         s = store.settings(uid)
         if not s.get('alerts_on'):
             reasons.append('uid=%s: алерты выключены' % uid)
+            continue
+        # ВИД СОБЫТИЯ - ЛИЧНЫЙ ВЫБОР. Владелец просил именно так: «настраивать, что приходят
+        # алерты движения плюс нансен движения существенные, или просто Нансен сигналы, или
+        # просто алерты по объёму». Отсев стоит ЗДЕСЬ, а не в детекторе: событие одно на всех и
+        # пишется в базу целиком (оно понадобится отчёту попаданий), а получатели у него разные.
+        if kind not in store.kinds_for(uid):
+            reasons.append('uid=%s: вид %s выключен в настройках' % (uid, kind))
             continue
         mp = s.get('min_pct')
         mv = (ev.get('payload') or {}).get('move_pct')
@@ -121,7 +157,8 @@ async def _send(uid, text, label=''):
     except Exception as e:
         print('[sentinel] tg_send не импортирован (%s) - шлю напрямую' % str(e)[:80])
         try:
-            return await b.send_message(chat_id=uid, text=text)
+            return await b.send_message(chat_id=uid, text=text, parse_mode='HTML',
+                                        disable_web_page_preview=True)
         except Exception as e2:
             print('[sentinel] tg err uid=%s: %s' % (uid, str(e2)[:150]))
             return False
@@ -129,8 +166,16 @@ async def _send(uid, text, label=''):
 
     def _fail(e):
         err['e'] = e
-    res = await tg_send.safe_send(lambda: b.send_message(chat_id=uid, text=text),
-                                 chat_key=uid, label=label or 'sentinel', on_fail=_fail)
+    # HTML, А НЕ MARKDOWN, И НЕ «БЕЗ РАЗМЕТКИ». В тикерах и метках адресов живут `_` и `*`, на
+    # которых Markdown ломается - поэтому первая редакция шла вообще без разметки и получила от
+    # владельца «весь текст без формата, ссылки без линков». В HTML опасны только `&<>`, и они
+    # экранируются одной дверью (`cards.esc`).
+    # ПРЕВЬЮ ВЫКЛЮЧЕНО: иначе под каждым алертом Telegram разворачивает картинку площадки, и
+    # три алерта подряд превращаются в простыню.
+    res = await tg_send.safe_send(
+        lambda: b.send_message(chat_id=uid, text=text, parse_mode='HTML',
+                               disable_web_page_preview=True),
+        chat_key=uid, label=label or 'sentinel', on_fail=_fail)
     if not res and err.get('e'):
         return ('err', err['e'])
     return res
@@ -150,7 +195,7 @@ async def deliver_due(limit=25):
             store.delivery_fail(event_key, uid, 'событие пропало из базы')
             bad += 1
             continue
-        text = cards.card(ev)
+        text = cards.card(ev, bot_un=await bot_un())
         res = await _send(uid, text, label='sentinel:%s' % ev.get('kind'))
         if isinstance(res, tuple) and res and res[0] == 'err':
             state = store.delivery_fail(event_key, uid, res[1])
@@ -188,6 +233,10 @@ async def deliver_enrichment(event_key, brief, limit=25):
     n = 0
     for uid in store.delivered_users(event_key)[:limit]:
         if not store.settings(uid).get('enrich_on'):
+            continue
+        # ЧЕЛОВЕК, ВЫКЛЮЧИВШИЙ И ОНЧЕЙН, И НОВОСТИ, СВОДКУ НЕ ЖДЁТ. Оставить ему пустое второе
+        # сообщение значило бы прислать шум там, где он попросил тишины.
+        if not ({'nansen', 'news'} & store.parts_for(uid)):
             continue
         res = await _send(uid, text, label='sentinel:brief')
         if res and not (isinstance(res, tuple) and res[0] == 'err'):

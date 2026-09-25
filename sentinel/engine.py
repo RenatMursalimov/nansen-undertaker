@@ -264,7 +264,12 @@ async def enrich_tick(limit=3):
             continue
         try:
             from . import enrichment
-            brief = await enrichment.build(ev)
+            # СВОДКУ СОБИРАЕМ ПОД ПЕРВОГО ПОЛУЧАТЕЛЯ, А НЕ «ВООБЩЕ». Состав сводки - личная
+            # настройка (`store.parts_for`), и собирать её без человека значило бы платить за
+            # Nansen тому, кто ончейн выключил. Событие у нескольких подписчиков - сводка идёт
+            # по максимуму их наборов, поэтому берём первого доставленного как основу.
+            _who = (store.delivered_users(key) or [None])[0]
+            brief = await enrichment.build(ev, uid=_who, bot_un=await outbox.bot_un())
             sent = await outbox.deliver_enrichment(key, brief)
             store.enrich_done(key, cards.enrich_card(ev, brief),
                               credits=brief.get('credits') or 0,

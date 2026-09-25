@@ -3,7 +3,7 @@
 Live alerts on Variational Omni plus Smart Ignition on Nansen. What is built, on which
 measurements, where the limits are, and what comes next.
 
-Date: 2026-09-25. Package: `sentinel/`. Tests: `python3 tests/test_sentinel.py` (154 checks, no
+Date: 2026-09-25. Package: `sentinel/`. Tests: `python3 tests/test_sentinel.py` (193 checks, no
 network needed) plus `t_live_watcher_has_its_own_cache_door` in `tests/test_nansen_contest.py`.
 Live proof: `python3 nansen/proofs/sentinel_live_proof.py MSTR 4.5`.
 
@@ -55,7 +55,7 @@ while the live response shows MRNA = 0.442690, MSTR = 0.455416, US500 = 0. No hy
 the measurement. **Consequence in code:** the number is printed under the provider's field name
 together with the interval, no annualisation is performed, and funding events are detected by the
 instrument's percentile against itself - a criterion that does not depend on the unit at all.
-Verification debt #1 (see section 10).
+Verification debt #1 (see section 11).
 
 **A negative funding rate on an equity can be a dividend rather than positioning** - the
 provider says so directly
@@ -86,9 +86,9 @@ sentinel/
 | Kind | What it catches | Default threshold |
 |---|---|---|
 | `move_up` / `move_down` | price moved **and moved unusually for itself** | 3 % in 15 min **and** >=2.5 sigma; or 6 % in 60 min |
-| `oi_surge` | open interest jumped (money entering even if price is flat) | +/-20 % in an hour |
-| `funding_extreme` | rate in its own tail (>=98th percentile over the ring) | >=50 samples in the ring |
-| `spread_shock` | quote widened - a **warning**, not a signal | x3 its own median |
+| `oi_surge` | open interest jumped (money entering even if price is flat) | +/-20 % in an hour **and** >=$250k in money |
+| `funding_extreme` | rate in its own tail (>=98th percentile over the ring) | >=50 samples; **off by default** |
+| `spread_shock` | quote widened - a **warning**, not a signal | x3 the median **and** >=20 bps in absolute terms; **off by default** |
 | `ignition` | **several DISTINCT** smart-money addresses bought one token | >=3 addresses, >=$150k, >=5 bps of market cap, 180 min window |
 
 **A percentage without sigma is spam; sigma without a percentage is noise.** 3 % on MSTR and
@@ -242,7 +242,7 @@ hourly at :13). That is a deliberate first step: the module and the control pane
 before the move, otherwise the "separate process" would have to be debugged together with new
 logic.
 
-Acceptance on the sandbox: pull, run `tests/test_sentinel.py` (expect 154 PASS / 0 FAIL), run
+Acceptance on the sandbox: pull, run `tests/test_sentinel.py` (expect 193 PASS / 0 FAIL), run
 the live proof, restart the test service, check it is `active`, then grep `[sentinel]` in
 `bot.log` and use the commands in the test bot's direct messages. Production repeats the same
 steps only after the sandbox run is green.
@@ -290,7 +290,57 @@ One more: the test now STOPS if the database path is not inside a temporary dire
 on the server next to the live service, and a test that could write to the production database is
 more dangerous than no test at all.
 
-## 10. Limits, debts and refuted hypotheses
+## 10. Round three: the first live hour - "this reads as spam"
+
+An hour in, the owner sent a review sharper than any test. Five defects, four of them from one
+root: **we reported what CHANGED without saying whether it MATTERED**.
+
+**1. A relative threshold without an absolute one is spam.** Three alerts in a row on XAGS:
+"spread 2.4 bps - that is x9.5 its own median (0.3 bps)". The arithmetic is right and there is no
+news in it: 2.4 bps is two hundredths of a percent. On an instrument with a perfectly tight book
+any breath gives "x9". Fix: every relative threshold now has an absolute one beside it - spread
+>=20 bps, open-interest jump >=$250k IN MONEY (not merely +/-20 %) - and `spread_shock` and
+`funding_extreme` are off by default, switchable by button.
+
+**2. Flat text with no formatting.** The old card was sent without `parse_mode` ON PURPOSE:
+tickers and labels contain `_` and `*`, which break Markdown. The observation was right, the
+conclusion was not: the cure is HTML (only `&<>` are dangerous there, and one door escapes them),
+not the absence of formatting. Values are bold now, links are links, addresses sit in `<code>`
+and copy on tap.
+
+**3. Twenty-two lines per event.** A four-bullet "what this alert did not check" block repeated in
+EVERY alert - people stop reading such a disclaimer by the third one, and then it protects nobody.
+One line remains; the long version lives in the screen's help. The card is 11-12 lines instead of
+22, and the first line is the ticker and the magnitude, nothing else.
+
+**4. The brief was junk - three separate defects at once.** Tweets from outside the window (the
+request carried `since_minutes=90`, the brief showed items 9, 14 and 175 days old - so the
+provider's filter cannot be trusted, and age is now measured by us); tweets from nobody (accounts
+with 8, 16 and 93 followers); tweets about something else (the query "UKOILP" returned a Japanese
+list of forex tickers). The query is now built from the instrument's NAME plus `$TICKER`, and what
+was filtered out is stated in numbers - "nothing found" and "found twenty, all stale" call for
+different conclusions.
+
+**5. "Size not stated" on every wallet was our bug, not the provider's silence.** We looked for
+volume in `volume_usd`/`value_usd` while `tgm/who-bought-sold` returns
+`bought_volume_usd`/`sold_volume_usd` - names that sit in our own client's `order_by`, i.e. were
+known and unused. The brief looked complete and carried not a single number.
+
+**Settings: what to send and what goes inside.** Two rows of state-marked toggles: Moves,
+Open interest, Ignition, Funding, Spread; and Nansen, News. Venue numbers cannot be switched off -
+an alert without numbers is a notification that something happened without saying what. The
+per-kind filter sits on DELIVERY, not in the detector: one event is shared by everyone and is
+stored in full (the hit-rate report needs it), while its recipients differ.
+
+**On `database is locked`: the hypothesis was refuted by experiment.** The previous round blamed
+unfinished cursors. A replay on clean sqlite did NOT confirm it - in WAL mode reads and writes
+proceed in parallel. Cursors are still closed (an unfinished cursor leaves "idle in transaction"
+on PostgreSQL), but presenting that as the cause would be a lie, and a refuted hypothesis that is
+not recorded as refuted comes back the next day. Instead of a guess there is now a MEASUREMENT: on
+any failure the test prints the database path, backend, journal mode, `busy_timeout` and thread
+name.
+
+## 11. Limits, debts and refuted hypotheses
 
 **The boundary with the trading contour is hard.** No file in `sentinel/` imports
 `nansen_signer` or calls quote/prepare/execute. The `ISOLATION` test holds it (import graph plus
@@ -320,7 +370,7 @@ a call search). Entering a position happens by hand on the venue.
 
 ---
 
-## 11. Roadmap, ordered by value over cost
+## 12. Roadmap, ordered by value over cost
 
 **Step 1 - finish the sentinel (1-2 days).** Sandbox acceptance, then production. The separate
 `sentinel.main` unit plus lease (code is ready; only the unit file and the owner's decision are
@@ -361,7 +411,7 @@ token.
 
 ---
 
-## 12. Reconciliation with the scouting report
+## 13. Reconciliation with the scouting report
 
 Nine requested items. Fully delivered here: the alert engine stages 0-2 (dedupe by
 `transaction_hash`, a Nansen daily cap, per-token cooldown, one outcome row per alert), the

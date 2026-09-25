@@ -53,6 +53,39 @@ for _k in ('onchain', 'main'):
               'боевую базу - прогон отменён.' % (_k, _p, _TMP))
         sys.exit(2)
 
+# ── ЗАГЛУШКА `httpx`, ЕСЛИ БИБЛИОТЕКИ НЕТ ──────────────────────────────────────────────────
+# Ссылки в карточке строит ОДНА общая дверь `nansen_api.tok_link` (пятая копия тега `a href` в
+# проекте запрещена законом №40), а `nansen_api` на импорте тянет httpx. Без заглушки карточка
+# молча уезжала бы БЕЗ ссылок везде, где httpx нет - на машине разработки и в публичной выжимке,
+# - и проверить «ссылки стали ссылками» было бы нечем. Подменяются только классы-контейнеры
+# клиента: ни одного запроса этот тест не делает.
+try:
+    import httpx                                     # noqa: F401
+except Exception:
+    _hx = types.ModuleType('httpx')
+
+    class _Cl:
+        def __init__(self, *a, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+    _hx.AsyncClient = _Cl
+    _hx.Client = _Cl
+    _hx.Timeout = _Cl
+    _hx.HTTPError = Exception
+    _hx.RequestError = Exception
+    sys.modules['httpx'] = _hx
+
 # ── ЗАГЛУШКА `telegram`, ЕСЛИ БИБЛИОТЕКИ НЕТ ───────────────────────────────────────────────
 # Клавиатуру экрана собирает `InlineKeyboardMarkup`, и без python-telegram-bot тест упал бы
 # ImportError - то есть раскладка кнопок осталась бы непроверенной там, где библиотеки нет: на
@@ -82,7 +115,7 @@ from sentinel import variational_feed as feed    # noqa: E402
 
 UID = 990001
 UID2 = 990002
-_OK, _FAIL = 0, 0
+_OK, _FAIL, _SKIP = 0, 0, 0
 
 
 def check(name, cond, note=''):
@@ -93,6 +126,49 @@ def check(name, cond, note=''):
     else:
         _FAIL += 1
         print('FAIL  %s %s' % (name, note))
+
+
+def _db_diag():
+    """ЗАМЕРЫ БАЗЫ ОДНОЙ СТРОКОЙ: путь, бэкенд, режим журнала, таймаут ожидания. -> str.
+
+    Печатается при ЛЮБОМ падении теста (см. `main`). Один текст «database is locked» покрывает
+    несколько разных причин, и без этих четырёх чисел разбор идёт гаданием - на сервере
+    владельца это уже стоило круга.
+    """
+    import db as _d
+    out = ['backend=%s' % getattr(_d, 'DB_BACKEND', '?')]
+    try:
+        c0 = _d.get_conn('onchain')
+        # ПУТЬ СПРАШИВАЕМ У ЖИВОГО СОЕДИНЕНИЯ (`PRAGMA database_list`), А НЕ У НАСТРОЙКИ. Разница
+        # существенная: настройка говорит, что мы ПРОСИЛИ, а PRAGMA - куда СУБД правда пишет.
+        # Ровно этот зазор и надо видеть, когда тест внезапно бьётся о боевую базу. Плюс работает
+        # там, где у `db` нет функции чтения пути (публичная выжимка несёт свою реализацию).
+        cur0 = c0.execute('PRAGMA database_list')
+        rows0 = cur0.fetchall() or []
+        try:
+            cur0.close()
+        except Exception:
+            pass
+        out.append('path=%s' % (rows0[0][2] if rows0 and len(rows0[0]) > 2 else '?'))
+    except Exception as e:
+        out.append('path=? (%s)' % str(e)[:60])
+    try:
+        c = _d.get_conn('onchain')
+        for pragma in ('journal_mode', 'busy_timeout'):
+            try:
+                cur = c.execute('PRAGMA %s' % pragma)
+                row = cur.fetchone()
+                out.append('%s=%s' % (pragma, (row or ['?'])[0]))
+                try:
+                    cur.close()
+                except Exception:
+                    pass
+            except Exception as e:
+                out.append('%s=недоступен (%s)' % (pragma, str(e)[:40]))
+    except Exception as e:
+        out.append('соединение не взято: %s' % str(e)[:60])
+    out.append('поток=%s' % __import__('threading').current_thread().name)
+    return ' · '.join(out)
 
 
 class FakeBot:
@@ -257,10 +333,17 @@ def t_oi_funding_and_spread_have_their_own_reasons():
     now = 1800000000
     ring = series(60, now - 60 * 900)
     hot = [(now - 3600, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 3600)]
-    evs = detector.detect(one(mark='100.0', oi_l='1600', oi_s='900', quote_iso=_iso(now)),
+    evs = detector.detect(one(mark='100.0', oi_l='5000', oi_s='900', quote_iso=_iso(now)),
                           hot, now=now, ring=ring)
     check('OI: скачок интереса при стоящей цене — событие',
           'oi_surge' in {e['kind'] for e in evs}, {e['kind'] for e in evs})
+    # АБСОЛЮТНЫЙ ПОРОГ РЯДОМ С ПРОЦЕНТНЫМ: +20% к интересу, которого было на копейки, - это
+    # копейки. Без этой проверки процент один решал бы, и алерт приходил бы по пустякам.
+    small = detector.detect(one(mark='100.0', oi_l='1600', oi_s='900', quote_iso=_iso(now)),
+                            hot, now=now, ring=ring)
+    check('OI: скачок на $60k событием НЕ считается',
+          'oi_surge' not in {e['kind'] for e in small},
+          {e['kind'] for e in small})
     # ФАНДИНГ: хвост СВОЕГО распределения (единица провайдером не названа, абсолюта нет)
     ring_f = [(now - (60 - i) * 900, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, 0) for i in range(60)]
     ring_f = ring_f * 1
@@ -278,37 +361,64 @@ def t_oi_funding_and_spread_have_their_own_reasons():
     check('FUNDING: у акции отрицательная ставка помечена как возможный дивиденд',
           evs3 and any('дивиденд' in p for p in evs3[0]['payload']['penalties']),
           evs3[0]['payload']['penalties'] if evs3 else 'события нет')
-    evs4 = [e for e in detector.detect(one(mark='100.0', spread='9.0', quote_iso=_iso(now)),
+    evs4 = [e for e in detector.detect(one(mark='100.0', spread='60.0', quote_iso=_iso(now)),
                                        hot, now=now, ring=ring) if e['kind'] == 'spread_shock']
-    check('SPREAD: разъехавшаяся котировка - событие', evs4)
+    check('SPREAD: спред 60 б.п. при медиане 1 - событие', evs4)
     check('SPREAD: и карточка называет это предостережением, а не сигналом',
-          evs4 and 'ПРЕДОСТЕРЕЖЕНИЕ' in cards.card(evs4[0]),
+          evs4 and 'предостережение' in cards.card(evs4[0]).lower(),
           'человек прочитал бы «дёрнулось» как приглашение')
+    # ── СЛУЧАЙ XAGS ИЗ ЖИВОГО ЛОГА 25.09. Три алерта подряд: «спред 2.4 б.п. - ×9.5 к медиане
+    #    0.3». Арифметика верна, новости нет: это две сотых процента. Вердикт владельца -
+    #    «походит на спам», «это же не алерт». Относительный порог измеряет НЕОБЫЧНОСТЬ, а не
+    #    ЗНАЧИМОСТЬ, поэтому рядом обязан стоять абсолютный.
+    ring_thin = [(now - (60 - i) * 900, 100.0, 8e8, 1000.0, 900.0, 0.05, 0.3, 0)
+                 for i in range(60)]
+    xags = detector.detect(one(ticker='XAGS', name='Swap on Silver Spot', mark='63.4',
+                               spread='2.4', quote_iso=_iso(now)), hot, now=now, ring=ring_thin)
+    check('SPREAD: 2.4 б.п. при медиане 0.3 - НЕ событие (случай XAGS, ×9.5)',
+          'spread_shock' not in {e['kind'] for e in xags}, {e['kind'] for e in xags})
+    check('SPREAD: и порог назван числом в конфиге', config.spread_min_bps() >= 10,
+          config.spread_min_bps())
 
 
 def t_card_leads_with_magnitude_and_admits_limits():
-    """КАРТОЧКА: первая строка — число; единицу фандинга не выдумываем; чек-лист есть."""
+    """КАРТОЧКА: величина в первой строке, HTML, ссылки - ссылками, и она КОРОТКАЯ.
+
+    ПЕРЕПИСАН ПОСЛЕ ЖИВОГО ЧАСА 25.09. Вердикт владельца: «весь текст от алертов без формата»,
+    «зачем-то все ссылки без линков внутри», «должно быть красиво, чётко, содержательно, по
+    делу». Прежняя карточка занимала 22 строки, повторяла один и тот же дисклеймер из четырёх
+    пунктов в каждом алерте и заканчивалась служебной строкой про `/metadata/stats`.
+    """
     now = 1800000000
     ring = series(60, now - 60 * 900)
     hot = [(now - 900, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 900)]
     ev = [e for e in detector.detect(one(mark='104.0', quote_iso=_iso(now)), hot, now=now,
                                      ring=ring) if e['kind'] == 'move_up'][0]
-    txt = cards.card(ev)
-    check('CARD: величина в первых двух строках', '+4.00%' in txt.split('\n')[1], txt[:120])
-    check('CARD: единица фандинга НЕ заявлена - назван источник поля',
-          'поле провайдера funding_rate' in txt,
-          'провайдер единицу не назвал, а его справка противоречит замеру')
+    txt = cards.card(ev, bot_un='testbot')
+    head = txt.split('\n')[0]
+    check('CARD: тикер и величина в ПЕРВОЙ строке', 'BTC' in head and '+4.00%' in head, head)
+    check('CARD: величина выделена разметкой', '<b>+4.00%</b>' in head, head)
+    check('CARD: карточка короткая (<= 14 строк)', len(txt.split('\n')) <= 14,
+          len(txt.split('\n')))
     check('CARD: сказано, во что обойдётся вход на $100k', 'Вход на $100k' in txt)
-    check('CARD: возраст котировки числом', 'Котировка обновлена' in txt)
-    check('CARD: уверенность числом', 'Уверенность:' in txt)
-    check('CARD: есть список того, чего алерт НЕ проверял',
-          'Что алерт НЕ проверял' in txt and 'новость дозорный не читает' in txt)
-    check('CARD: источник назван', 'Variational Omni' in txt and 'metadata/stats' in txt)
-    check('CARD: ссылка только на корень площадки (путь к инструменту НЕ измерен)',
-          txt.rstrip().endswith('https://omni.variational.io/'), txt[-80:])
-    check('CARD: разметки нет (в тикерах живут звёздочки и подчёркивания)',
-          '*' not in txt and '_' not in txt.replace('funding_rate', '').replace(
-              'metadata/stats', ''), 'markdown сломался бы на самых интересных строках')
+    check('CARD: возраст котировки числом', 'котировке' in txt)
+    check('CARD: уверенность числом', 'Уверенность <b>' in txt)
+    check('CARD: дисклеймер ОДНОЙ строкой, а не списком из четырёх пунктов',
+          txt.count('•') <= 1 and 'Причину движения дозорный не читает' in txt, txt)
+    check('CARD: служебной строки про эндпоинт больше нет',
+          '/metadata/stats' not in txt, 'человеку в момент решения это не нужно')
+    check('CARD: ссылка на площадку - ССЫЛКОЙ', '<a href="https://omni.variational.io/"' in txt,
+          txt[-200:])
+    check('CARD: нулевой фандинг в карточке не печатается',
+          'funding_rate' not in cards.card(
+              [e for e in detector.detect(one(mark='104.0', funding='0', quote_iso=_iso(now)),
+                                          hot, now=now, ring=ring)
+               if e['kind'] == 'move_up'][0]),
+          'строка «funding_rate: 0» в каждом алерте - шум')
+    check('CARD: экранирование включено (амперсанд в имени не рвёт разметку)',
+          cards.esc('A & B < C') == 'A &amp; B &lt; C', cards.esc('A & B < C'))
+    check('CARD: контракты печатаются человеческим числом, а не 1.045e+06',
+          cards._num(1045000) == '1.04M', cards._num(1045000))
     check('CARD: деньги None показываются словом, а не $0',
           cards._usd(None) == 'нет данных')
 
@@ -347,10 +457,13 @@ def t_ignition_counts_wallets_not_trades_and_first_poll_is_silent():
     evs2, _ = ignition.scan(now=now + 240, fetch=lambda: outs)
     check('IGN: покупка стейбла не считается заходом', not evs2,
           'массовая фиксация прибыли выглядела бы как приток')
-    txt = cards.card(ev)
+    txt = cards.card(ev, bot_un='testbot')
     check('IGN: карточка ведёт числом адресов и суммой',
-          '3 разных адреса' in txt and 'капитализации' in txt, txt[:160])
+          '3 умных адреса' in txt and 'капитализации' in txt, txt[:160])
     check('IGN: и называет сеть с контрактом', '0xtok' in txt and 'ethereum' in txt)
+    check('IGN: контракт в <code> - тапом копируется', '<code>0xtok</code>' in txt, txt)
+    check('IGN: есть ссылка в наши же экраны (deep-link), а не на чужой сайт',
+          't.me/testbot?start=tok_0xtok' in txt and 'dexscreener' not in txt, txt[-260:])
 
 
 def t_delivery_dedupe_cooldown_cap_and_state():
@@ -841,6 +954,167 @@ def t_words_and_buttons_share_one_parser():
           sent and sent[-1][2] is not None, sent[-1:])
 
 
+def t_kinds_and_parts_are_the_subscribers_choice():
+    """ЧТО ПРИСЫЛАТЬ И ЧТО ВНУТРИ - ВЫБОР ЧЕЛОВЕКА, И ОТСЕВ СТОИТ НА ДОСТАВКЕ, А НЕ В ДЕТЕКТОРЕ.
+
+    ПРОСЬБА ВЛАДЕЛЬЦА ДОСЛОВНО: «настраивать, что приходят алерты движения плюс нансен движения
+    существенные, или просто Нансен сигналы, или просто алерты по объёму»; «в настройках можно
+    включить, что в алерте приходит: только карточка наша обычная … и включать ли сразу новости и
+    что с нансена инфа».
+
+    ОТСЕВ ИМЕННО НА ДОСТАВКЕ: событие одно на всех и пишется в базу целиком (оно нужно отчёту
+    попаданий), а получатели у него разные. Отсей в детекторе - и отчёт считал бы попадания
+    только по тем видам, что кто-то включил.
+    """
+    uid = 991400
+    check('KINDS: по умолчанию спред и фандинг ВЫКЛЮЧЕНЫ (они не повод звонить)',
+          store.kinds_for(uid) == set(config.DEFAULT_KINDS)
+          and 'spread_shock' not in store.kinds_for(uid)
+          and 'funding_extreme' not in store.kinds_for(uid), store.kinds_for(uid))
+    check('KINDS: движения, интерес и зажигание - включены',
+          {'move_up', 'move_down', 'oi_surge', 'ignition'} <= store.kinds_for(uid))
+    store.kinds_set(uid, {'ignition'})
+    check('KINDS: «только сигналы Нансена» собирается одним набором',
+          store.kinds_for(uid) == {'ignition'}, store.kinds_for(uid))
+
+    now = int(time.time())
+    store.sub_add(uid, 'BTC')
+    store.settings_set(uid, alerts_on=1, enrich_on=0)
+    ring = series(60, now - 60 * 900)
+    hot = [(now - 900, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 900)]
+    mv = [e for e in detector.detect(one(mark='104.0', quote_iso=_iso(now)), hot, now=now,
+                                     ring=ring) if e['kind'] == 'move_up'][0]
+    store.event_new(mv)
+    n, why = outbox.plan(mv)
+    check('KINDS: движение выключенному виду НЕ уходит', n == 0, (n, why))
+    check('KINDS: и причина названа словами',
+          any('выключен в настройках' in w for w in why), why)
+    store.kinds_set(uid, set(config.DEFAULT_KINDS))
+    mv2 = dict(mv, key=mv['key'] + 'k2')
+    store.event_new(mv2)
+    check('KINDS: после включения - уходит', outbox.plan(mv2)[0] == 1)
+
+    # ── СОСТАВ АЛЕРТА ──
+    check('PARTS: по умолчанию едут ончейн и новости',
+          {'nansen', 'news'} <= store.parts_for(uid), store.parts_for(uid))
+    store.part_toggle(uid, 'news')
+    check('PARTS: новости выключаются', 'news' not in store.parts_for(uid))
+    store.part_toggle(uid, 'nansen')
+    check('PARTS: ончейн выключается', 'nansen' not in store.parts_for(uid))
+    check('PARTS: числа площадки выключить НЕЛЬЗЯ',
+          'card' in store.part_toggle(uid, 'card'),
+          'алерт без чисел - уведомление «что-то случилось» без ответа «что именно»')
+    store.parts_set(uid, {'nansen', 'news'})
+
+
+def t_news_are_fresh_relevant_and_not_from_nobody():
+    """ТВИТТЕР: три отсева, и каждый оплачен живой сводкой 25.09.
+
+    ЗАМЕР ВЛАДЕЛЬЦА. При окне запроса 90 минут в сводку попали твиты возрастом 9 дней, 14 дней и
+    175 дней; аккаунты на 8, 16 и 93 подписчика; и японский список форекс-пар в ответ на запрос
+    «UKOILP». То есть сломаны были ВСЕ ТРИ измерения сразу: свежесть, вес источника и тема.
+    Главный вывод - фильтру провайдера доверять нельзя: `since_minutes` был передан.
+    """
+    from sentinel import enrichment as en
+    try:
+        import twitter_api as tw
+    except ImportError:
+        # ПРОПУСК НАЗЫВАЕТ СЕБЯ, А НЕ ПРИТВОРЯЕТСЯ УСПЕХОМ. Публичная выжимка не несёт слой X
+        # (он не про Nansen), и падать там нечем - но и делать вид, что проверка прошла, нельзя:
+        # молчаливо «зелёный» пропуск это тот же дефект, что молчаливый отказ.
+        global _SKIP
+        _SKIP += 1
+        print('SKIP  твиттер-фильтры: в этой сборке нет модуля X (в боте проверка идёт)')
+        return
+    now = 1800000000
+
+    def tweet(mins_ago, followers, text):
+        import datetime
+        d = datetime.datetime.utcfromtimestamp(now - mins_ago * 60)
+        return {'createdAt': d.strftime('%a %b %d %H:%M:%S +0000 %Y'),
+                'text': text, 'author': {'userName': 'x', 'followers': followers}}
+
+    fresh = tweet(30, 5000, 'UKOILP looks strong today')
+    check('X: свежий и весомый твит проходит', en._fresh_enough(fresh, now, tw)
+          and en._relevant(fresh, 'UKOILP', 'Swap on Brent Crude Oil', tw))
+    old = tweet(9 * 24 * 60, 8600, 'UKOILP spread chart')
+    check('X: твит девятидневной давности НЕ проходит по свежести',
+          not en._fresh_enough(old, now, tw),
+          'ровно он и стоял в живой сводке при окне 90 минут')
+    check('X: твит без разобранного возраста тоже НЕ проходит',
+          not en._fresh_enough({'text': 'UKOILP', 'createdAt': 'какая-то чушь'}, now, tw),
+          '«разобрать не смогли» не может означать «сойдёт»')
+    off = tweet(10, 9000, 'XAGUSDp = silver, US100p = nasdaq, JP225p = nikkei')
+    check('X: чужой список тикеров отсеивается по теме',
+          not en._relevant(off, 'UKOILP', 'Swap on Brent Crude Oil', tw), 'японский список')
+    # ── ЗАПРОС СТРОИТСЯ ИЗ ИМЕНИ, А НЕ ИЗ ТИКЕРА ПЛОЩАДКИ ──
+    q = en._q_for('UKOILP', 'Swap on Brent Crude Oil')
+    check('X: в запросе есть человеческое имя актива', 'Brent' in q, q)
+    check('X: и тикер с решёткой доллара', '$UKOILP' in q, q)
+    q2 = en._q_for('MSTR', 'Strategy Inc')
+    check('X: юридический хвост из запроса убран',
+          'Inc' not in q2 and 'Strategy' in q2, q2)
+    check('X: порог веса аккаунта назван числом', config.x_min_followers() >= 500,
+          config.x_min_followers())
+
+
+def t_wallet_sizes_are_read_not_lost():
+    """«РАЗМЕР НЕ НАЗВАН» У КАЖДОГО КОШЕЛЬКА - ЭТО БЫЛ НАШ БАГ, А НЕ МОЛЧАНИЕ ПЛОЩАДКИ.
+
+    ЗАМЕР ВЛАДЕЛЬЦА: в живой сводке восемь кошельков подряд и у всех «размер не назван». Мы
+    искали объём в `volume_usd`/`value_usd`, а `tgm/who-bought-sold` отдаёт
+    `bought_volume_usd`/`sold_volume_usd` - имена стоят в `order_by` НАШЕГО ЖЕ клиента, то есть
+    были известны и не использованы. Сводка выглядела собранной и не несла ни одного числа.
+    """
+    from sentinel import enrichment as en
+    rows = [{'address': '0x' + 'ab' * 20, 'address_label': 'Fund A',
+             'bought_volume_usd': 48000},
+            {'address': '0x' + 'cd' * 20, 'sold_volume_usd': 91000},
+            {'address': '0x' + 'ef' * 20}]
+    out = en._who_lines(rows, 'Покупали за сутки', bot_un='testbot')
+    body = '\n'.join(out)
+    check('WHO: bought_volume_usd прочитан', '$48.0k' in body, body)
+    check('WHO: sold_volume_usd прочитан', '$91.0k' in body, body)
+    check('WHO: где размера правда нет - сказано словами',
+          'размер не назван' in body, body)
+    # ПРОВЕРЯЕМ ВИДИМЫЙ ТЕКСТ, А НЕ ИСХОДНИК СТРОКИ: адрес обязан быть в АТРИБУТЕ ссылки (по нему
+    # открывается экран кошелька) и не обязан быть на экране - человек читает метку, а сорок два
+    # символа hex не читает и не сравнивает. Первая редакция проверки смотрела на строку целиком
+    # и краснела на своей же ссылке.
+    import re as _re2
+    seen = _re2.sub(r'<[^>]+>', '', body)
+    check('WHO: метка читается вместо сорока двух символов hex',
+          'Fund A' in seen and ('0x' + 'ab' * 20) not in seen, seen)
+    check('WHO: адрес без метки сокращён', '0xcdcd…cdcd' in body, body)
+    check('WHO: кошелёк - ССЫЛКА на свой экран в боте',
+          't.me/testbot?start=acc_0x' in body, body)
+    check('WHO: и цена одного токена под сумму НЕ берётся',
+          'price_usd' not in en._VOL_FIELDS,
+          'спутать их значит напечатать $0.99 вместо $48K')
+
+
+def t_locked_diagnosis_prints_measurements():
+    """ЕСЛИ БАЗА ОТКАЖЕТ - ТЕСТ ПЕЧАТАЕТ ЗАМЕРЫ, А НЕ ТОЛЬКО ТЕКСТ ОШИБКИ.
+
+    ПОЧЕМУ ЭТО ОТДЕЛЬНАЯ ПРОВЕРКА. На сервере владельца тест дал 14 отказов `database is
+    locked`, и разобрать их по логу было нельзя: один текст ошибки покрывает несколько причин
+    (чужой процесс на том же файле, открытая транзакция, WAL, не применённый busy_timeout).
+    ГИПОТЕЗА «ВИНОВАТЫ НЕДОЧИТАННЫЕ КУРСОРЫ» БЫЛА ПРОВЕРЕНА ОПЫТОМ И НЕ ПОДТВЕРДИЛАСЬ: в WAL
+    чтение и запись идут параллельно, повтор на чистом sqlite замок не даёт. Курсоры всё равно
+    закрываются (на PostgreSQL незакрытый курсор оставляет «idle in transaction»), но выдавать
+    это за причину было бы ложью - и именно так опровергнутая гипотеза возвращается через день.
+    Поэтому здесь не догадка, а ЗАМЕР: следующий отказ приедет с путём, бэкендом, режимом
+    журнала и таймаутом, и разбор займёт один круг, а не три.
+    """
+    diag = _db_diag()
+    for word in ('backend=', 'path=', 'journal_mode=', 'busy_timeout='):
+        check('DIAG: в замерах есть %s' % word, word in diag, diag)
+    check('DIAG: путь ведёт во временный каталог', _TMP in diag, diag)
+    check('DIAG: замер снимается с ЖИВОГО соединения, а не из настроек',
+          'wal' in diag.lower() or 'delete' in diag.lower() or 'postgres' in diag.lower(),
+          diag)
+
+
 def main():
     for fn in (t_parse_is_real_and_names_what_is_missing,
                t_detector_needs_both_percent_and_sigma,
@@ -863,7 +1137,12 @@ def main():
                t_sql_survives_postgres,
                t_free_hackathon_cap_does_not_block,
                t_menu_has_buttons_for_everything_the_words_can_do,
-               t_words_and_buttons_share_one_parser):
+               t_words_and_buttons_share_one_parser,
+               # ── круг 3 (25.09): спам, формат, мусорные новости, настройки состава ──
+               t_kinds_and_parts_are_the_subscribers_choice,
+               t_news_are_fresh_relevant_and_not_from_nobody,
+               t_wallet_sizes_are_read_not_lost,
+               t_locked_diagnosis_prints_measurements):
         print('\n== %s' % fn.__name__)
         try:
             fn()
@@ -873,7 +1152,11 @@ def main():
             import traceback
             traceback.print_exc()
             print('FAIL  %s упал: %s' % (fn.__name__, e))
-    print('\n%d PASS / %d FAIL' % (_OK, _FAIL))
+            # ЗАМЕРЫ БАЗЫ РЯДОМ С ОТКАЗОМ, А НЕ В ГОЛОВЕ РАЗБИРАЮЩЕГО. `database is locked` без
+            # пути, бэкенда и таймаута - это приглашение гадать; с ними разбор идёт по числам.
+            print('      замеры базы: %s' % _db_diag())
+    print('\n%d PASS / %d FAIL%s' % (_OK, _FAIL,
+                                    (' / %d SKIP' % _SKIP) if _SKIP else ''))
     return 1 if _FAIL else 0
 
 
