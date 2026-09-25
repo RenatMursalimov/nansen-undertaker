@@ -255,7 +255,7 @@ def snapshot_put(listings, ts=None):
                        int(x.quote_ts) if x.quote_ts else None))
             n += 1
         except Exception as e:
-            print('[sentinel] снимок %s не записан: %s' % (x.ticker, str(e)[:120]))
+            _say_fail('снимок %s не записан' % x.ticker, e)
     try:
         c.commit()
     except Exception:
@@ -328,7 +328,7 @@ def event_new(ev):
     except Exception as e:
         if _is_dup(e):
             return False
-        print('[sentinel] событие %s не записано: %s' % (ev.get('key'), str(e)[:140]))
+        _say_fail('событие %s не записано' % ev.get('key'), e)
         return False
 
 
@@ -338,6 +338,49 @@ def _is_dup(e):
     s = str(e).lower()
     return ('unique' in s or 'duplicate key' in s or 'уже существует' in s
             or 'already exists' in s)
+
+
+def diag():
+    """ЗАМЕРЫ БАЗЫ ОДНОЙ СТРОКОЙ: бэкенд, файл, режим журнала, таймаут, поток. -> str.
+
+    ЗАЧЕМ ЭТО В КОДЕ, А НЕ В ТЕСТЕ. На сервере владельца дважды подряд появлялось
+    `database is locked` - и в тесте, и в живой доставке («доставка не поставлена: database is
+    locked»). Один этот текст покрывает несколько разных причин: чужой процесс на том же файле,
+    открытая транзакция, не применённый busy_timeout, не тот файл. Без замеров разбор идёт
+    гаданием, а гипотеза «виноваты недочитанные курсоры» уже была проверена опытом и НЕ
+    подтвердилась (в WAL чтение и запись идут параллельно) - то есть один круг на догадку мы
+    уже потратили.
+    ФАЙЛ СПРАШИВАЕМ У ЖИВОГО СОЕДИНЕНИЯ (`PRAGMA database_list`), А НЕ У НАСТРОЙКИ: настройка
+    говорит, что мы ПРОСИЛИ, а PRAGMA - куда СУБД правда пишет. Именно этот зазор и нужен.
+    """
+    out = ['backend=%s' % getattr(db, 'DB_BACKEND', '?')]
+    try:
+        c = conn()
+        try:
+            r = _all('PRAGMA database_list')
+            out.append('file=%s' % (r[0][2] if r and len(r[0]) > 2 else '?'))
+        except Exception as e:
+            out.append('file=? (%s)' % str(e)[:40])
+        for pragma in ('journal_mode', 'busy_timeout'):
+            try:
+                r = _one('PRAGMA %s' % pragma)
+                out.append('%s=%s' % (pragma, (r or ['?'])[0]))
+            except Exception:
+                out.append('%s=?' % pragma)
+    except Exception as e:
+        out.append('соединение не взято: %s' % str(e)[:60])
+    import threading
+    out.append('поток=%s' % threading.current_thread().name)
+    return ' · '.join(out)
+
+
+def _say_fail(what, e):
+    """Отказ базы -> строка в лог С ЗАМЕРАМИ. Одна дверь на все записи модуля.
+
+    Печатать «не записалось» без замеров - значит требовать от следующего разбора гадания;
+    печатать замеры в каждом except по месту - значит однажды забыть их в одном из десяти.
+    """
+    print('[sentinel] %s: %s | %s' % (what, str(e)[:120], diag()))
 
 
 def event(event_key):
@@ -352,6 +395,18 @@ def event(event_key):
         payload = {}
     return {'key': r[0], 'ts': r[1], 'kind': r[2], 'ticker': r[3], 'severity': r[4],
             'payload': payload}
+
+
+def events_by_kind(since_ts):
+    """Сколько событий каждого вида за окно. -> {kind: n}.
+
+    ЗАЧЕМ НА ЭКРАНЕ. «Событий за сутки 12» не отвечает на вопрос человека «а движения-то
+    были?»: двенадцать спредов и ноль движений выглядят как двенадцать событий. Разрез по видам
+    отвечает сразу, и именно он объяснил живое «включил, ничего не пришло» - движений было НОЛЬ.
+    """
+    rows = _all('SELECT kind, COUNT(*) FROM sentinel_events WHERE ts>=? GROUP BY kind',
+                (int(since_ts),))
+    return {r[0]: int(r[1]) for r in rows}
 
 
 def events_since(ts, limit=200):
@@ -585,7 +640,7 @@ def delivery_plan(event_key, uid):
     except Exception as e:
         if _is_dup(e):
             return False
-        print('[sentinel] доставка не поставлена: %s' % str(e)[:140])
+        _say_fail('доставка не поставлена', e)
         return False
 
 
@@ -655,7 +710,7 @@ def enrich_claim(event_key):
     except Exception as e:
         if _is_dup(e):
             return False
-        print('[sentinel] обогащение не занято: %s' % str(e)[:140])
+        _say_fail('обогащение не занято', e)
         return False
 
 
