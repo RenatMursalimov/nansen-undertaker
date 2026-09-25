@@ -203,6 +203,37 @@ def depth_or_spread(p):
     return 'Цену входа площадка не отдаёт'
 
 
+def funding_line(p):
+    """Строка фандинга. -> str.
+
+    ═══ ГОДОВЫЕ ПРОЦЕНТЫ ТАМ, ГДЕ ЕДИНИЦА ИЗМЕРЕНА, И ИМЯ ПОЛЯ ТАМ, ГДЕ НЕТ ═══
+    Девять кругов здесь стояло «Фандинг (поле funding_rate): 0.1095 / 8ч» - потому что единица
+    не была названа ни докой, ни замером, и превратить это число в проценты значило бы выдумать
+    человеку цифру, по которой он считает деньги. Долг №1 закрыт замером 26.09 (разбор во врезке
+    `venues.FUNDING_UNIT`), и теперь строка отвечает на вопрос, который человек правда задаёт:
+    «сколько мне это стоит в год».
+    СЫРОЕ ПОЛЕ ОСТАЁТСЯ РЯДОМ, мелким: оно единственное, что можно сверить с экраном площадки,
+    и выкинув его, мы лишили бы человека способа нас проверить.
+    ЗНАК ВАЖЕН И ОБЪЯСНЁН СЛОВОМ: «+» значит платят лонги, «−» значит платят шорты. Без этого
+    «фандинг 10.95%» не говорит, в какую сторону течёт его собственный кошелёк.
+    """
+    fr = p.get('funding_raw')
+    iv = int(p.get('funding_interval_s') or 0)
+    apr = None
+    try:
+        from .venues import funding_apr_pct as _apr
+        apr = _apr(p.get('venue') or 'variational', fr, iv)
+    except Exception:
+        apr = None
+    if apr is None:
+        # ЕДИНИЦА НЕ ИЗМЕРЕНА - ЧЕСТНО ГОВОРИМ ИМЕНЕМ ПОЛЯ, как и все девять кругов до замера.
+        return ('Фандинг (поле <code>funding_rate</code>): %.6g%s'
+                % (fr or 0, (' / %dч' % (iv // 3600)) if iv >= 3600 else ''))
+    who = 'платят лонги' if (fr or 0) > 0 else ('платят шорты' if (fr or 0) < 0 else 'ноль')
+    return ('Фандинг <b>%+.2f%% годовых</b> (%s) · <code>%.6g</code>%s'
+            % (apr, who, fr or 0, (' / %dч' % (iv // 3600)) if iv >= 3600 else ''))
+
+
 def card(ev, lang='ru', bot_un=None):
     """Событие -> HTML-текст алерта (str).
 
@@ -238,8 +269,19 @@ def card(ev, lang='ru', bot_un=None):
         lines.append('%s <b>%s</b>  расхождение <b>%.0f б.п.</b> между площадками'
                      % (icon, tick, p.get('gap_bps') or 0))
     elif kind == 'ignition':
-        lines.append('%s <b>%s</b>  %d умных адреса купили на <b>%s</b>'
-                     % (icon, tick, int(p.get('wallets') or 0), _usd(p.get('usd'))))
+        # ═══ ВЕДЁМ ЧИСЛОМ УЧАСТНИКОВ, А НЕ ЧИСЛОМ АДРЕСОВ ═══
+        # Пункт 3.6 роудмапа: пять кошельков, заведённых с одного, - это ОДИН участник, и «5
+        # умных адресов купили» завышает силу сигнала ровно во столько раз, сколько кошельков он
+        # себе нарезал. Где связи проверены и найдены - заголовок называет независимых, а число
+        # адресов уходит в скобки: это тот же закон «признак наличия не равен признаку пользы»,
+        # только про подсчёт людей.
+        _ind, _n = p.get('independent'), int(p.get('wallets') or 0)
+        if _ind and int(_ind) < _n:
+            lines.append('%s <b>%s</b>  <b>%d</b> независимых участника (адресов %d) купили '
+                         'на <b>%s</b>' % (icon, tick, int(_ind), _n, _usd(p.get('usd'))))
+        else:
+            lines.append('%s <b>%s</b>  %d умных адреса купили на <b>%s</b>'
+                         % (icon, tick, _n, _usd(p.get('usd'))))
     elif kind == 'funding_extreme':
         lines.append('%s <b>%s</b>  ставка в своём хвосте' % (icon, tick))
     elif kind == 'spread_shock':
@@ -288,6 +330,10 @@ def card(ev, lang='ru', bot_un=None):
             lines.append(' · '.join(_t))
         if p.get('labels'):
             lines.append('Метки: %s' % esc(', '.join(p['labels'][:4])))
+        # СКОЛЬКО АДРЕСОВ МЫ ПРАВДА ПРОВЕРИЛИ - ЧИСЛОМ. «Связей не найдено» без этого числа
+        # звучит как вывод про весь набор, хотя смотрели мы три адреса из двенадцати.
+        if p.get('cluster_partial'):
+            lines.append('Связи проверены у %s' % esc(p['cluster_partial']))
         if p.get('address'):
             lines.append('%s · <code>%s</code>' % (esc(p.get('chain') or '?'),
                                                    esc(p['address'])))
@@ -318,9 +364,7 @@ def card(ev, lang='ru', bot_un=None):
         # алерте - шум, а единица у поля всё равно не заявлена провайдером (долг №1 в спеке).
         fr = p.get('funding_raw')
         if kind == 'funding_extreme' or (fr not in (None, 0)):
-            iv = int(p.get('funding_interval_s') or 0)
-            lines.append('Фандинг (поле <code>funding_rate</code>): %.6g%s'
-                         % (fr or 0, (' / %dч' % (iv // 3600)) if iv >= 3600 else ''))
+            lines.append(funding_line(p))
 
     # ── УВЕРЕННОСТЬ: ЧИСЛО ВСЕГДА, ПРИЧИНЫ - ТОЛЬКО ЕСЛИ ОНИ ЕСТЬ ─────────────────────────
     lines.append('')

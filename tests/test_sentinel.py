@@ -131,7 +131,7 @@ async def _same_thread(fn, *a, **kw):
 
 asyncio.to_thread = _same_thread
 
-from sentinel import cards, config, detector, engine, ignition  # noqa: E402
+from sentinel import cards, clusters, config, detector, engine, ignition  # noqa: E402
 from sentinel import lab, outbox, store, ui                     # noqa: E402
 from sentinel import variational_feed as feed    # noqa: E402
 from sentinel import venues                      # noqa: E402
@@ -1279,15 +1279,43 @@ def t_venues_are_data_not_branches():
     """
     check('VENUE: реестр знает три площадки',
           {'variational', 'hyperliquid', 'lighter'} <= set(venues.VENUES), list(venues.VENUES))
-    check('VENUE: у выключенной названа ПРИЧИНА, а её нет молча',
-          venues.why_off('lighter') and 'не спамить' in venues.why_off('lighter'),
-          venues.why_off('lighter'))
-    check('VENUE: причина есть и по-английски (по экрану ходит обходчик)',
-          venues.why_off('lighter', 'en')
-          and not __import__('re').search(r'[А-Яа-яЁё]', venues.why_off('lighter', 'en')),
-          venues.why_off('lighter', 'en'))
-    check('VENUE: выключенная площадка в live() не попадает',
-          'lighter' not in venues.live(), venues.live())
+    # ═══ МЕХАНИЗМ «ВЫКЛЮЧЕНО С ПРИЧИНОЙ» ПРОВЕРЯЕМ СИНТЕТИЧЕСКОЙ ПЛОЩАДКОЙ ═══
+    # Раньше эти три проверки стояли на Lighter, и в круге 9 они ПОКРАСНЕЛИ - потому что
+    # Lighter включили по замеру (публичный REST отдаёт 235 рынков одним GET). Правильный ответ
+    # тут не «вычеркнуть проверку»: механизм нужен по-прежнему, следующая площадка опять придёт
+    # выключенной. Поэтому правило проверяется НА ПРАВИЛЕ, а не на чьём-то текущем состоянии -
+    # иначе тест умирает от каждой хорошей новости и его начинают править не читая.
+    venues.VENUES['__probe__'] = {'title': 'Probe', 'fetch': None,
+                                  'why_off': 'у площадки нет публичного списка рынков',
+                                  'why_off_en': 'the venue has no public market list',
+                                  'url': 'https://example.invalid/'}
+    try:
+        check('VENUE: у выключенной названа ПРИЧИНА, а её нет молча',
+              venues.why_off('__probe__') and 'нет публичного' in venues.why_off('__probe__'),
+              venues.why_off('__probe__'))
+        check('VENUE: причина есть и по-английски (по экрану ходит обходчик)',
+              venues.why_off('__probe__', 'en')
+              and not __import__('re').search(r'[А-Яа-яЁё]', venues.why_off('__probe__', 'en')),
+              venues.why_off('__probe__', 'en'))
+        check('VENUE: выключенная площадка в live() не попадает',
+              '__probe__' not in venues.live(), venues.live())
+        check('VENUE: и без измеренного пути ссылка на инструмент - None, а не корень',
+              venues.market_url('__probe__', 'BTC') is None,
+              'подсунуть непроверенный путь хуже, чем дать ссылку на площадку целиком')
+    finally:
+        venues.VENUES.pop('__probe__', None)
+    # ── А ВСЕ ТРИ НАСТОЯЩИЕ ПЛОЩАДКИ ОБЯЗАНЫ БЫТЬ ЖИВЫМИ И БЕЗ ПРИЧИНЫ ВЫКЛЮЧЕНИЯ ──
+    for _v in ('variational', 'hyperliquid', 'lighter'):
+        check('VENUE: %s включена и причины выключения у неё нет' % _v,
+              (venues.VENUES[_v].get('fetch') is not None
+               and venues.why_off(_v) is None), venues.why_off(_v))
+    check('VENUE: Lighter умеет отдать список рынков (долг закрыт замером)',
+          callable(venues.VENUES['lighter'].get('fetch')))
+    check('VENUE: и путь к её инструменту измерен браузером',
+          venues.market_url('lighter', 'btc') == 'https://app.lighter.xyz/trade/BTC',
+          venues.market_url('lighter', 'btc'))
+    check('VENUE: единица фандинга Lighter - 8 часов, выведена сверкой с Hyperliquid',
+          venues.LG_FUNDING_INTERVAL_S == 8 * 3600, venues.LG_FUNDING_INTERVAL_S)
     # ── ИДЕНТИЧНОСТЬ ПАРНАЯ: «BTC» на двух площадках - разные инструменты ──
     k1, k2 = venues.key('variational', 'btc'), venues.key('hyperliquid', 'BTC')
     check('VENUE: ключ кольца включает площадку', k1 != k2 and k1 == 'variational:BTC', (k1, k2))
@@ -1670,8 +1698,11 @@ def t_link_leads_to_the_instrument():
           venues.market_url('hyperliquid', 'BTC')
           == 'https://app.hyperliquid.xyz/trade/BTC',
           venues.market_url('hyperliquid', 'BTC'))
-    check('LINK: для площадки без измеренного пути - None, а не корень',
-          venues.market_url('lighter', 'BTC') is None,
+    check('LINK: у Lighter свой путь (измерен браузером 26.09: заголовок назвал инструмент)',
+          venues.market_url('lighter', 'BTC') == 'https://app.lighter.xyz/trade/BTC',
+          venues.market_url('lighter', 'BTC'))
+    check('LINK: у НЕИЗМЕРЕННОЙ площадки пути нет - None, а не корень',
+          venues.market_url('нет-такой-площадки', 'BTC') is None,
           'подсунуть непроверенный путь хуже, чем дать ссылку на площадку целиком')
     check('LINK: пустой тикер ссылки не даёт',
           venues.market_url('variational', '') is None)
@@ -1686,6 +1717,318 @@ def t_link_leads_to_the_instrument():
     hl = dict(ev, payload=dict(ev['payload'], venue='hyperliquid'))
     check('LINK: у события с другой площадки - её путь',
           'app.hyperliquid.xyz/trade/ENA' in cards.card(hl), cards.card(hl)[-200:])
+
+
+def t_funding_unit_is_measured_not_guessed():
+    """ЕДИНИЦА ФАНДИНГА: долг верификации №1 закрыт ЗАМЕРОМ, и это видно в числах.
+
+    ═══ ЧЕМ ИЗМЕРЕНО (tools/sentinel_funding_unit.py, воспроизводится одной командой) ═══
+    Калибровка метода на известном ответе: строки `exchange=hyperliquid` в ленте Lighter против
+    нашего чтения HL дали ×8.0000 на 95 из 95 пар. Затем суд: медиана Variational к HL = 2190.00
+    при 93 парах. И проверка, которую подгонка не пройдёт: гипотеза «годовая ставка» предсказывает
+    для 4-часовых 2190, для 8-часовых 1095 - получено 2190.00 (мимо в 1.0000) и 1046.03 (мимо в
+    1.047). Одна константа обе группы объяснить не может.
+
+    ГЛАВНАЯ ПРОВЕРКА ЗДЕСЬ - ПОСЛЕДНЯЯ: три площадки с РАЗНЫМИ сырыми числами и РАЗНЫМИ
+    интервалами обязаны дать ОДИН И ТОТ ЖЕ годовой процент, потому что это один и тот же рынок в
+    трёх записях. Если приведение врёт хоть в одной, числа разъедутся.
+    """
+    # ЗНАЕМ ЛИ МЫ ЕДИНИЦУ - СВОЙСТВО ПЛОЩАДКИ, И ОНО НАЗЫВАЕТ ИСТОЧНИК ЗНАНИЯ.
+    for _v in ('variational', 'hyperliquid', 'lighter'):
+        check('FUND: у %s единица заявлена с источником' % _v,
+              _v in venues.FUNDING_UNIT and venues.funding_unit_note(_v),
+              venues.FUNDING_UNIT.get(_v))
+        check('FUND: и источник есть по-английски (строка идёт на экран)',
+              venues.funding_unit_note(_v, 'en')
+              and not __import__('re').search(r'[А-Яа-яЁё]',
+                                             venues.funding_unit_note(_v, 'en')),
+              venues.funding_unit_note(_v, 'en'))
+    # VARIATIONAL - ГОДОВАЯ ДОЛЯ: интервал в пересчёте НЕ участвует вовсе.
+    check('FUND: 0.1095 у Variational это 10.95% годовых',
+          abs(venues.funding_apr_pct('variational', 0.1095, 28800) - 10.95) < 0.01,
+          venues.funding_apr_pct('variational', 0.1095, 28800))
+    check('FUND: и интервал на годовую долю НЕ влияет (умножив, завысили бы в тысячу раз)',
+          venues.funding_apr_pct('variational', 0.1095, 28800)
+          == venues.funding_apr_pct('variational', 0.1095, 14400))
+    # HYPERLIQUID - ДОЛЯ ЗА ЧАС, LIGHTER - ЗА ВОСЕМЬ.
+    check('FUND: у Hyperliquid доля за час приводится к году',
+          abs(venues.funding_apr_pct('hyperliquid', 0.0000125, 3600) - 10.95) < 0.01,
+          venues.funding_apr_pct('hyperliquid', 0.0000125, 3600))
+    check('FUND: у Lighter доля за 8 часов приводится к году',
+          abs(venues.funding_apr_pct('lighter', 0.0001, 28800) - 10.95) < 0.01,
+          venues.funding_apr_pct('lighter', 0.0001, 28800))
+    # ═══ ТРИ ЗАПИСИ ОДНОГО РЫНКА СХОДЯТСЯ В ОДНО ЧИСЛО ═══
+    _three = (venues.funding_apr_pct('variational', 0.1095, 28800),
+              venues.funding_apr_pct('hyperliquid', 0.0000125, 3600),
+              venues.funding_apr_pct('lighter', 0.0001, 28800))
+    check('FUND: разные сырые числа трёх площадок дают ОДИН годовой процент',
+          max(_three) - min(_three) < 0.01, _three)
+    # НЕИЗМЕРЕННАЯ ПЛОЩАДКА -> None, А НЕ НОЛЬ.
+    check('FUND: у неизмеренной площадки ответ None, а не 0% годовых',
+          venues.funding_apr_pct('__чужая__', 0.05, 3600) is None,
+          'ноль читался бы как «фандинга нет», то есть как утверждение о рынке')
+    # КАРТОЧКА: ГОДОВЫЕ ТАМ, ГДЕ ИЗМЕРЕНО; ИМЯ ПОЛЯ ТАМ, ГДЕ НЕТ.
+    _known = cards.funding_line({'venue': 'variational', 'funding_raw': 0.1095,
+                                 'funding_interval_s': 28800})
+    check('FUND: карточка ведёт годовыми процентами', '10.95% годовых' in _known, _known)
+    check('FUND: и говорит, КТО платит', 'платят лонги' in _known, _known)
+    check('FUND: сырое поле остаётся рядом - иначе нас нечем проверить',
+          '0.1095' in _known, _known)
+    _neg = cards.funding_line({'venue': 'variational', 'funding_raw': -0.0821,
+                              'funding_interval_s': 14400})
+    check('FUND: отрицательная ставка читается как «платят шорты»', 'платят шорты' in _neg, _neg)
+    _unknown = cards.funding_line({'venue': '__чужая__', 'funding_raw': 0.05,
+                                   'funding_interval_s': 3600})
+    check('FUND: без замера карточка честно печатает ИМЯ ПОЛЯ, а не выдуманные проценты',
+          'funding_rate' in _unknown and 'годовых' not in _unknown, _unknown)
+    # ПОРОГ, КОТОРЫЙ ДЕВЯТЬ КРУГОВ БЫЛ МЁРТВЫМ, ТЕПЕРЬ ЧИТАЕТСЯ.
+    import inspect
+    _src = inspect.getsource(detector.detect)
+    check('FUND: абсолютный порог в годовых применяется в детекторе',
+          'config.funding_apr_pct()' in _src,
+          'порог был объявлен девять кругов назад и НИ ОДНИМ читателем не читался')
+    check('FUND: и при неизвестной единице порог не применяется, а штрафует уверенность',
+          'не измерена' in _src, _src[:100])
+
+
+def t_clusters_count_people_not_addresses():
+    """КЛАСТЕРЫ (роудмап 3.6): три адреса могут быть ОДНИМ человеком. Штраф, а не новое событие.
+
+    Зажигание считает РАЗНЫЕ адреса, а не сделки, — это было первым честным решением модуля. Но
+    адрес тоже не равен человеку: пять кошельков, заведённых с одного, это ОДИН участник, и «5
+    умных адресов купили» завышает силу сигнала во столько раз, сколько кошельков он себе нарезал.
+
+    ПОЧЕМУ ШТРАФ, А НЕ ОТМЕНА: связь адресов не доказывает умысла (биржи, фонды, боты разносят
+    позиции по адресам штатно). Отменив событие, мы выбросили бы настоящие покупки.
+    """
+    A, B, C, D = '0xaaa1', '0xbbb2', '0xccc3', '0xddd4'
+    # ── РАЗБОР ОТВЕТА: ЧИСТАЯ ФУНКЦИЯ НА ФИКСТУРЕ ─────────────────────────────────────────
+    # Форма строки снята с `nansen_api.profiler_related_wallets` (поля address/label/relation).
+    rows = {A: [{'address': B, 'relation': 'funded_by'},
+                {'address': '0xEXCHANGE', 'relation': 'counterparty'}],
+            B: [{'address': A, 'relation': 'funded'}],
+            C: [{'address': '0xROUTER', 'relation': 'counterparty'}]}
+    links = clusters.link_map(rows)
+    check('CLU: связь внутри набора найдена', links[A] == {B} and links[B] == {A}, links)
+    check('CLU: чужие адреса из графа НЕ считаются связью',
+          '0xexchange' not in links and '0xrouter' not in links,
+          'у любого живого адреса десятки связанных - это шум чужого графа, а не наш вопрос')
+    check('CLU: адрес без связей внутри набора остаётся сам за себя', links[C] == set(), links)
+    # СИММЕТРИЯ: площадка может назвать B в ответе про A и не назвать A в ответе про B.
+    one_way = clusters.link_map({A: [{'address': B}], B: []})
+    check('CLU: связь симметрична, даже если названа с одной стороны',
+          one_way[A] == {B} and one_way[B] == {A}, one_way)
+    # ── ГРУППЫ, А НЕ ПАРЫ: A-B и B-C это ОДИН участник ────────────────────────────────────
+    chain3 = clusters.link_map({A: [{'address': B}], B: [{'address': C}], C: []})
+    comps = clusters.components(chain3)
+    check('CLU: A-B-C склеиваются в ОДНУ группу, а не в две связи',
+          len(comps) == 1 and len(comps[0]) == 3, comps)
+    # ── ПЕРЕСЧЁТ УЧАСТНИКОВ ───────────────────────────────────────────────────────────────
+    v = clusters.verdict(clusters.link_map(rows), wallets_total=4, checked=3)
+    check('CLU: из 4 адресов независимых участников 3', v['independent'] == 3, v)
+    check('CLU: непроверенные адреса НЕ занижаются - про них мы ничего не знаем',
+          v['wallets'] == 4 and v['checked'] == 3, v)
+    v1 = clusters.verdict({}, wallets_total=1, checked=0)
+    check('CLU: один адрес не с чем связывать - это не отказ', v1['independent'] == 1, v1)
+    # ── ШТРАФ РАСТЁТ С ДОЛЕЙ СЛИПШИХСЯ ────────────────────────────────────────────────────
+    small = clusters.penalty(clusters.verdict(clusters.link_map({A: [{'address': B}], B: []}),
+                                              wallets_total=12, checked=3))
+    big = clusters.penalty(clusters.verdict(chain3, wallets_total=3, checked=3))
+    check('CLU: «2 из 12 связаны» штрафуется мягче, чем «3 из 3»',
+          small and big and small[1] < big[1], (small, big))
+    check('CLU: текст штрафа называет ЧИСЛА, а не «подозрительно»',
+          'независимых участников' in small[0], small)
+    check('CLU: где связей нет - штрафа нет вовсе',
+          clusters.penalty(clusters.verdict({C: set()}, 3, 3)) is None)
+    # ── НЕ СМОГЛИ ПРОВЕРИТЬ ≠ СВЯЗЕЙ НЕТ ──────────────────────────────────────────────────
+    ref = clusters.penalty(clusters.verdict({}, 5, 0, refused='кап исчерпан'))
+    check('CLU: «связи не проверены» - отдельная строка, а не молчание', ref and 'не проверены'
+          in ref[0], ref)
+    check('CLU: и штраф за НАШУ неудачу маленький, сигнал в ней не виноват',
+          ref[1] <= 10, ref)
+    # ── ЖИВОЙ ПУТЬ: ШТРАФ ЛОЖИТСЯ В СОБЫТИЕ ДО ОТПРАВКИ ───────────────────────────────────
+    ev = {'kind': 'ignition', 'ticker': 'PEPE', 'ts': int(time.time()), 'severity': 90,
+          'key': 'clu-1',
+          'payload': {'symbol': 'PEPE', 'chain': 'ethereum', 'address': '0xtok',
+                      'wallets': 4, 'usd': 200000.0, 'penalties': [],
+                      'wallet_addrs': [A, B, C, D]}}
+    _real = clusters.check
+
+    async def _fake(addresses, chain, **kw):
+        return clusters.verdict(clusters.link_map(rows), len(addresses), 3)
+    clusters.check = _fake
+    try:
+        hit = asyncio.run(engine._cluster_mark(ev))
+    finally:
+        clusters.check = _real
+    check('CLU: связи найдены и отмечены', hit is True)
+    check('CLU: уверенность ПЕРЕСЧИТАНА вниз', ev['severity'] < 90, ev['severity'])
+    check('CLU: причина попала в штрафы события',
+          any('независимых участников' in str(x) for x in ev['payload']['penalties']),
+          ev['payload']['penalties'])
+    check('CLU: число участников легло в payload', ev['payload']['independent'] == 3,
+          ev['payload'].get('independent'))
+    # ── КАРТОЧКА ВЕДЁТ УЧАСТНИКАМИ, А НЕ АДРЕСАМИ ─────────────────────────────────────────
+    txt = cards.card(ev)
+    check('CLU: заголовок называет независимых участников',
+          '3</b> независимых участника' in txt, txt.split('\n')[0])
+    check('CLU: а число адресов ушло в скобки, но не пропало', 'адресов 4' in txt,
+          txt.split('\n')[0])
+    ev2 = dict(ev, severity=90,
+               payload=dict(ev['payload'], independent=4, wallets=4, penalties=[]))
+    check('CLU: где связей нет - заголовок прежний, про адреса',
+          'умных адреса купили' in cards.card(ev2), cards.card(ev2).split('\n')[0])
+    # ── ЧИСТАЯ ФУНКЦИЯ `judge` ОСТАЛАСЬ ЧИСТОЙ ────────────────────────────────────────────
+    # ПРОВЕРЯЕМ ПОВЕДЕНИЕМ, А НЕ ПОИСКОМ СЛОВА В ИСХОДНИКЕ. Первая редакция искала подстроку
+    # 'clusters' в тексте `judge` и ПОКРАСНЕЛА на комментарии, который всего лишь ссылается на
+    # модуль. Это ровно то, что запрещает сторож `gt01` в e2e: тест не имеет права быть ни
+    # зелёным из-за комментария, ни красным из-за него. Поэтому подменяем саму дверь в сеть и
+    # смотрим, полезет ли судья наружу.
+    import nansen_api as _napi
+    _saved = _napi.profiler_related_wallets
+
+    def _boom(*a, **kw):
+        raise AssertionError('judge полез в сеть - он обязан остаться чистой функцией')
+    _napi.profiler_related_wallets = _boom
+    try:
+        _agg = {'chain': 'ethereum', 'address': '0xtok', 'symbol': 'PEPE',
+                'wallets': {A, B, C, D}, 'labels': ['Smart'], 'usd': 400000.0, 'trades': 7,
+                'mcap': 5e7, 'age_days': 300.0, 'last_ts': int(time.time()),
+                'usd_by': {A: 100.0, B: 300000.0, C: 200.0, D: 50.0}}
+        _judged = ignition.judge(_agg)
+        check('CLU: judge вынес событие, НЕ обратившись к сети', _judged is not None)
+        check('CLU: и положил адреса для проверки связей отдельным полем',
+              (_judged['payload'].get('wallet_addrs') or [])[0] == B,
+              _judged['payload'].get('wallet_addrs'))
+    finally:
+        _napi.profiler_related_wallets = _saved
+    # ── АДРЕСА ДЛЯ ПРОВЕРКИ БЕРУТСЯ ПО ОБЪЁМУ, А НЕ ПО ПОРЯДКУ ────────────────────────────
+    agg = {'wallets': {A, B, C}, 'usd_by': {A: 10.0, B: 900.0, C: 50.0}}
+    check('CLU: первым проверяем САМОГО КРУПНОГО покупателя',
+          ignition._top_wallets(agg, 2) == [B, C], ignition._top_wallets(agg, 2))
+    check('CLU: порядок устойчив при равных объёмах (иначе ответы гуляют между запусками)',
+          ignition._top_wallets({'wallets': {A, B}, 'usd_by': {A: 5.0, B: 5.0}}, 2) == [A, B])
+
+
+def _pure_only(predict):
+    """Замки моста, проверяемые БЕЗ слоя Polymarket. -> None.
+
+    ЗАЧЕМ ОТДЕЛЬНО: без `poly_read` недоступен только ЖИВОЙ поиск рынка, а сами правила
+    сопоставления - чистые функции, и именно они держат границу «не угадывать». Пропустить их
+    вместе с сетевой частью значило бы оставить главное без охраны там, где охранять как раз
+    можно.
+    """
+    for _bad in ('A', 'US', 'Gold', 'ETF', ''):
+        check('PM: имя %r к сопоставлению не допускается' % _bad,
+              predict.ambiguous(_bad) is not None, predict.ambiguous(_bad))
+    check('PM: «Bitcoin Conference» отсекается третьим замком (рынок не про цену)',
+          predict.confirms('Will the Bitcoin Conference sell out?', 'c', 'Bitcoin',
+                           'крипто') is False)
+    check('PM: ценовой рынок подтверждается',
+          predict.confirms('What price will Bitcoin hit in September?', 'btc-price', 'Bitcoin',
+                           'крипто') is True)
+    check('PM: чужой актив в заголовке не проходит',
+          predict.confirms('What price will Bitcoin hit?', 'b', 'Solana', 'крипто') is False)
+
+
+def t_prediction_bridge_refuses_to_guess():
+    """СВЯЗКА С POLYMARKET (роудмап 3.7): три замка против ложного сопоставления.
+
+    ═══ ГЛАВНАЯ ОПАСНОСТЬ ЗДЕСЬ СМЫСЛОВАЯ, А НЕ ТЕХНИЧЕСКАЯ ═══
+    Роудмап предупреждает прямым текстом, и предупреждение оплачено: связку «тикер → внешний
+    объект» брать можно только из проверенного сопоставления, потому что вывод по совпадению
+    тикера уже стоил проекту трёх экранов. На Variational это не теория: тикер `A` — токен
+    Vaulta, `US` — токен Talus. Поиск по «A» вернёт что угодно.
+
+    ЗАМЕР 26.09 НА 13 ЖИВЫХ ИНСТРУМЕНТАХ: нашлось 4 (BTC, ETH, SOL, XRP — все верные, оборот
+    $0.6M-$14M), промолчал на 9. Ложных сопоставлений НОЛЬ: Vaulta, Talus, XAGS, FWDI, US500,
+    MSTR, MRNA, Gold — все отказались с причиной.
+    """
+    from sentinel import predict
+    try:
+        import poly_read as _pr_check                      # noqa: F401
+    except ImportError:
+        # ПРОПУСК НАЗЫВАЕТ СЕБЯ. Публичная выжимка НАРОЧНО не несёт слой Polymarket: он не про
+        # Nansen, и тащить его туда значило бы расширить выжимку тем, чего судья не просил.
+        # Но и притворяться, что проверка прошла, нельзя - молчаливо зелёный пропуск это тот же
+        # дефект, что молчаливый отказ. Чистые функции моста ниже проверяются и без него.
+        global _SKIP
+        _SKIP += 1
+        print('SKIP  связка Polymarket: в этой сборке нет слоя poly_read (в боте проверка идёт)')
+        _pure_only(predict)
+        return
+    # ── ЗАМОК 1: КОРОТКИЕ И ОБЩИЕ ИМЕНА НЕ СОПОСТАВЛЯЮТСЯ НИКОГДА ─────────────────────────
+    for _bad in ('A', 'US', 'Gold', 'ETF', ''):
+        check('PM: имя %r к сопоставлению не допускается' % _bad,
+              predict.ambiguous(_bad) is not None, predict.ambiguous(_bad))
+    check('PM: и причина называется словами, а не «не найдено»',
+          'слишком' in (predict.ambiguous('US') or ''), predict.ambiguous('US'))
+    for _ok in ('Bitcoin', 'Ethereum', 'Solana'):
+        check('PM: имя %s сопоставлять можно' % _ok, predict.ambiguous(_ok) is None)
+    # ── ЗАМОК 2+3: ОБРАТНАЯ ПРОВЕРКА НА ФИКСТУРАХ НАСТОЯЩИХ ЗАГОЛОВКОВ ────────────────────
+    # Заголовки взяты из живого ответа gamma-api 26.09, а не придуманы.
+    _fx = [('Bitcoin above ___ on September 25?', 'bitcoin-above', 'Bitcoin', 'крипто', True),
+           ('What price will Ethereum hit in September?', 'eth-price', 'Ethereum', 'крипто', True),
+           ('Solana Up or Down - October 5', 'solana-up-down', 'Solana', 'крипто', True),
+           ('Will Ethereum flip Bitcoin?', 'eth-flip-btc', 'Ethereum', 'крипто', True),
+           # НЕ ПРО ЦЕНУ - отсекается третьим замком. Именно этот случай нашла живая проба:
+           # имя есть, категория 'крипто' есть, а рынок про конференцию.
+           ('Will the Bitcoin Conference sell out?', 'btc-conf', 'Bitcoin', 'крипто', False),
+           ('Bitcoin ETF approved in 2027?', 'btc-etf', 'Bitcoin', 'крипто', False),
+           # ЧУЖОЙ АКТИВ и ЧУЖАЯ КАТЕГОРИЯ.
+           ('Lakers vs Celtics', 'lakers', 'Bitcoin', 'спорт', False),
+           ('What price will Bitcoin hit?', 'btc-price', 'Solana', 'крипто', False)]
+    for _t, _s, _n, _c, _want in _fx:
+        check('PM: «%s» + имя %s -> %s' % (_t[:38], _n, _want),
+              predict.confirms(_t, _s, _n, _c) is _want,
+              predict.confirms(_t, _s, _n, _c))
+    check('PM: без категории проверка НЕ усиливается сама собой',
+          predict.confirms('Will the Bitcoin Conference sell out?', 'c', 'Bitcoin', None) is False,
+          'третий замок (про цену) работает и без категории')
+    # ── РАСКЛАД КОШЕЛЬКОВ: ВЕДЁМ ДЕНЬГАМИ, А НЕ ЧИСЛОМ АДРЕСОВ ───────────────────────────
+    # Форма `holders` взята у готовой двери `nansen_api.pm_reputation` (схема снята пробой 20.09).
+    rep = {'holders': [{'addr': '0x1', 'side': 'Yes', 'usd': 50000.0, 'wr': 71.0},
+                       {'addr': '0x2', 'side': 'No', 'usd': 9000.0, 'wr': 22.0},
+                       {'addr': '0x3', 'side': 'No', 'usd': 8000.0, 'wr': 31.0},
+                       {'addr': '0x4', 'side': 'Yes', 'usd': 4000.0, 'wr': None}],
+           'no_history': 1}
+    sp = predict.sharp_split(rep)
+    check('PM: сильные кошельки собраны по стороне и деньгам',
+          sp['strong'] == {'Yes': 50000.0}, sp['strong'])
+    check('PM: слабые - отдельно', sp['weak'] == {'No': 17000.0}, sp['weak'])
+    check('PM: кошелёк БЕЗ истории не причислен ни к сильным, ни к слабым',
+          sp['unknown_usd'] == 4000.0 and sp['no_history'] == 1, sp)
+    check('PM: сторона перевеса названа', sp['strong_side'] == 'Yes', sp['strong_side'])
+    check('PM: пустой ответ даёт None, а не выдуманный расклад',
+          predict.sharp_split({'holders': []}) is None)
+    # ── МОСТ НЕ ХОДИТ В СЕТЬ, КОГДА ИМЯ ЗАПРЕЩЕНО ────────────────────────────────────────
+    # ПОВЕДЕНЧЕСКАЯ ПРОВЕРКА: подменяем чужую дверь на бросающую. Замок обязан сработать ДО
+    # запроса - иначе каждый инструмент с мусорным именем стоил бы нам запроса.
+    import poly_read as _pr
+    _saved = _pr.find_event
+
+    async def _boom(*a, **kw):
+        raise AssertionError('мост пошёл в сеть с запрещённым именем')
+    _pr.find_event = _boom
+    try:
+        mk, why = asyncio.run(predict.market_for('A', 'Vaulta'))
+        check('PM: имя из стоп-списка не даёт сопоставления', mk is None)
+        mk2, why2 = asyncio.run(predict.market_for('US', 'US'))
+        check('PM: и запроса в сеть при этом НЕ было', mk2 is None and why2, why2)
+    finally:
+        _pr.find_event = _saved
+    # ── ПОРОГ ОБОРОТА: РЫНОК БЕЗ ДЕНЕГ - НЕ МНЕНИЕ ТОЛПЫ ─────────────────────────────────
+    async def _thin(*a, **kw):
+        return {'title': 'What price will Bitcoin hit in September?',
+                'slug': 'btc-price-sep', 'volume': 100.0}
+    _pr.find_event = _thin
+    try:
+        mk3, why3 = asyncio.run(predict.market_for('BTC', 'Bitcoin'))
+        check('PM: рынок с оборотом $100 отвергнут', mk3 is None, mk3)
+        check('PM: и причина называет ОБА числа - оборот и порог',
+              why3 and '100' in why3 and str(int(predict.MIN_VOLUME_USD)) in why3, why3)
+    finally:
+        _pr.find_event = _saved
 
 
 def _ev_for(ticker='BTC', mark='104.0', now=None, kind='move_up'):
@@ -2083,7 +2426,11 @@ def main():
                t_queue_is_taken_by_one_process_only,
                t_emergency_switch_stops_everything,
                t_guard_is_visible_on_the_screen,
-               t_lab_field_name_came_from_the_venue):
+               t_lab_field_name_came_from_the_venue,
+               # ── круг 9 (26.09): настройки кнопками, третья площадка, единица фандинга ──
+               t_funding_unit_is_measured_not_guessed,
+               t_clusters_count_people_not_addresses,
+               t_prediction_bridge_refuses_to_guess):
         print('\n== %s' % fn.__name__)
         try:
             fn()

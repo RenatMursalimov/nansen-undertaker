@@ -77,7 +77,10 @@ def _ensure(conn):
         cooldown_min INTEGER,
         kinds TEXT,
         parts TEXT,
-        venues TEXT)''')
+        venues TEXT,
+        burst_max INTEGER,
+        burst_win_min INTEGER,
+        min_sev INTEGER)''')
     # ЛЕНИВЫЙ ALTER ДЛЯ УЖЕ СОЗДАННОЙ ТАБЛИЦЫ. `CREATE TABLE IF NOT EXISTS` на существующей
     # таблице НЕ добавляет колонку и НЕ жалуется - то есть у того, кто поставил дозорного
     # раньше (прод Ren, 25.09), новой колонки не появилось бы, а SELECT по ней падал бы
@@ -86,8 +89,13 @@ def _ensure(conn):
     # НАБОРЫ ХРАНИМ СТРОКОЙ ЧЕРЕЗ ЗАПЯТУЮ, А НЕ ТАБЛИЦЕЙ-СВЯЗКОЙ. Значений пять и три, они
     # читаются на каждой доставке, и JOIN ради этого дал бы два запроса вместо нуля. Порядок в
     # строке не значит ничего - набор сравнивается множеством.
+    # КРУГ 9: предохранитель и порог силы стали ЛИЧНЫМИ настройками по требованию владельца
+    # («предохранитель на человека нужно где-то настраивать, а не хардкодом зашивать»; «порог
+    # силы тоже надо настраивать»). Числа из `.env` остались ДЕФОЛТАМИ - тем, что применяется к
+    # человеку, ни разу не крутившему кнопку.
     for _col, _type in (('cooldown_min', 'INTEGER'), ('kinds', 'TEXT'), ('parts', 'TEXT'),
-                        ('venues', 'TEXT')):
+                        ('venues', 'TEXT'), ('burst_max', 'INTEGER'),
+                        ('burst_win_min', 'INTEGER'), ('min_sev', 'INTEGER')):
         try:
             conn.execute('ALTER TABLE sentinel_settings ADD COLUMN %s %s' % (_col, _type))
         except Exception as _ae:
@@ -539,18 +547,21 @@ def watched():
 
 _DEF_SETTINGS = {'alerts_on': 1, 'min_pct': None, 'quiet_from': None, 'quiet_to': None,
                  'daily_cap': None, 'enrich_on': 1, 'cooldown_min': None, 'kinds': None,
-                 'parts': None, 'venues': None}
+                 'parts': None, 'venues': None, 'burst_max': None, 'burst_win_min': None,
+                 'min_sev': None}
 
 
 def settings(uid):
     r = _one('SELECT alerts_on, min_pct, quiet_from, quiet_to, daily_cap, enrich_on, '
-             'cooldown_min, kinds, parts, venues FROM sentinel_settings WHERE user_id=?', (int(uid),))
+             'cooldown_min, kinds, parts, venues, burst_max, burst_win_min, min_sev '
+             'FROM sentinel_settings WHERE user_id=?', (int(uid),))
     if not r:
         return dict(_DEF_SETTINGS)
     return {'alerts_on': int(r[0] or 0), 'min_pct': r[1], 'quiet_from': r[2],
             'quiet_to': r[3], 'daily_cap': r[4],
             'enrich_on': 1 if r[5] is None else int(r[5]),
-            'cooldown_min': r[6], 'kinds': r[7], 'parts': r[8], 'venues': r[9]}
+            'cooldown_min': r[6], 'kinds': r[7], 'parts': r[8], 'venues': r[9],
+            'burst_max': r[10], 'burst_win_min': r[11], 'min_sev': r[12]}
 
 
 def settings_set(uid, **kw):
@@ -564,12 +575,73 @@ def settings_set(uid, **kw):
     c = conn()
     c.execute('INSERT OR REPLACE INTO sentinel_settings '
               '(user_id, alerts_on, min_pct, quiet_from, quiet_to, daily_cap, enrich_on, '
-              'cooldown_min, kinds, parts, venues) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+              'cooldown_min, kinds, parts, venues, burst_max, burst_win_min, min_sev) '
+              'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
               (int(uid), int(cur['alerts_on'] or 0), cur['min_pct'], cur['quiet_from'],
                cur['quiet_to'], cur['daily_cap'], int(cur['enrich_on'] or 0),
-               cur['cooldown_min'], cur['kinds'], cur['parts'], cur['venues']))
+               cur['cooldown_min'], cur['kinds'], cur['parts'], cur['venues'],
+               cur['burst_max'], cur['burst_win_min'], cur['min_sev']))
     c.commit()
     return cur
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# ПРЕДОХРАНИТЕЛЬ И ПОРОГ СИЛЫ: НАСТРАИВАЕМЫЕ, НО С ПОТОЛКОМ. ТРЕБОВАНИЕ ВЛАДЕЛЬЦА + ЗАКОН
+#
+# ВЛАДЕЛЕЦ (26.09): «предохранитель на ЧЕЛОВЕКА нужно где-то настраивать, а не хардкодом
+# зашивать», «порог силы тоже надо настраивать». Справедливо: круг 8 сделал границу правильной
+# по смыслу, но неудобной - крутить её можно было только из `.env` с рестартом.
+#
+# И ЗДЕСЬ ЕСТЬ ЛОВУШКА, КОТОРУЮ НАДО НАЗВАТЬ ВСЛУХ. Граница, которую можно выкрутить в
+# бесконечность, перестаёт быть границей и становится комментарием - это ровно тот класс, что
+# «предохранитель, который снимает тот, кого он ограничивает». Поэтому кнопка есть, а потолок
+# остался: личное значение КЛАМПИТСЯ сверху `_BURST_HARD`, и экран говорит про потолок числом,
+# когда человек в него упирается. Сам потолок правится только из `.env` (то есть с сервера).
+#
+# ПОЧЕМУ ИМЕННО 12 ЗА ОКНО. Это верхняя граница читаемого: двенадцать сообщений за десять минут
+# - уже неудобно, но ещё можно нажать кнопку и уйти в настройки. Дальше начинается то, из чего
+# владелец не смог выбраться живьём («даже нажать ничего нельзя»), и разрешать это кнопкой
+# значило бы вернуть баг, только с нашей подписью.
+# ══════════════════════════════════════════════════════════════════════════════════════════
+#: ЖЁСТКИЙ ПОТОЛОК ЛИЧНОЙ НАСТРОЙКИ. Выше этого числа предохранитель не поднимается КНОПКОЙ -
+#: только правкой `.env` на сервере. Разница между «настройка» и «граница» держится здесь.
+_BURST_HARD = int(os.getenv('SENTINEL_BURST_HARD_MAX') or 12)
+#: И окно не растягивается в бесконечность: окно в сутки означало бы «3 сообщения в день»,
+#: то есть суточный потолок под чужим именем. Два часа - предел осмысленного.
+_WIN_HARD_MIN = int(os.getenv('SENTINEL_BURST_HARD_WIN_MIN') or 120)
+
+
+def burst_for(uid):
+    """Предохранитель ЭТОГО человека. -> (сколько сообщений, окно в секундах, упёрся ли в потолок).
+
+    ЛИЧНАЯ НАСТРОЙКА СИЛЬНЕЕ ОБЩЕЙ, НО НЕ СИЛЬНЕЕ ПОТОЛКА. Третий элемент возвращается нарочно:
+    без него экран показал бы «12» там, где человек просил 30, и выглядело бы это как потерянное
+    нажатие. Упёрся - значит об этом надо сказать, а не тихо подменить число.
+    """
+    from . import config
+    s = settings(uid)
+    want = s.get('burst_max')
+    n = int(want) if want else config.burst_max()
+    capped = n > _BURST_HARD
+    n = max(1, min(_BURST_HARD, n))
+    wm = s.get('burst_win_min')
+    w = int(float(wm) * 60) if wm else config.burst_window_sec()
+    w = max(60, min(_WIN_HARD_MIN * 60, w))
+    return n, w, capped
+
+
+def min_sev_for(uid):
+    """Порог уверенности ЭТОГО человека. -> int 0..100.
+
+    ПОТОЛКА СВЕРХУ ЗДЕСЬ НЕТ, И НОЛЬ РАЗРЕШЁН. Понизив порог, человек получает больше событий,
+    но НЕ получает потока: темп держит предохранитель, а он свой потолок имеет. То есть эта
+    ручка меняет СОСТАВ, а не КОЛИЧЕСТВО, и ограничивать её незачем - в отличие от предыдущей.
+    """
+    from . import config
+    v = settings(uid).get('min_sev')
+    if v is None or str(v) == '':
+        return config.min_severity()
+    return max(0, min(100, int(v)))
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
@@ -1177,6 +1249,59 @@ def spend_today(day=None):
     return (int((r or [0, 0])[0] or 0), int((r or [0, 0])[1] or 0))
 
 
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# КАПЫ КРЕДИТОВ: ТОЖЕ НАСТРАИВАЕМЫЕ, НО ОБЩИЕ - И ПОТОМУ ТОЛЬКО ВЛАДЕЛЬЦЕМ
+#
+# ВЛАДЕЛЕЦ (26.09): «Капа тоже настраиваться где-то должна». Верно, и раньше это требовало
+# правки `.env` с рестартом службы.
+#
+# ПОЧЕМУ НЕ В ЛИЧНЫХ НАСТРОЙКАХ, КАК ПРЕДОХРАНИТЕЛЬ. Кредиты - ОДИН кошелёк на всех: кнопка
+# «+100» у одного подписчика потратила бы деньги остальных, и у человека, ничего не менявшего,
+# экран однажды ответил бы «кап исчерпан» по чужому решению. Поэтому кап живёт в общей таблице
+# ключ-значение и меняется только из владельческого раздела.
+#
+# ЗНАЧЕНИЕ ИЗ БАЗЫ СИЛЬНЕЕ `.env`, И ЭТО НАЗВАНО ВСЛУХ на экране: иначе владелец, поправивший
+# `.env` и не увидевший эффекта, искал бы баг там, где лежит его же прошлое нажатие кнопки.
+# `.env` остаётся ДЕФОЛТОМ - тем, что применяется, пока кнопку не трогали.
+# ══════════════════════════════════════════════════════════════════════════════════════════
+#: Имена общих капов в `sentinel_cursor`. Строка, а не число: таблица ключ-значение текстовая,
+#: и «пусто» тут значит «кнопку не трогали», а не «ноль».
+_CAP_NANSEN, _CAP_LAB = 'cap_nansen_day', 'cap_lab_day'
+
+
+def gcap_get(name):
+    """Общий кап из базы. -> int | None (None = не задавали, действует значение из `.env`)."""
+    raw = cursor_get(name)
+    if raw is None or str(raw).strip() == '':
+        return None
+    try:
+        return max(0, int(float(str(raw).strip())))
+    except (TypeError, ValueError):
+        # МУСОР В ЗНАЧЕНИИ НЕ ПРОГЛАТЫВАЕМ МОЛЧА: иначе кап тихо работал бы по другому числу.
+        print('[sentinel] общий кап %s=%r не число - беру значение из .env' % (name, raw))
+        return None
+
+
+def gcap_set(name, value):
+    """Задать общий кап. `value=None` -> вернуть управление `.env`. -> новое значение | None."""
+    cursor_set(name, '' if value is None else str(int(value)))
+    return gcap_get(name)
+
+
+def nansen_cap():
+    """Суточный кап кредитов ДОЗОРНОГО с учётом владельческой правки. -> int (0 = выключен)."""
+    from . import config
+    v = gcap_get(_CAP_NANSEN)
+    return config.nansen_day_credits() if v is None else v
+
+
+def lab_cap():
+    """Суточный кап кредитов ЛАБОРАТОРИИ с учётом владельческой правки. -> int (0 = выключен)."""
+    from . import config
+    v = gcap_get(_CAP_LAB)
+    return config.lab_day_credits() if v is None else v
+
+
 def budget_left():
     """Остаток кредитов дозорного на сегодня. -> int | None, если кап ВЫКЛЮЧЕН.
 
@@ -1186,8 +1311,7 @@ def budget_left():
     бы в Nansen вовсе. Ровно тот класс, что закон «признак наличия не равен признаку пользы»,
     только наоборот: отсутствие ограничителя выглядело как срабатывание ограничителя.
     """
-    from . import config
-    cap = config.nansen_day_credits()
+    cap = nansen_cap()
     if cap <= 0:
         return None
     used, _ = spend_today()
@@ -1200,8 +1324,7 @@ def budget_block():
     ОДНА ДВЕРЬ НА ВСЕ ПРОВЕРКИ БЮДЖЕТА, и отвечает она не «да/нет», а причиной: текст едет
     человеку в сводку и в лог, и «обогащения нет» без причины читается как поломка бота.
     """
-    from . import config
-    cap = config.nansen_day_credits()
+    cap = nansen_cap()
     if cap <= 0:
         return None
     used, _ = spend_today()
@@ -1217,9 +1340,8 @@ def spend_line(lang='ru'):
     честнее показать «сожжено N кр, кап выключен», чем «N из 0»: второе читается как
     исчерпанный лимит, то есть ровно наоборот.
     """
-    from . import config
     used, _ = spend_today()
-    cap = config.nansen_day_credits()
+    cap = nansen_cap()
     if lang == 'en':
         return ('%d credits spent today, daily cap off' % used) if cap <= 0 else (
             '%d of %d credits spent today' % (used, cap))

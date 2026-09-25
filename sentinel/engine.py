@@ -272,8 +272,17 @@ async def ignition_tick():
         evs, note = await asyncio.to_thread(ignition.scan)
     except Exception as e:
         return 'зажигание упало: %s: %s' % (type(e).__name__, str(e)[:150])
-    planned, skipped, fresh = 0, [], 0
+    planned, skipped, fresh, clustered = 0, [], 0, 0
     for ev in evs:
+        # ═══ ПРОВЕРКА СВЯЗЕЙ - ДО ЗАПИСИ И ДО ОЧЕРЕДИ, А НЕ В ОБОГАЩЕНИИ ═══
+        # Пункт 3.6 роудмапа: три адреса, купившие одно и то же, могут быть ОДНИМ человеком, и
+        # это ШТРАФ К УВЕРЕННОСТИ. Значит штраф обязан попасть в событие ДО того, как оно уйдёт
+        # человеку: уверенность решает, звонить или везти сводкой (порог `min_sev`), и
+        # пересчитанная ПОСЛЕ отправки она не меняет ничего, кроме нашего самочувствия.
+        # ЗДЕСЬ СЕТЬ РАЗРЕШЕНА: этот тик и так ходит в Nansen, в отличие от `ignition.judge`,
+        # который обязан остаться чистой функцией.
+        if await _cluster_mark(ev):
+            clustered += 1
         if not store.event_new(ev):
             continue
         fresh += 1
@@ -281,9 +290,55 @@ async def ignition_tick():
         planned += n
         skipped += why
     out = '%s; новых событий %d; доставок %d' % (note, fresh, planned)
+    if clustered:
+        out += '; со связанными адресами %d' % clustered
     if skipped:
         out += '; не отправлено: ' + '; '.join(skipped[:4])
     return out
+
+
+async def _cluster_mark(ev):
+    """Пересчитать уверенность зажигания с учётом связей адресов. -> True, если связи нашлись.
+
+    ПРАВИМ СОБЫТИЕ НА МЕСТЕ И ДО ЗАПИСИ В БАЗУ: `severity` едет в базу вместе с событием и
+    оттуда читается порогом звонка, карточкой и отчётом попаданий. Поправить его позже значит
+    иметь в базе одно число, а на экране другое.
+    НИКОГДА НЕ БРОСАЕТ: отказ этой проверки не имеет права уронить событие, честно посчитанное
+    по порогам. Он превращается в строку штрафа «связи не проверены» - и это тоже информация.
+    """
+    if (ev.get('kind') or '') != 'ignition':
+        return False
+    p = ev.get('payload') or {}
+    addrs = p.get('wallet_addrs') or ()
+    if len(addrs) < 2:
+        return False
+    try:
+        from . import clusters
+        res = await clusters.check(addrs, p.get('chain') or 'ethereum')
+        pen = clusters.penalty(res)
+    except Exception as e:                        # noqa: BLE001
+        print('[sentinel] проверка связей не удалась: %s' % str(e)[:120])
+        return False
+    p['independent'] = res.get('independent')
+    p['cluster_groups'] = res.get('groups') or []
+    p['cluster_checked'] = res.get('checked')
+    if res.get('partial'):
+        p['cluster_partial'] = res['partial']
+    if not pen:
+        return False
+    # ПЕРЕСЧЁТ УВЕРЕННОСТИ ИДЁТ ТОЙ ЖЕ ДВЕРЬЮ, ЧТО И ВСЕ ОСТАЛЬНЫЕ ШТРАФЫ (`detector.confidence`),
+    # а не вычитанием числа руками: иначе два места считали бы уверенность по-разному, и
+    # расхождение вылезло бы на живом событии, где его труднее всего заметить.
+    from .detector import confidence
+    _old = int(ev.get('severity') or 0)
+    conf, notes = confidence(_old, [(pen[0], pen[1])])
+    ev['severity'] = conf
+    p['penalties'] = list(p.get('penalties') or ()) + list(notes)
+    if res.get('merged'):
+        print('[sentinel] зажигание %s: адресов %d, независимых участников %d - уверенность '
+              '%d -> %d' % (ev.get('ticker'), res.get('wallets'), res.get('independent'),
+                            _old, conf))
+    return bool(res.get('merged'))
 
 
 async def deliver_tick():

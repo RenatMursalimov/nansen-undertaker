@@ -22,10 +22,10 @@ reading it.
 | `docs/ENDPOINT_SWEEP.md` | `dcf160e67798f33f` | from the bot, private paths/services substituted (see below) |
 | `docs/JUDGE.md` | `e5c94cb4cd1d1fd8` | from the bot, private paths/services substituted (see below) |
 | `docs/MINIAPP_DECISIONS.md` | `c21d902a9bd96bec` | from the bot, private paths/services substituted (see below) |
-| `docs/PROJECT_STATUS.md` | `6c0b36b963c859d3` | from the bot, private paths/services substituted (see below) |
+| `docs/PROJECT_STATUS.md` | `4ceacdce540fea84` | from the bot, private paths/services substituted (see below) |
 | `docs/RECORDING_RUNBOOK.md` | `f897c1d05a2244e0` | from the bot, private paths/services substituted (see below) |
-| `docs/SENTINEL_SPEC.md` | `691b9ac1900f9209` | from the bot, private paths/services substituted (see below) |
-| `docs/SENTINEL_SPEC_ru.md` | `9931fed15b915bb9` | from the bot, private paths/services substituted (see below) |
+| `docs/SENTINEL_SPEC.md` | `b5d45d98446ec65c` | from the bot, private paths/services substituted (see below) |
+| `docs/SENTINEL_SPEC_ru.md` | `56ed66b637a3d299` | from the bot, private paths/services substituted (see below) |
 | `docs/VIDEO.md` | `b090b36fa4aaed7a` | from the bot, private paths/services substituted (see below) |
 | `docs/VIDEO_SCRIPT.md` | `d92d574e3f55518d` | from the bot, private paths/services substituted (see below) |
 | `docs/WINNER_PLAN.md` | `b5285d8fce82c7d2` | from the bot, private paths/services substituted (see below) |
@@ -56,7 +56,7 @@ reading it.
 | `fixtures/sharp_markets.json` | `2db415d3a9eb10b0` | byte-for-byte from the bot |
 | `fixtures/smart_dca.json` | `4d33b3805dcfd104` | byte-for-byte from the bot |
 | `fixtures/smart_trades.json` | `bd5f60c65c35ff9f` | byte-for-byte from the bot |
-| `nansen_api.py` | `722e6529afbec36b` | byte-for-byte from the bot |
+| `nansen_api.py` | `a60f96749f46462a` | byte-for-byte from the bot |
 | `nansen_gate.py` | `27a5f5d2c7c44048` | byte-for-byte from the bot |
 | `nansen_limits.py` | `4ea08d0118f935e2` | byte-for-byte from the bot |
 | `nansen_log.py` | `36bf5601544d45bb` | byte-for-byte from the bot |
@@ -66,21 +66,23 @@ reading it.
 | `requirements.txt` | `56dbb14aff00e3cd` | extract-only, this file does not exist in the bot |
 | `scrub.py` | `fe3310aab093362c` | extract-only, this file does not exist in the bot |
 | `sentinel/__init__.py` | `809f281cc026bf98` | byte-for-byte from the bot |
-| `sentinel/cards.py` | `3abd1d6f6cd1aafc` | byte-for-byte from the bot |
+| `sentinel/cards.py` | `c310920029ddb498` | byte-for-byte from the bot |
+| `sentinel/clusters.py` | `b8d51761459c6dc0` | byte-for-byte from the bot |
 | `sentinel/config.py` | `3d7823fe83f2df1c` | byte-for-byte from the bot |
-| `sentinel/detector.py` | `26396fff0f7a7b10` | byte-for-byte from the bot |
-| `sentinel/engine.py` | `b616daa0d941f70b` | byte-for-byte from the bot |
-| `sentinel/enrichment.py` | `81e569463f1493c1` | byte-for-byte from the bot |
-| `sentinel/ignition.py` | `e4b6ee767f90e489` | byte-for-byte from the bot |
-| `sentinel/lab.py` | `c04cd896adf7c9e4` | byte-for-byte from the bot |
+| `sentinel/detector.py` | `9515f08e7fba85a1` | byte-for-byte from the bot |
+| `sentinel/engine.py` | `333ca025dbbf56b4` | byte-for-byte from the bot |
+| `sentinel/enrichment.py` | `98864e27110d81f8` | byte-for-byte from the bot |
+| `sentinel/ignition.py` | `140934be614c996d` | byte-for-byte from the bot |
+| `sentinel/lab.py` | `5fd9f9e4869c3793` | byte-for-byte from the bot |
 | `sentinel/main.py` | `78b4747b108b7d74` | byte-for-byte from the bot |
-| `sentinel/outbox.py` | `b76a24fd8dda6c92` | byte-for-byte from the bot |
-| `sentinel/store.py` | `024e57da4ee9f78f` | byte-for-byte from the bot |
-| `sentinel/ui.py` | `21ccf337e2a229f1` | byte-for-byte from the bot |
-| `sentinel/variational_feed.py` | `e12113f30993d252` | byte-for-byte from the bot |
-| `sentinel/venues.py` | `91bf69837bcfce0b` | byte-for-byte from the bot |
+| `sentinel/outbox.py` | `4f43ba719b77c1d3` | byte-for-byte from the bot |
+| `sentinel/predict.py` | `9d4808981b9dddb2` | byte-for-byte from the bot |
+| `sentinel/store.py` | `9663f573da44d751` | byte-for-byte from the bot |
+| `sentinel/ui.py` | `9f0a3c46af67fa24` | byte-for-byte from the bot |
+| `sentinel/variational_feed.py` | `bcc5bc71585fe0c5` | byte-for-byte from the bot |
+| `sentinel/venues.py` | `ae629063ac479017` | byte-for-byte from the bot |
 | `tests/test_public.py` | `221c07951d891077` | extract-only, this file does not exist in the bot |
-| `tests/test_sentinel.py` | `593e7604a63664a5` | byte-for-byte from the bot |
+| `tests/test_sentinel.py` | `fa026412cac82adc` | byte-for-byte from the bot |
 | `tools/nansen_catalog.py` | `bc3a4ba352f49927` | byte-for-byte from the bot |
 | `tools/nansen_daily.py` | `699fd28d7d76437d` | byte-for-byte from the bot |
 | `tools/nansen_endpoint_sweep.py` | `10511b78461c253c` | byte-for-byte from the bot |
@@ -91,6 +93,7 @@ reading it.
 | `tools/record_fixture.py` | `3e6fc4018b83fed1` | byte-for-byte from the bot |
 | `tools/render_social_preview.py` | `ba595dc312016848` | byte-for-byte from the bot |
 | `tools/scene_text_baseline.py` | `9f14ec2789a6ce6f` | byte-for-byte from the bot |
+| `tools/sentinel_funding_unit.py` | `2f097f4dcb06b073` | byte-for-byte from the bot |
 | `webapp/index.html` | `e88905830a44b93b` | byte-for-byte from the bot |
 
 ## The one declared sanitary substitution

@@ -328,6 +328,27 @@ async def build(ev, uid=None, bot_un=None):
         if conf.get('refused'):
             refusals.append('ончейн: %s' % conf['refused'])
 
+    # ── ПРЕДСКАЗАТЕЛЬНЫЙ РЫНОК (роудмап 3.7): ЧЕГО ЖДУТ, А НЕ ЧТО УЖЕ БЫЛО ────────────────
+    # Живёт под тем же флагом 'nansen', что и ончейн: расклад держателей стоит кредитов, и
+    # человек, выключивший платное, не должен получить его через другую дверь. САМ ПОИСК РЫНКА
+    # БЕСПЛАТЕН (публичный gamma-api), поэтому при исчерпанном капе приедет хотя бы рынок -
+    # см. `predict.lines`, там это разделено.
+    if 'nansen' in parts:
+        try:
+            from . import predict
+            pl, pr, pc = await predict.lines(tick, name, uid=uid)
+            credits += int(pc or 0)
+            if pl:
+                if lines:
+                    lines.append('')
+                lines += pl
+            if pr:
+                refusals.append('предсказательный рынок: %s' % pr)
+        except Exception as _pe:                  # noqa: BLE001
+            # СВОДКА НЕ ПАДАЕТ ИЗ-ЗА ОДНОГО БЛОКА: отказ становится названной причиной.
+            refusals.append('предсказательный рынок: %s: %s'
+                            % (type(_pe).__name__, str(_pe)[:80]))
+
     if 'news' in parts:
         xl, xr = await _x_lines(tick, name, uid=uid)
         if xl:
