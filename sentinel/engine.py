@@ -156,6 +156,13 @@ async def ingest_tick():
 async def _ingest():
     import asyncio
     now = int(time.time())
+    # ВЫКЛЮЧАТЕЛЬ ПРОВЕРЯЕМ ДО АРЕНДЫ: если опрос вынесен в отдельный юнит, тик в боте не
+    # должен даже пытаться взять аренду - иначе он отбирал бы её у настоящего опрашивающего на
+    # каждом втором круге, и оба писали бы в лог про чужую аренду.
+    if not config.in_bot():
+        ok, bad = await outbox.deliver_due()
+        return ('опрос у отдельного юнита; из очереди отправлено %d, отказов %d' % (ok, bad)
+                if (ok or bad) else 'опрос у отдельного юнита; очередь пуста')
     if not store.lease('variational'):
         owner, until = store.lease_owner('variational')
         return 'опрос не наш: аренда у %s ещё %dс' % (owner, max(0, until - now))

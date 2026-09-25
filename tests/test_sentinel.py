@@ -444,8 +444,11 @@ def t_card_leads_with_magnitude_and_admits_limits():
           txt.count('•') <= 1 and 'Причину движения дозорный не читает' in txt, txt)
     check('CARD: служебной строки про эндпоинт больше нет',
           '/metadata/stats' not in txt, 'человеку в момент решения это не нужно')
-    check('CARD: ссылка на площадку - ССЫЛКОЙ', '<a href="https://omni.variational.io/"' in txt,
-          txt[-200:])
+    # ССЫЛКА ТЕПЕРЬ ВЕДЁТ НА САМ ИНСТРУМЕНТ, А НЕ НА КОРЕНЬ: путь измерен браузером 25.09
+    # (`/perpetual/<TICKER>`), и проверка обновлена вместе с поведением - тест на корень
+    # краснел бы именно потому, что стало лучше.
+    check('CARD: ссылка ведёт на инструмент площадки',
+          '<a href="https://omni.variational.io/perpetual/BTC"' in txt, txt[-200:])
     check('CARD: нулевой фандинг в карточке не печатается',
           'funding_rate' not in cards.card(
               [e for e in detector.detect(one(mark='104.0', funding='0', quote_iso=_iso(now)),
@@ -1608,6 +1611,82 @@ def t_crowd_and_absorption_describe_not_predict():
           {'crowded', 'absorption'} <= set(config.DEFAULT_KINDS), config.DEFAULT_KINDS)
 
 
+def t_write_after_many_reads():
+    """ЗАПИСЬ ПОСЛЕ ДЕСЯТКА ЧТЕНИЙ ОБЯЗАНА ПРОЙТИ. Порядок взят с живого отказа владельца.
+
+    ЧТО ПОКАЗАЛИ ЗАМЕРЫ НА ЕГО СЕРВЕРЕ: `event_new` (запись) прошёл, следующий `delivery_plan`
+    (запись) упал `database is locked` - а между ними `outbox.plan` делает десяток SELECT.
+    Файл правильный, WAL включён, ожидание минута: так выглядит незавершённое ЧТЕНИЕ, а не
+    нехватка терпения. Прошлый круг закрывал курсоры и считал вопрос решённым - отказ вернулся,
+    потому что закрыть курсор и завершить транзакцию не одно и то же, а момент, когда sqlite3
+    отпускает неявную транзакцию, вдобавок зависит от версии Python (3.12+ у владельца против
+    3.9 в разработке). Поэтому тест воспроизводит ПОРЯДОК ОБРАЩЕНИЙ, а не версию.
+    """
+    uid = 991700
+    now = int(time.time())
+    store.sub_add(uid, 'LOCKTEST')
+    store.settings_set(uid, alerts_on=1, enrich_on=0)
+    ev = {'kind': 'move_up', 'ticker': 'LOCKTEST', 'ts': now, 'severity': 80,
+          'key': 'lock%d' % now,
+          'payload': {'venue': 'variational', 'mark': 1.0, 'move_pct': 5.0, 'penalties': []}}
+    check('LOCK: первая запись прошла', store.event_new(ev) is True)
+    for _fn in (lambda: store.subscribers('LOCKTEST'), lambda: store.settings(uid),
+                lambda: store.kinds_for(uid), lambda: store.venues_for(uid),
+                lambda: store.cooldown_left(uid, 'LOCKTEST', 'move_up:1'),
+                lambda: store.cap_for(uid), lambda: store.sent_today(uid),
+                lambda: store.event(ev['key']), lambda: store.events_by_kind(now - 86400),
+                lambda: store.spend_today()):
+        _fn()
+    check('LOCK: запись после десяти чтений прошла',
+          store.delivery_plan(ev['key'], uid) is True,
+          'ровно этот переход падал на сервере: %s' % store.diag())
+    check('LOCK: замеры называют состояние транзакции',
+          'in_transaction=' in store.diag(), store.diag())
+    check('LOCK: после чтения транзакция НЕ висит',
+          str(getattr(store.conn(), 'in_transaction', False)) in ('False', '?'), store.diag())
+    src = open(os.path.join(BASE, 'sentinel', 'store.py'), encoding='utf-8').read()
+    check('LOCK: обе двери чтения завершают транзакцию',
+          src.count('_end_read(c)') >= 2 and 'def _end_read' in src,
+          'закрыть курсор и закрыть транзакцию - не одно и то же')
+    store.sub_del(uid, 'LOCKTEST')
+
+
+def t_link_leads_to_the_instrument():
+    """ССЫЛКА ВЕДЁТ НА САМ ИНСТРУМЕНТ. Формат ИЗМЕРЕН браузером, а не угадан.
+
+    ТРИ КРУГА В СПЕКЕ СТОЯЛО «формат не измерен»: `/trade/<T>` и `/markets/<T>` отвечают 403, а
+    query-параметр даёт 200 так же, как корень. Вывод был верен по факту и ленив по методу: у
+    одностраничного приложения путь видно из САМОГО приложения. Запуск браузера 25.09 показал,
+    что корень с `?market=ENA` сам перебрасывает на `/perpetual/BTC`, заголовок страницы -
+    «BTC PERP | Variational Omni»; дальше пять тикеров разных классов (BTC, ENA, MSTR, XAU,
+    US500) дали 200 каждый. Урок: «403 на двух путях» не равно «прямой ссылки нет».
+    """
+    check('LINK: путь к инструменту Variational измерен',
+          venues.market_url('variational', 'ena')
+          == 'https://omni.variational.io/perpetual/ENA',
+          venues.market_url('variational', 'ena'))
+    check('LINK: у Hyperliquid свой путь',
+          venues.market_url('hyperliquid', 'BTC')
+          == 'https://app.hyperliquid.xyz/trade/BTC',
+          venues.market_url('hyperliquid', 'BTC'))
+    check('LINK: для площадки без измеренного пути - None, а не корень',
+          venues.market_url('lighter', 'BTC') is None,
+          'подсунуть непроверенный путь хуже, чем дать ссылку на площадку целиком')
+    check('LINK: пустой тикер ссылки не даёт',
+          venues.market_url('variational', '') is None)
+    ev = {'kind': 'move_up', 'ticker': 'ENA', 'ts': int(time.time()), 'severity': 85,
+          'payload': {'venue': 'variational', 'mark': 0.23, 'move_pct': 3.1,
+                      'volume_24h': 7.3e6, 'penalties': []}}
+    txt = cards.card(ev)
+    check('LINK: карточка ведёт на инструмент, а не на главную',
+          '/perpetual/ENA' in txt, txt[-220:])
+    check('LINK: и подпись ссылки называет инструмент',
+          'Variational · ENA' in txt, txt[-220:])
+    hl = dict(ev, payload=dict(ev['payload'], venue='hyperliquid'))
+    check('LINK: у события с другой площадки - её путь',
+          'app.hyperliquid.xyz/trade/ENA' in cards.card(hl), cards.card(hl)[-200:])
+
+
 def main():
     for fn in (t_parse_is_real_and_names_what_is_missing,
                t_detector_needs_both_percent_and_sigma,
@@ -1649,7 +1728,10 @@ def main():
                t_every_screen_leads_further,
                t_tweets_are_readable_and_not_spam,
                t_venue_gaps_do_not_pay_for_missing_fields,
-               t_crowd_and_absorption_describe_not_predict):
+               t_crowd_and_absorption_describe_not_predict,
+               # ── круг 7 (25.09): запись после чтений, прямая ссылка на инструмент ──
+               t_write_after_many_reads,
+               t_link_leads_to_the_instrument):
         print('\n== %s' % fn.__name__)
         try:
             fn()

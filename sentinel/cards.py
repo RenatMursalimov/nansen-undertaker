@@ -157,13 +157,19 @@ def _links(ev, bot_un=None):
     # ССЫЛКА ВЕДЁТ НА ТУ ПЛОЩАДКУ, ГДЕ СОБЫТИЕ. Одна ссылка «Площадка» на все источники
     # отправляла бы человека на Variational по алерту с Hyperliquid - то есть в никуда.
     _v = p.get('venue') or 'variational'
+    _tick = ev.get('ticker') or p.get('symbol')
     _u = VAR_URL
+    _label = venue_title(_v)
     try:
-        from .venues import url as _vurl
-        _u = _vurl(_v) or VAR_URL
+        from .venues import market_url as _murl, url as _vurl
+        # ССЫЛКА ВЕДЁТ НА САМ ИНСТРУМЕНТ, А НЕ НА КОРЕНЬ. Формат измерен браузером 25.09
+        # (`/perpetual/<TICKER>`), и это ровно то, чего человеку не хватало: по алерту он
+        # попадает на график нужного рынка, а не на главную, где надо искать руками.
+        _u = _murl(_v, _tick) or _vurl(_v) or VAR_URL
+        _label = ('%s · %s' % (venue_title(_v), _tick)) if _murl(_v, _tick) else venue_title(_v)
     except Exception:
         pass
-    out = ['<a href="%s">%s</a>' % (_u, esc(venue_title(_v)))]
+    out = ['<a href="%s">%s</a>' % (_u, esc(_label))]
     addr = p.get('address')
     if addr and bot_un:
         try:
