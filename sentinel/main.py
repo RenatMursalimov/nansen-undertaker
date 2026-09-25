@@ -54,20 +54,34 @@ def _bye(signum, frame):
 
 
 async def loop():
-    last = {'ignition': 0, 'enrich': 0, 'outcome': 0, 'prune': 0, 'health': 0}
+    last = {'ignition': 0, 'enrich': 0, 'outcome': 0, 'prune': 0, 'health': 0, 'digest': 0}
     #: ТЕМПЫ РАЗНЫЕ, И КАЖДЫЙ ОБОСНОВАН. Площадка — 15с (её лимит 10/10с, наш запрос один).
     #: Зажигание — 3 минуты: оно стоит кредитов, и чаще смысла нет (лента Nansen трейлинговая
     #: и обновляется не мгновенно). Сводки — минута. Исходы и уборка — раз в час.
     every = {'ignition': int(os.getenv('SENTINEL_IGN_SEC') or 180),
-             'enrich': 60, 'outcome': 900, 'prune': 3600, 'health': 600}
-    print('[sentinel] старт: опрос каждые %dс, зажигание каждые %dс, бюджет %d кр/сутки'
-          % (config.poll_sec(), every['ignition'], config.nansen_day_credits()))
+             'enrich': 60, 'outcome': 900, 'prune': 3600, 'health': 600,
+             'digest': config.digest_sec()}
+    # СТРОКА СТАРТА НЕ ВРЁТ ПРО БЮДЖЕТ. Ноль капа значит «потолка нет» (решение владельца на
+    # время хакатона), и печатать «бюджет 0 кр/сутки» означало бы сообщить человеку прямо
+    # противоположное - что дозорный в Nansen не пойдёт вовсе.
+    _cap = config.nansen_day_credits()
+    print('[sentinel] старт: опрос каждые %dс, зажигание каждые %dс, бюджет Nansen %s, '
+          'предохранитель %d сообщений / %d мин, порог звонка %d/100'
+          % (config.poll_sec(), every['ignition'],
+             ('без потолка' if _cap <= 0 else '%d кр/сутки' % _cap),
+             config.burst_max(), config.burst_window_sec() // 60, config.min_severity()))
+    if not config.deliver_on():
+        # АВАРИЙНЫЙ РУБИЛЬНИК ОБЪЯВЛЯЕТСЯ ГРОМКО. Молчащая отправка при живом наблюдении
+        # выглядит как поломка, и первым, кто будет это отлаживать, станет человек, который сам
+        # её и выключил месяц назад.
+        print('[sentinel] ВНИМАНИЕ: SENTINEL_DELIVER=0 - наблюдаю и пишу очередь, НЕ ОТПРАВЛЯЮ')
     while not _STOP:
         t0 = time.time()
         print('[sentinel] %s' % await engine.ingest_tick())
         print('[sentinel] %s' % await engine.deliver_tick())
         now = time.time()
         for name, fn in (('ignition', engine.ignition_tick), ('enrich', engine.enrich_tick),
+                         ('digest', engine.digest_tick),
                          ('outcome', engine.outcome_tick), ('prune', engine.prune_tick)):
             if now - last[name] >= every[name]:
                 last[name] = now
@@ -85,7 +99,7 @@ async def loop():
 async def once():
     for name, fn in (('ingest', engine.ingest_tick), ('ignition', engine.ignition_tick),
                      ('deliver', engine.deliver_tick), ('enrich', engine.enrich_tick),
-                     ('outcome', engine.outcome_tick)):
+                     ('digest', engine.digest_tick), ('outcome', engine.outcome_tick)):
         print('[sentinel] %s: %s' % (name, await fn()))
     print('[sentinel] %s' % outbox.status_line())
 

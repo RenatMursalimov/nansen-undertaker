@@ -537,6 +537,92 @@ human removes it by argument. The request schema for that endpoint is NOT captur
 absent from our route inventory - so the first live call goes through repair by the
 provider's own words.
 
+## 15. Round eight: the off switch that did not switch off, and a flood fuse
+
+Two live incidents in a row, both found by the owner on the running bot. They are of different
+classes, and the diagnosis matters more than the patch.
+
+### Incident 1 (urgent): "I turned alerts off and it still sends"
+
+The first hypothesis — "presets lift the limits" — was **refuted**: presets only touch personal
+settings and had nothing to do with it. The real cause was structural, not a typo. All seven
+checks (alerts enabled, event kind, venue, personal threshold, quiet hours, cooldown, daily cap)
+lived **only in `outbox.plan`** — that is, at the moment a delivery was queued. Meanwhile
+`deliver_due` read the queue from the database and looked at settings **not at all**. The switch
+governed the right to **enter the queue**, not the right to **reach the phone**: everything
+already queued kept going out, and nothing in the interface could stop it.
+
+This is a general class of bug: the decision was made in one place, the action happened in
+another, and a database — that is, time — sat in between. Any setting read before the write to
+the queue is already history by the time of sending.
+
+Three fixes:
+* **one door, `outbox.mute_reason`**, called by BOTH sides — planning and sending. Two copies of
+  the same check would drift apart on the first edit;
+* **cancel, not skip** (`store.delivery_cancel`): a skipped row would return on the next tick,
+  every 30 seconds forever. The reason stays in the database;
+* **turning alerts off flushes the queue immediately** (`store.delivery_drop_user`) and **states
+  the number**: "cancelled in queue: 12". Otherwise silence after a tap is indistinguishable from
+  a failure. The toggle and the typed command do the same thing.
+
+### Incident 2 (architectural): 70 messages in minutes
+
+Owner's words: "more than 70 messages in minutes", "you cannot even tap anything", and crucially
+**"even if the user, or I, picked the wrong preset, it must not fire everything at once"**.
+
+Why the existing cooldown and daily cap missed it: **both counted per instrument** (cooldown per
+ticker+kind, cap per day), and we watch 787 instruments. The bot had 787 independent, individually
+lawful permissions to speak, and a volatile minute stacked them into a flood without breaking a
+single rule. A rule you can satisfy 787 times in a row constrains nothing.
+
+A second cause of the same flood, found by reading the code: **the queue was read by two processes
+without a claim**. The bot job (`sentinel_deliver_only`, 30s) and the standalone unit
+`sentinel.main` (its own `deliver_tick`, 30s) picked the same rows and both called Telegram — up
+to 50 messages per half minute and **every alert twice**. The `store.lease` did not separate them:
+it holds the venue poll, and nothing held delivery.
+
+What was done:
+* **a fuse counted PER PERSON**: at most `SENTINEL_BURST_MAX=3` messages per
+  `SENTINEL_BURST_WINDOW_SEC=600`. The number of instruments no longer matters;
+* **it is a boundary, not a setting** — the "firehose" preset does not lift it; only `.env` does,
+  i.e. a human on the server. Rationale: mispicking a preset is easy, and escaping a flood through
+  an interface that has itself drowned in messages is not possible;
+* **a strength floor** `SENTINEL_MIN_SEVERITY=75`: an event we ourselves annotated with three
+  reasons to doubt does not ring. 75 is measured, not round: Hyperliquid cards sit at 75/100 (the
+  venue has no size quotes), Variational with a live quote stays above 85;
+* **an atomic claim** `store.delivery_claim` plus orphan rescue `delivery_unstick`, aged by
+  `claimed_at` rather than queue age — a row created 20 minutes ago and claimed a second ago after
+  retries would otherwise be called an orphan while in flight, and the cure would resurrect the
+  disease;
+* **an emergency switch** `SENTINEL_DELIVER=0`: watching and queueing continue, only sending is
+  silent.
+
+### Deferred is not discarded
+
+A fuse that simply stays quiet about the excess would be a second lie: the person would not get
+the alert **and would not learn that they missed it**. So everything past the boundary lands in
+`sentinel_digest` and leaves as **one message** every ten minutes: ordered **by strength** (a
+time-ordered feed reads as random lines), every row carrying a **magnitude** rather than just a
+ticker, stating **why it is a list and not a call**, naming the **remainder as a number** ("and 34
+weaker"), and offering **buttons for the six strongest tickers**. Quiet hours and disabled alerts
+silence the digest too — otherwise the switch would leave a loophole.
+
+What the person **disabled by hand** (kind, venue, alerts, a higher threshold) does not enter the
+digest at all: a digest must not become a loophole for what was switched off.
+
+### Evidence
+
+Eight new checks, and they **fail on the old code** — that is their point. Restoring the previous
+behaviour in exactly one place (sending does not re-check settings) produces **11 FAIL**, including
+the owner's complaint verbatim, with the text of the alert that would have gone out. Under the old
+behaviour the fuse lets 10 of 10 messages through with the "firehose" preset.
+
+### Along the way: the lab field name came from the venue
+
+`smart-money/historical-holdings` answered verbatim: `Required field 'body -> date_range' is
+missing` (http 422, `missing_field`). The venue named its own schema — measurement instead of
+guesswork, recorded next to the field.
+
 ## 12. Limits, debts and refuted hypotheses
 
 **The boundary with the trading contour is hard.** No file in `sentinel/` imports

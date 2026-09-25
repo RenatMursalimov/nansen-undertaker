@@ -90,55 +90,112 @@ def quiet_now(settings, now=None):
     return (f <= h < t) if f < t else (h >= f or h < t)
 
 
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# ОДНА ДВЕРЬ РЕШЕНИЯ «МОЖНО ЛИ СЕЙЧАС ГОВОРИТЬ ЭТОМУ ЧЕЛОВЕКУ»
+#
+# ═══ ПОЧЕМУ ЭТА ФУНКЦИЯ ПОЯВИЛАСЬ: ВЫКЛЮЧАТЕЛЬ, КОТОРЫЙ НЕ ВЫКЛЮЧАЛ ═══
+# ЖИВОЙ ИНЦИДЕНТ 25.09, СЛОВА ВЛАДЕЛЬЦА: «я сейчас отключил алерты в Дозорном, всё равно всё
+# шлёт мне сигналы, что ты изменил такое, что сейчас шлётся даже несмотря на отключение и тихий
+# пресет». Ответ нашёлся по коду за две минуты, и он не про пресеты: ВСЕ СЕМЬ ПРОВЕРОК (алерты
+# включены, вид события, площадка, личный порог, тихие часы, пауза, суточный потолок) стояли
+# ТОЛЬКО в `plan` - то есть в момент ПОСТАНОВКИ В ОЧЕРЕДЬ. А `deliver_due` читал очередь из базы
+# и настроек не смотрел ВООБЩЕ. Значит выключатель управлял правом ВСТАТЬ в очередь, а не правом
+# ПРИЙТИ на телефон: всё, что успело встать раньше, выезжало несмотря на «выключено».
+#
+# ЭТО НЕ ОПЕЧАТКА, А КЛАСС ОШИБКИ: решение принималось в одном месте, а действие совершалось в
+# другом, и между ними лежала БАЗА, то есть время. Любая настройка, прочитанная до записи в
+# очередь, к моменту отправки уже история. Лечится ровно одним способом - проверкой на выходе,
+# у самой двери Telegram, и ТОЙ ЖЕ функцией, что решала при планировании. Две копии проверки
+# разъехались бы на первой же правке.
+#
+# ТРИ ИСХОДА, И РАЗНИЦА МЕЖДУ НИМИ ПРИНЦИПИАЛЬНАЯ:
+#   * None      - можно звонить;
+#   * 'drop'    - человек ЭТОГО НЕ ХОЧЕТ (выключил алерты, вид, площадку, задал порог выше).
+#                 В дайджест НЕ идёт: дайджест не имеет права стать лазейкой для того, что
+#                 человек отключил руками;
+#   * 'digest'  - хочет, но не сейчас (предохранитель темпа, слабое событие, пауза, потолок,
+#                 тихие часы). Едет сводкой одним сообщением - и это не то же, что выбросить.
+# ══════════════════════════════════════════════════════════════════════════════════════════
+def mute_reason(uid, ev, now=None):
+    """Можно ли отправить это событие этому человеку ПРЯМО СЕЙЧАС. -> (verdict, причина).
+
+    verdict: None | 'drop' | 'digest'. Зовут ДВА места - `plan` (перед очередью) и
+    `deliver_due` (перед самой отправкой). Именно поэтому она одна: см. врезку выше.
+    """
+    s = store.settings(uid)
+    kind = ev.get('kind') or '?'
+    p = ev.get('payload') or {}
+    # ── 'drop': ЧЕЛОВЕК СКАЗАЛ «НЕТ». Это уважается буквально и без дайджеста. ─────────────
+    if not s.get('alerts_on'):
+        return 'drop', 'алерты выключены'
+    # ВИД СОБЫТИЯ - ЛИЧНЫЙ ВЫБОР. Владелец просил именно так: «настраивать, что приходят алерты
+    # движения плюс нансен движения существенные, или просто Нансен сигналы, или просто алерты
+    # по объёму». Отсев стоит ЗДЕСЬ, а не в детекторе: событие одно на всех и пишется в базу
+    # целиком (оно понадобится отчёту попаданий), а получатели у него разные.
+    if kind not in store.kinds_for(uid):
+        return 'drop', 'вид %s выключен в настройках' % kind
+    # ПЛОЩАДКА - ТОЖЕ ЛИЧНЫЙ ВЫБОР. Тот, кто торгует только на одной, не должен получать алерты
+    # второй: цена и спред там другие, и зайти по такому алерту он не может.
+    _venue = p.get('venue') or 'variational'
+    if _venue not in store.venues_for(uid):
+        return 'drop', 'площадка %s выключена' % _venue
+    mp, mv = s.get('min_pct'), p.get('move_pct')
+    if mp is not None and mv is not None and abs(float(mv)) < float(mp):
+        return 'drop', '%.2f%% ниже личного порога %.2f%%' % (abs(mv), mp)
+    # ── 'digest': ХОЧЕТ, НО НЕ СЕЙЧАС ─────────────────────────────────────────────────────
+    if quiet_now(s, now):
+        return 'digest', 'тихие часы'
+    # СЛАБОЕ СОБЫТИЕ НЕ ЗВОНИТ. Уверенность у нас считается со штрафами, и 40/100 - это событие,
+    # к которому мы сами написали три причины сомневаться. Будить им нельзя, скрыть - потерять.
+    sev = int(ev.get('severity') or 0)
+    if sev < config.min_severity():
+        return 'digest', 'уверенность %d/100 ниже порога звонка %d' % (sev, config.min_severity())
+    # ═══ ПРЕДОХРАНИТЕЛЬ ТЕМПА. ГРАНИЦА, А НЕ НАСТРОЙКА - ПРЕСЕТ ЕГО НЕ СНИМАЕТ ═══
+    # Считается НА ЧЕЛОВЕКА, и это главное отличие от паузы и потолка, которые уже были: те
+    # считались по инструменту, а инструментов 787 - то есть у бота было 787 законных
+    # разрешений заговорить. См. врезку в `config.burst_max`.
+    _bw, _bm = config.burst_window_sec(), config.burst_max()
+    _got = store.sent_in_window(uid, _bw, now)
+    if _got >= _bm:
+        return 'digest', ('предохранитель: %d сообщений за %d мин (граница %d)'
+                          % (_got, _bw // 60, _bm))
+    left = store.cooldown_left(uid, ev.get('ticker') or '', _cd_kind(ev), now)
+    if left:
+        return 'digest', 'пауза по инструменту ещё %dмин' % (left // 60)
+    cap, got = store.cap_for(uid), store.sent_today(uid, now)
+    if got >= cap:
+        # УПОР В ПОТОЛОК ПИШЕМ ЧИСЛОМ. «Кап сработал» без цифр не отвечает на вопрос «поднять
+        # или это норма».
+        return 'digest', 'суточный потолок %d/%d' % (got, cap)
+    return None, ''
+
+
 def plan(ev):
     """Кому этот алерт нужен -> поставить доставки в очередь. -> (сколько поставили, [причины]).
 
     ПРИЧИНЫ ОТКАЗА ВОЗВРАЩАЮТСЯ СПИСКОМ, А НЕ ГЛОТАЮТСЯ. «Событие было, а алертов ноль» —
     это ровно тот случай, в котором через неделю никто не разберётся: тишина одинаково
     выглядит и при пустой подписке, и при упоре в потолок, и при паузе.
+
+    РЕШЕНИЕ ЗДЕСЬ - ПРЕДВАРИТЕЛЬНОЕ, И ЭТО НАПИСАНО ВСЛУХ: пока строка лежит в очереди, человек
+    успевает выключить алерты, уйти в тихие часы или упереться в предохранитель. Окончательное
+    слово - за той же `mute_reason` в момент отправки.
     """
     reasons = []
     uids = store.subscribers(ev.get('ticker') or '')
     if not uids:
         return 0, ['на %s никто не подписан' % ev.get('ticker')]
     n = 0
-    kind = ev.get('kind') or '?'
     for uid in uids:
-        s = store.settings(uid)
-        if not s.get('alerts_on'):
-            reasons.append('uid=%s: алерты выключены' % uid)
+        verdict, why = mute_reason(uid, ev)
+        if verdict == 'drop':
+            reasons.append('uid=%s: %s' % (uid, why))
             continue
-        # ВИД СОБЫТИЯ - ЛИЧНЫЙ ВЫБОР. Владелец просил именно так: «настраивать, что приходят
-        # алерты движения плюс нансен движения существенные, или просто Нансен сигналы, или
-        # просто алерты по объёму». Отсев стоит ЗДЕСЬ, а не в детекторе: событие одно на всех и
-        # пишется в базу целиком (оно понадобится отчёту попаданий), а получатели у него разные.
-        if kind not in store.kinds_for(uid):
-            reasons.append('uid=%s: вид %s выключен в настройках' % (uid, kind))
-            continue
-        # ПЛОЩАДКА - ТОЖЕ ЛИЧНЫЙ ВЫБОР. Тот, кто торгует только на одной, не должен получать
-        # алерты второй: цена и спред там другие, и зайти по такому алерту он не может.
-        _venue = (ev.get('payload') or {}).get('venue') or 'variational'
-        if _venue not in store.venues_for(uid):
-            reasons.append('uid=%s: площадка %s выключена' % (uid, _venue))
-            continue
-        mp = s.get('min_pct')
-        mv = (ev.get('payload') or {}).get('move_pct')
-        if mp is not None and mv is not None and abs(float(mv)) < float(mp):
-            reasons.append('uid=%s: %.2f%% ниже личного порога %.2f%%' % (uid, abs(mv), mp))
-            continue
-        if quiet_now(s):
-            reasons.append('uid=%s: тихие часы' % uid)
-            continue
-        left = store.cooldown_left(uid, ev.get('ticker') or '', _cd_kind(ev))
-        if left:
-            reasons.append('uid=%s: пауза ещё %dмин' % (uid, left // 60))
-            continue
-        cap = store.cap_for(uid)
-        got = store.sent_today(uid)
-        if got >= cap:
-            # УПОР В ПОТОЛОК ПИШЕМ ЧИСЛОМ. «Кап сработал» без цифр не отвечает на вопрос
-            # «поднять или это норма».
-            reasons.append('uid=%s: суточный потолок %d/%d' % (uid, got, cap))
+        if verdict == 'digest':
+            # НЕ ВЫБРАСЫВАЕМ. Событие ложится в сводку и уезжает одним сообщением раз в десять
+            # минут - иначе человек не получил бы алерт И не узнал бы, что его не получил.
+            store.digest_add(uid, ev['key'], ev.get('severity'), why)
+            reasons.append('uid=%s: в дайджест (%s)' % (uid, why))
             continue
         if store.delivery_plan(ev['key'], uid):
             n += 1
@@ -152,8 +209,13 @@ def _cd_kind(ev):
     return '%s:%d' % (ev.get('kind') or '?', int(p.get('step') or 1))
 
 
-async def _send(uid, text, label=''):
-    """-> объект сообщения | False. Никогда не бросает (это дверь рассылки)."""
+async def _send(uid, text, label='', kb=None):
+    """-> объект сообщения | False. Никогда не бросает (это дверь рассылки).
+
+    `kb` НЕОБЯЗАТЕЛЕН И ПО УМОЛЧАНИЮ ПУСТ: клавиатура нужна только сводке (сквозной переход в
+    карточку инструмента), а у обычного алерта переходы живут ссылками в тексте. Добавлять
+    кнопки всем «на всякий случай» значило бы менять вид семи путей отправки ради одного.
+    """
     b = _bot()
     if b is None:
         print('[sentinel] отправка невозможна: токен не задан (configure не звали)')
@@ -164,7 +226,7 @@ async def _send(uid, text, label=''):
         print('[sentinel] tg_send не импортирован (%s) - шлю напрямую' % str(e)[:80])
         try:
             return await b.send_message(chat_id=uid, text=text, parse_mode='HTML',
-                                        disable_web_page_preview=True)
+                                        disable_web_page_preview=True, reply_markup=kb)
         except Exception as e2:
             print('[sentinel] tg err uid=%s: %s' % (uid, str(e2)[:150]))
             return False
@@ -180,7 +242,7 @@ async def _send(uid, text, label=''):
     # три алерта подряд превращаются в простыню.
     res = await tg_send.safe_send(
         lambda: b.send_message(chat_id=uid, text=text, parse_mode='HTML',
-                               disable_web_page_preview=True),
+                               disable_web_page_preview=True, reply_markup=kb),
         chat_key=uid, label=label or 'sentinel', on_fail=_fail)
     if not res and err.get('e'):
         return ('err', err['e'])
@@ -193,13 +255,40 @@ async def deliver_due(limit=25):
     ОЧЕРЕДЬ ЧИТАЕМ ИЗ БАЗЫ, А НЕ ИЗ ПАМЯТИ ТИКА: доставка, не удавшаяся из-за сети, обязана
     пережить рестарт. Алерт, исчезнувший вместе с процессом, — это алерт, о котором никто
     никогда не узнает.
+
+    ═══ И КАЖДАЯ СТРОКА ПЕРЕПРОВЕРЯЕТСЯ ПЕРЕД ОТПРАВКОЙ ═══
+    Раньше эта функция настроек НЕ ЧИТАЛА, и именно поэтому выключенные алерты продолжали
+    приходить (живой инцидент 25.09 - см. врезку у `mute_reason`). Очередь это отложенное
+    решение, а настройки человека живут своей жизнью: между постановкой и отправкой он успевает
+    нажать «выключить». Право прийти на телефон проверяется У ДВЕРИ.
     """
     ok = bad = 0
+    # АВАРИЙНЫЙ РУБИЛЬНИК ПРОВЕРЯЕТСЯ ПЕРВЫМ И ДО ЧТЕНИЯ ОЧЕРЕДИ: когда бот заливает человека,
+    # ему нужна остановка, не требующая разбирательства в том, какой из фильтров не сработал.
+    if not config.deliver_on():
+        return 0, 0
     for event_key, uid, attempts in store.delivery_due(limit=limit):
         ev = store.event(event_key)
         if ev is None:
             store.delivery_fail(event_key, uid, 'событие пропало из базы')
             bad += 1
+            continue
+        # ПЕРЕПРОВЕРКА ПРАВА ГОВОРИТЬ - ТОЙ ЖЕ ДВЕРЬЮ, ЧТО РЕШАЛА ПРИ ПЛАНИРОВАНИИ.
+        verdict, why = mute_reason(uid, ev)
+        if verdict is not None:
+            # ОТМЕНЯЕМ, А НЕ ПРОПУСКАЕМ: пропущенная строка вернулась бы на следующем тике и
+            # так каждые 30 секунд вечно. Причина остаётся в базе - «почему мне это не пришло»
+            # обязано иметь ответ.
+            store.delivery_cancel(event_key, uid, why)
+            if verdict == 'digest':
+                store.digest_add(uid, event_key, ev.get('severity'), why)
+            print('[sentinel] не шлю uid=%s %s/%s: %s'
+                  % (uid, ev.get('kind'), ev.get('ticker'), why))
+            continue
+        # АТОМАРНЫЙ ЗАХВАТ. Очередь читают ДВА процесса (джоба бота и отдельный юнит), и без
+        # захвата оба отправляли одни и те же строки - каждый алерт дважды, до 50 сообщений за
+        # полминуты. Замер и разбор - в докстринге `store.delivery_claim`.
+        if not store.delivery_claim(event_key, uid):
             continue
         text = cards.card(ev, bot_un=await bot_un())
         res = await _send(uid, text, label='sentinel:%s' % ev.get('kind'))
@@ -235,10 +324,19 @@ async def deliver_enrichment(event_key, brief, limit=25):
     ev = store.event(event_key)
     if ev is None:
         return 0
+    if not config.deliver_on():
+        return 0
     text = cards.enrich_card(ev, brief)
     n = 0
     for uid in store.delivered_users(event_key)[:limit]:
-        if not store.settings(uid).get('enrich_on'):
+        _s = store.settings(uid)
+        if not _s.get('enrich_on'):
+            continue
+        # ВЫКЛЮЧЕННЫЕ АЛЕРТЫ ГЛУШАТ И СВОДКУ. Иначе выключатель оставлял бы половину потока:
+        # человек выключил алерты, первое сообщение он уже получил до выключения - и сводка к
+        # нему приезжала бы после, как будто ничего не произошло. «Выключено» значит тишина,
+        # а не «тишина только в одном из двух каналов».
+        if not _s.get('alerts_on'):
             continue
         # ЧЕЛОВЕК, ВЫКЛЮЧИВШИЙ И ОНЧЕЙН, И НОВОСТИ, СВОДКУ НЕ ЖДЁТ. Оставить ему пустое второе
         # сообщение значило бы прислать шум там, где он попросил тишины.
@@ -250,6 +348,61 @@ async def deliver_enrichment(event_key, brief, limit=25):
                            obj='%s/%s' % (ev.get('kind'), ev.get('ticker')))
             n += 1
     return n
+
+
+async def deliver_digest(limit_users=50, now=None):
+    """Отправить накопленные сводки. -> (сколько человек получили, сколько строк ушло).
+
+    ОДНО СООБЩЕНИЕ НА ЧЕЛОВЕКА ЗА КРУГ, И ЭТО ГЛАВНОЕ СВОЙСТВО: сводка, которая уезжает
+    частями, - это тот же поток под другим именем.
+
+    ТИХИЕ ЧАСЫ УВАЖАЕТ. Сводка - тоже сообщение, и звякнуть ею в четыре утра значило бы обойти
+    настройку человека через служебную дверь. Строки не пропадают: они ждут конца тишины и
+    уезжают одним письмом, что для сводки как раз естественно.
+
+    `now` АРГУМЕНТОМ - ПРАВИЛО ЭТОГО ПАКЕТА, А НЕ УСТУПКА ТЕСТУ: проверка выдержки, которая
+    спала бы десять минут, не запускается, а значит ничего не защищает.
+    """
+    if not config.deliver_on():
+        return 0, 0
+    people = rows = 0
+    for uid in store.digest_users(config.digest_sec(), now=now)[:limit_users]:
+        s = store.settings(uid)
+        # ВЫКЛЮЧЕННЫЕ АЛЕРТЫ ГЛУШАТ И СВОДКУ: иначе выключатель оставил бы лазейку, и человек,
+        # нажавший «выключить», получал бы вместо потока сводку того же потока.
+        if not s.get('alerts_on') or quiet_now(s, now):
+            continue
+        pend = store.digest_pending(uid)
+        if not pend:
+            continue
+        cut = config.digest_max_rows()
+        items, keys = [], []
+        for key, sev, why, _ts in pend[:cut]:
+            ev = store.event(key)
+            keys.append(key)
+            if ev is not None:
+                items.append({'ev': ev, 'why': why})
+        # ХВОСТ ТОЖЕ ОТМЕЧАЕМ ОТПРАВЛЕННЫМ, ПОТОМУ ЧТО О НЁМ СКАЗАНО ЧИСЛОМ («и ещё 34 слабее»).
+        # Оставить его в очереди значило бы прислать те же события следующей сводкой - и человек
+        # читал бы один и тот же хвост до конца суток.
+        tail = [r[0] for r in pend[cut:]]
+        if not items:
+            store.digest_mark(uid, keys + tail, now=now)
+            continue
+        text = cards.digest_card(items, extra=len(tail),
+                                 window_min=max(1, config.digest_sec() // 60))
+        res = await _send(uid, text, label='sentinel:digest', kb=cards.digest_kb(items))
+        if not res or (isinstance(res, tuple) and res and res[0] == 'err'):
+            # НЕ ОТМЕЧАЕМ: сводка, потерянная из-за сети, обязана уехать следующим кругом.
+            print('[sentinel] сводка не ушла uid=%s (%s)'
+                  % (uid, str(res[1])[:90] if isinstance(res, tuple) else 'отказ без причины'))
+            continue
+        store.digest_mark(uid, keys + tail, now=now)
+        alert_log.sent('sentinel_digest', uid, sub=uid,
+                       obj='сводка %d событий' % (len(items) + len(tail)))
+        people += 1
+        rows += len(items) + len(tail)
+    return people, rows
 
 
 def status_line(lang='ru'):

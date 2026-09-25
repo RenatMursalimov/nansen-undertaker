@@ -94,8 +94,14 @@ def holdings(chain, token_address, days=30, dry_run=True):
         import nansen_log as _tele
         with _tele.scene('sentinel_watch', None, surface='sentinel'):
             rows = _n._post_fix('smart-money/historical-holdings',
+                                # ИМЯ ПОЛЯ СНЯТО ЖИВЫМ ВЫЗОВОМ, А НЕ УГАДАНО. Первая редакция
+                                # послала `date` и получила от площадки дословно:
+                                # «Required field 'body -> date_range' is missing»
+                                # (http 422, код missing_field, request_id 14c68271...).
+                                # Ручки нет в нашей описи 59 маршрутов, поэтому схему назвала
+                                # САМА площадка - это и есть измерение вместо догадки.
                                 {'chain': _n._nc(chain), 'token_address': token_address,
-                                 'date': _n._date_range(days),
+                                 'date_range': _n._date_range(days),
                                  'pagination': {'page': 1, 'per_page': 100}},
                                 ckey=None)
         store.spend_add(credits=credits, day=_lab_day())

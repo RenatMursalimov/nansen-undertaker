@@ -352,6 +352,114 @@ def card(ev, lang='ru', bot_un=None):
     return '\n'.join(lines)
 
 
+def digest_line(ev):
+    """Одна строка сводки: тикер, величина, площадка. -> str.
+
+    ОДНА СТРОКА НА СОБЫТИЕ, И В НЕЙ ОБЯЗАНА БЫТЬ ВЕЛИЧИНА. Сводка из тикеров («ENA, MSTR, XAU»)
+    не даёт человеку решить ничего - ему придётся открыть все три. Величина в строке делает
+    сводку читаемой за десять секунд, а это единственная причина, по которой она существует.
+    """
+    p = ev.get('payload') or {}
+    kind = ev.get('kind') or '?'
+    icon = _KIND_TITLE.get(kind, '👁')
+    tick = esc(ev.get('ticker') or p.get('symbol') or '?')
+    if kind in ('move_up', 'move_down'):
+        val = '%s / %s' % (_pct(p.get('move_pct')), p.get('window') or '15м')
+    elif kind == 'oi_surge':
+        val = 'интерес %s (%s)' % (_pct(p.get('oi_change_pct')), _usd(p.get('oi_change_usd')))
+    elif kind == 'vol_surge':
+        val = 'оборот %s' % _pct(p.get('vol_change_pct'))
+    elif kind == 'venue_gap':
+        val = 'расхождение %.0f б.п.' % (p.get('gap_bps') or 0)
+    elif kind == 'crowded':
+        val = '%.0f%% в %s' % (p.get('crowd_pct') or 0, p.get('crowd_side') or '?')
+    elif kind == 'absorption':
+        val = 'интерес %s, цена стоит' % _pct(p.get('oi_change_pct'))
+    elif kind == 'ignition':
+        val = '%d адреса на %s' % (int(p.get('wallets') or 0), _usd(p.get('usd')))
+    elif kind == 'spread_shock':
+        val = 'спред %.0f б.п.' % (p.get('spread_bps') or 0)
+    else:
+        val = _KIND_WORD.get(kind, kind)
+    return ('%s <b>%s</b>  %s <i>· %s · %d/100</i>'
+            % (icon, tick, val, esc(venue_title(p.get('venue'))),
+               int(ev.get('severity') or 0)))
+
+
+def digest_card(items, extra=0, window_min=10, lang='ru'):
+    """СВОДКА ОТЛОЖЕННОГО — одним сообщением вместо потока. -> HTML-строка.
+
+    ═══ ЗАЧЕМ СВОДКА СУЩЕСТВУЕТ ═══
+    ЗАМЕР ВЛАДЕЛЬЦА 25.09: «за минут больше 70 сообщений», «даже нажать ничего нельзя». Ответом
+    мог быть предохранитель, который просто МОЛЧИТ про лишнее, - и это была бы вторая ложь:
+    человек не получил бы алерт и не узнал бы, что его не получил. Сводка закрывает ровно эту
+    дыру: поток превращается в ОДНО сообщение, а не в тишину.
+
+    ПОРЯДОК ПО СИЛЕ (его задаёт `store.digest_pending`), а не по времени: лента по времени
+    читается как набор случайных строк, и глаз бросает её на третьей. Сверху - самое крупное.
+
+    ОСТАТОК НАЗЫВАЕТСЯ ЧИСЛОМ. «И ещё 34 слабее» - это ответ на вопрос «а сколько я не увидел»;
+    без него сводка повторила бы ошибку, от которой создана.
+    """
+    n = len(items) + int(extra or 0)
+    out = ['🗂 <b>Сводка дозора</b> · %d событий за %d мин' % (n, int(window_min))]
+    # ПОЧЕМУ СПИСКОМ, А НЕ ЗВОНКОМ - ОДНОЙ СТРОКОЙ И СРАЗУ. Человек, получивший сводку вместо
+    # алертов, первым делом спросит «почему»; отвечать на это в справке значит не ответить.
+    _why = None
+    for it in items:
+        if it.get('why'):
+            _why = it['why']
+            break
+    if _why:
+        out.append('<i>Не звонили: %s</i>' % esc(_why))
+    out.append('')
+    for it in items:
+        out.append(digest_line(it['ev']))
+    if extra:
+        out.append('')
+        out.append('<i>И ещё %d событий слабее — они не потеряны, лежат в базе.</i>' % int(extra))
+    out.append('')
+    out.append('<i>Тап по тикеру ниже — карточка инструмента. Настройки: «Дозорный».</i>')
+    return '\n'.join(out)
+
+
+def digest_kb(items, limit=6):
+    """Кнопки-тикеры под сводкой. -> InlineKeyboardMarkup | None.
+
+    СКВОЗНОЙ СЦЕНАРИЙ - ТРЕБОВАНИЕ ВЛАДЕЛЬЦА, ПОВТОРЁННОЕ ДВАЖДЫ: «у нас все сценарии сквозные,
+    чтобы сразу на карточку попасть и если что в избранное закинуть». Сводка без перехода
+    заставляла бы человека искать тикер руками - то есть сама создавала бы работу, ради экономии
+    которой она и написана.
+    ШЕСТЬ, А НЕ ВСЕ: клавиатура на двенадцать кнопок занимает пол-экрана и перестаёт быть
+    навигацией. Шесть сильнейших - ровно те, по которым человек пойдёт.
+    ПОВТОРЫ ТИКЕРА СКЛЕИВАЕМ: два события по одному инструменту дали бы две одинаковые кнопки.
+    """
+    try:
+        from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup
+    except Exception:
+        return None
+    seen, row, rows = set(), [], []
+    for it in items:
+        ev = it['ev']
+        t = ev.get('ticker') or ''
+        v = ((ev.get('payload') or {}).get('venue')) or 'variational'
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        row.append(B('📊 %s' % t, callback_data='sen:card:%s:%s' % (v, t)))
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+        if len(seen) >= int(limit):
+            break
+    if row:
+        rows.append(row)
+    if not rows:
+        return None
+    rows.append([B('⚙️ Дозорный', callback_data='sen:home')])
+    return InlineKeyboardMarkup(rows)
+
+
 def enrich_card(ev, brief, lang='ru'):
     """ВТОРОЕ сообщение: сводка вокруг события. -> HTML-строка.
 

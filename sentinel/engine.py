@@ -296,6 +296,27 @@ async def deliver_tick():
     return 'отправлено %d, отказов %d' % (ok, bad)
 
 
+async def digest_tick():
+    """Круг сводок: отложенное предохранителем уезжает ОДНИМ сообщением. -> строка итога.
+
+    ОТДЕЛЬНОЙ ДЖОБОЙ ОТ ДОСТАВКИ, потому что у неё другой темп: доставка тикает каждые 30
+    секунд (алерт ценен минутами), сводка - раз в десять минут, и смешивать их значило бы либо
+    задержать алерты, либо превратить сводку в поток.
+    """
+    try:
+        n = store.delivery_unstick()
+        if n:
+            # СИРОТЫ НАЗЫВАЮТСЯ ЧИСЛОМ. Строка, застрявшая в работе после падения процесса, -
+            # это потерянный алерт, и молчать о таком нельзя (см. `store.delivery_unstick`).
+            print('[sentinel] вернул в очередь %d застрявших доставок' % n)
+        people, rows = await outbox.deliver_digest()
+    except Exception as e:
+        return 'сводка упала: %s: %s' % (type(e).__name__, str(e)[:150])
+    if not people:
+        return 'сводок нет'
+    return 'сводок отправлено %d (событий в них %d)' % (people, rows)
+
+
 async def enrich_tick(limit=3):
     """Сводки к уже доставленным алертам. -> строка итога.
 
@@ -378,6 +399,7 @@ async def prune_tick():
     import asyncio
     n = await asyncio.to_thread(store.prune)
     await asyncio.to_thread(store.seen_prune)
+    await asyncio.to_thread(store.digest_prune)
     return 'снимков убрано %s' % ('не сказано СУБД' if n < 0 else n)
 
 
