@@ -26,7 +26,7 @@ import time
 
 import alert_log
 
-from . import cards, config, store
+from . import cards, config, store  # noqa: F401
 
 _BOT_TOKEN = None
 _BOT = None
@@ -197,19 +197,27 @@ async def deliver_enrichment(event_key, brief, limit=25):
     return n
 
 
-def status_line():
-    """Одна строка о состоянии дозорного — для пульта и для команды владельца.
+def status_line(lang='ru'):
+    """Одна строка о состоянии дозорного — для экрана, для пульта и для команды владельца.
 
     ВЕДЁМ ВЕЛИЧИНАМИ: «дозорный включён» ничего не значит, если кольцо пусто или аренда у
-    мёртвого процесса. Поэтому здесь число снимков, число событий за сутки и остаток бюджета.
+    мёртвого процесса. Поэтому здесь число снимков, число событий за сутки и расход числом.
+
+    ДВА ЯЗЫКА, ПОТОМУ ЧТО СТРОКА ПОПАДАЕТ НА ЭКРАН. Она встроена в меню дозорного, а по меню
+    ходит автоматический обходчик e2e и требует, чтобы на `lang=en` не было кириллицы. Русская
+    строка внутри английского экрана покраснела бы в ЧУЖОМ тесте и выглядела бы как его поломка.
     """
     now = int(time.time())
     seen = len(store.tickers_seen(now - 3600))
     evs = len(store.events_since(now - 86400, limit=9999))
     owner, until = store.lease_owner()
-    used, _ = store.spend_today()
-    return ('дозор: инструментов за час %d · события за сутки %d · опрос у %s (аренда %s) · '
-            'кредитов сожжено %d из %d'
+    if lang == 'en':
+        return ('sentinel: instruments in the last hour %d · events in 24h %d · polled by %s '
+                '(lease %s) · %s'
+                % (seen, evs, owner or 'nobody',
+                   ('%ds left' % (until - now)) if until > now else 'expired',
+                   store.spend_line('en')))
+    return ('дозор: инструментов за час %d · события за сутки %d · опрос у %s (аренда %s) · %s'
             % (seen, evs, owner or 'никого',
                ('ещё %dс' % (until - now)) if until > now else 'истекла',
-               used, config.nansen_day_credits()))
+               store.spend_line()))

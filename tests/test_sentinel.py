@@ -23,6 +23,7 @@ import os
 import sys
 import tempfile
 import time
+import types
 
 os.environ.setdefault('DB_BACKEND', 'sqlite')
 os.environ['SENTINEL_LLM_OFF'] = '1'            # пересказ моделью в тестах не зовётся
@@ -40,6 +41,41 @@ _TMP = tempfile.mkdtemp(prefix='sentinel_test_')
 # сломанный артефакт вместо доказательства.
 for _k in ('onchain', 'main'):
     db.set_path(_k, os.path.join(_TMP, '%s.db' % _k))
+# ── ПРОВЕРКА, ЧТО МЫ ПРАВДА В TMP, И ОСТАНОВКА, ЕСЛИ НЕТ ───────────────────────────────────
+# Этот файл запускают НА СЕРВЕРЕ, рядом с живым ботом (владелец так и сделал 25.09). Если путь
+# базы однажды не подменится - из-за правки db.py, из-за .env, из-за чего угодно, - тест начнёт
+# писать в БОЕВУЮ базу и ронять живую службу. Тест, способный навредить проду, опаснее
+# отсутствующего, поэтому здесь не «предупреждение», а выход.
+for _k in ('onchain', 'main'):
+    _p = db.get_path(_k) if hasattr(db, 'get_path') else _TMP
+    if _TMP not in str(_p):
+        print('ОСТАНОВЛЕНО: база %r это %s, а не временный каталог %s. Тест писал бы в '
+              'боевую базу - прогон отменён.' % (_k, _p, _TMP))
+        sys.exit(2)
+
+# ── ЗАГЛУШКА `telegram`, ЕСЛИ БИБЛИОТЕКИ НЕТ ───────────────────────────────────────────────
+# Клавиатуру экрана собирает `InlineKeyboardMarkup`, и без python-telegram-bot тест упал бы
+# ImportError - то есть раскладка кнопок осталась бы непроверенной там, где библиотеки нет: на
+# машине разработки и в публичной выжимке. Заглушка подменяет РОВНО два класса-контейнера и
+# ничего не эмулирует: проверяем МЫ свою раскладку (какие callback_data и какие подписи), а не
+# чужую библиотеку. Там, где библиотека установлена (сервер), берётся настоящая.
+try:
+    import telegram                                   # noqa: F401
+except Exception:
+    _tg = types.ModuleType('telegram')
+
+    class _B:
+        def __init__(self, text, callback_data=None, url=None, web_app=None):
+            self.text, self.callback_data, self.url, self.web_app = text, callback_data, url, web_app
+
+    class _M:
+        def __init__(self, rows):
+            self.inline_keyboard = [list(r) for r in rows]
+    _tg.InlineKeyboardButton = _B
+    _tg.InlineKeyboardMarkup = _M
+    _tg.WebAppInfo = lambda url=None: url
+    _tg.Bot = object
+    sys.modules['telegram'] = _tg
 
 from sentinel import cards, config, detector, engine, ignition, outbox, store, ui  # noqa: E402
 from sentinel import variational_feed as feed    # noqa: E402
@@ -436,15 +472,30 @@ def t_enrichment_never_blocks_the_numbers():
 
 
 def t_budget_is_a_quantity_and_stops_spending():
-    """БЮДЖЕТ: остаток — ВЕЛИЧИНА, и по её исчерпании ончейн не читается вовсе."""
-    left0 = store.budget_left()
-    check('BUDGET: остаток - число', isinstance(left0, int) and left0 > 0, left0)
-    store.spend_add(credits=config.nansen_day_credits())
-    check('BUDGET: исчерпан - ноль, а не флаг', store.budget_left() == 0)
+    """БЮДЖЕТ: пока кап числом - он ограничивает; выключенный кап не притворяется исчерпанным.
+
+    ПЕРЕПИСАН 25.09 вместе со сменой смысла нуля. Прежняя редакция утверждала «ноль капа =
+    стоп», и это утверждение было НЕВЕРНЫМ по существу: на время хакатона Nansen бесплатен
+    (решение владельца), кап выключен, и «выключен» обязано отличаться от «исчерпан» - иначе
+    дозорный молча перестаёт ходить в Nansen, а лог показывает «бюджет исчерпан» при нулевом
+    расходе. Старый тест на новом поведении покраснел, и это ровно то, зачем он был нужен.
+    """
+    os.environ['SENTINEL_NANSEN_DAY_CREDITS'] = '500'
+    check('BUDGET: остаток - число, когда кап задан числом',
+          isinstance(store.budget_left(), int), store.budget_left())
+    check('BUDGET: пока не исчерпан - тратить можно', store.budget_block() is None)
+    store.spend_add(credits=500)
+    check('BUDGET: исчерпан - причина СЛОВАМИ, а не флаг',
+          store.budget_block() and 'исчерпан' in store.budget_block(), store.budget_block())
+    check('BUDGET: остаток обнулился', store.budget_left() == 0, store.budget_left())
+    # ТИК НЕ ХОДИТ В СЕТЬ И ГОВОРИТ ПОЧЕМУ. Сам сетевой вызов здесь не проверяем (httpx может
+    # отсутствовать на машине разработки - и тогда «не ходил» подтвердилось бы отказом импорта,
+    # то есть по ложной причине). Проверяем ТО, ЧТО РЕШАЕТ: ворота бюджета закрыты.
     note = asyncio.run(engine.ignition_tick())
-    check('BUDGET: зажигание при пустом бюджете не ходит в сеть и говорит почему',
-          'бюджет' in note and 'исчерпан' in note, note)
-    store.spend_add(credits=-config.nansen_day_credits())
+    check('BUDGET: зажигание при исчерпанном бюджете пропущено с причиной',
+          'пропущено' in note and 'исчерпан' in note, note)
+    store.spend_add(credits=-500)
+    os.environ['SENTINEL_NANSEN_DAY_CREDITS'] = '0'
 
 
 def t_lease_keeps_one_poller():
@@ -562,6 +613,234 @@ def t_engine_tick_never_throws_and_always_says_something():
           'инструментов за час' in outbox.status_line(), outbox.status_line())
 
 
+def t_reads_close_their_cursors_and_never_lock():
+    """КУРСОР ЗАКРЫТ - ЗАПИСЬ ПРОХОДИТ. Это боевой отказ, а не гигиена.
+
+    ЖИВОЙ ПРОГОН ВЛАДЕЛЬЦА НА СЕРВЕРЕ 25.09: 14 отказов `database is locked`, все на записях.
+    Причина - `execute('SELECT …').fetchone()`: недочитанный курсор держит read-транзакцию, в
+    sqlite это блокирует запись, а в PostgreSQL оставляет соединение «idle in transaction».
+    Локально тест был зелёным, то есть «у меня работает» тут не значило ничего.
+    """
+    uid = 991100
+    store.settings(uid)            # fetchone
+    store.cooldown_left(uid, 'BTC', 'move_up:1')
+    store.sent_today(uid)
+    store.event('нет такого ключа')
+    store.spend_today()
+    store.lease_owner('никого')
+    store.cursor_get('нет')
+    # ПОСЛЕ ШЕСТИ ЧТЕНИЙ ЗАПИСЬ ОБЯЗАНА ПРОЙТИ. Если курсоры остались открытыми, именно здесь
+    # sqlite отдаст «database is locked» - ровно как на сервере.
+    ok, why = store.sub_add(uid, 'ZZTEST')
+    check('CURSOR: после серии чтений запись проходит', ok, why)
+    check('CURSOR: и читается обратно', 'ZZTEST' in store.sub_list(uid))
+    store.sub_del(uid, 'ZZTEST')
+    src = open(os.path.join(BASE, 'sentinel', 'store.py'), encoding='utf-8').read()
+    body = src[src.index('def _shut('):]
+    check('CURSOR: голых fetchone/fetchall вне общих дверей нет',
+          '.fetchone()' not in body and '.fetchall()' not in body,
+          'каждое чтение обязано идти через _one/_all, иначе замок вернётся')
+
+
+def t_sql_survives_postgres():
+    """SQL ПОРТИРУЕМ. Тест на sqlite НЕ ловит PG-отказ - значит ловим текстом запроса.
+
+    ЖИВОЙ ПРОД 25.09: джоба сводок падала КАЖДУЮ минуту с «for SELECT DISTINCT, ORDER BY
+    expressions must appear in select list». На стенде и в тестах (sqlite) тот же запрос
+    работал, поэтому зелёный прогон ничего не гарантировал. Правило проекта: PG-специфичный
+    баг нельзя списывать как «только на тесте», потому что тест как раз зелёный.
+    """
+    import ast as _ast
+    src = open(os.path.join(BASE, 'sentinel', 'store.py'), encoding='utf-8').read()
+    # ЗАПРОСЫ БЕРЁМ ЧЕРЕЗ ast, А НЕ РЕГУЛЯРКОЙ ПО ФАЙЛУ. Неявную конкатенацию соседних строк
+    # ('SELECT … ' 'FROM …') Python склеивает САМ ещё при разборе, поэтому каждый запрос - это
+    # ровно один литерал. Регулярка по файлу склеивала соседние ЗАПРОСЫ между собой и ругалась
+    # на несуществующее: проверка, дающая ложную тревогу, умирает первой.
+    sql = [n.value for n in _ast.walk(_ast.parse(src))
+           if isinstance(n, _ast.Constant) and isinstance(n.value, str)
+           and 'SELECT' in n.value.upper()]
+    check('PG: детектор нашёл запросы', len(sql) >= 10, len(sql))
+    bad = []
+    for qtext in sql:
+        up = ' '.join(qtext.split()).upper()
+        if 'SELECT DISTINCT' not in up or 'ORDER BY' not in up or ' FROM ' not in up:
+            continue
+        picked = up.split(' FROM ')[0]
+        tail = up.split('ORDER BY', 1)[1].split()
+        col = tail[0].strip(',').split('.')[-1] if tail else ''
+        if col and col not in picked:
+            bad.append(up[:140])
+    check('PG: DISTINCT не сортируется по невыбранной колонке', not bad, bad)
+    check('PG: у сводок ключ и время берутся группировкой',
+          'GROUP BY d.event_key' in src,
+          'DISTINCT + ORDER BY delivered_at - ровно тот запрос, что падал на проде')
+    # ЖИВАЯ ПРОВЕРКА САМОГО ЗАПРОСА (на sqlite он тоже обязан работать и отдавать нужное).
+    now = int(time.time())
+    key = 'pgq%d' % now
+    store.event_new({'key': key, 'ts': now, 'kind': 'move_up', 'ticker': 'BTC',
+                     'severity': 50, 'payload': {'mark': 1.0, 'penalties': []}})
+    store.delivery_plan(key, UID)
+    store.delivery_ok(key, UID, 1)
+    check('PG: запрос сводок отдаёт доставленное и необогащённое',
+          key in store.enrich_pending(limit=20), store.enrich_pending(limit=20))
+
+
+def t_free_hackathon_cap_does_not_block():
+    """КАП ВЫКЛЮЧЕН - ЗНАЧИТ НЕ ОГРАНИЧИВАЕТ. «Выключен» не равно «исчерпан».
+
+    РЕШЕНИЕ ВЛАДЕЛЬЦА 25.09: «всё, что связано с Нансеном, бесплатно на время хакатона;
+    включай на будущее». Механизм остался, дефолт - ноль. Ноль обязан означать РОВНО «потолка
+    нет»: в первой редакции `budget_left()` отдавал на нуле ноль остатка, и дозорный молча
+    перестал бы ходить в Nansen - выключенный ограничитель выглядел бы как сработавший.
+    """
+    os.environ['SENTINEL_NANSEN_DAY_CREDITS'] = '0'
+    check('FREE: дефолт капа - ноль (бесплатно на время хакатона)',
+          config.nansen_day_credits() == 0, config.nansen_day_credits())
+    check('FREE: ноль капа НЕ блокирует трату', store.budget_block() is None,
+          store.budget_block())
+    check('FREE: остаток при выключенном капе - None, а не ноль',
+          store.budget_left() is None, store.budget_left())
+    store.spend_add(credits=12345)
+    check('FREE: расход всё равно измеряется', store.spend_today()[0] >= 12345,
+          store.spend_today())
+    check('FREE: и строка говорит это словами, а не «12345 из 0»',
+          'кап выключен' in store.spend_line(), store.spend_line())
+    note = asyncio.run(engine.ignition_tick())
+    check('FREE: зажигание при выключенном капе НЕ пропускается по бюджету',
+          'кап' not in note or 'исчерпан' not in note, note)
+    # ВКЛЮЧЁННЫЙ КАП ПО-ПРЕЖНЕМУ РАБОТАЕТ - иначе «включай на будущее» было бы обещанием без
+    # механизма.
+    os.environ['SENTINEL_NANSEN_DAY_CREDITS'] = '100'
+    check('FREE: включённый кап снова ограничивает',
+          store.budget_block() and 'исчерпан' in store.budget_block(), store.budget_block())
+    check('FREE: и строка ведёт двумя числами', ' из 100' in store.spend_line(),
+          store.spend_line())
+    os.environ['SENTINEL_NANSEN_DAY_CREDITS'] = '0'
+    store.spend_add(credits=-12345)
+
+
+def t_menu_has_buttons_for_everything_the_words_can_do():
+    """МЕНЮ: включение и пороги кнопкой, состояние подписью, и ни одной кириллицы на en.
+
+    ТРЕБОВАНИЕ ВЛАДЕЛЬЦА ДОСЛОВНО: «пороги должны быть настраиваемые и само включение/
+    выключение дозора должно идти через какое-то меню». Тест держит ДВА утверждения: кнопки
+    реально меняют настройку (а не просто рисуются) и подпись тумблера говорит СОСТОЯНИЕ.
+    """
+    uid = 991200
+    store.settings_set(uid, alerts_on=1, enrich_on=1, min_pct=None, daily_cap=None,
+                       cooldown_min=None, quiet_from=None, quiet_to=None)
+    kb = ui.menu_kb(uid, 'ru')
+    data = [b.callback_data for row in kb.inline_keyboard for b in row]
+    for need in ('sen:t:al', 'sen:t:br', 'sen:t:all', 'sen:mp:1', 'sen:mp:-1', 'sen:cd:15',
+                 'sen:cap:5', 'sen:q:next', 'sen:rep', 'sen:home'):
+        check('MENU: кнопка %s есть' % need, need in data, data)
+    txt = ui.menu_text(uid, 'ru')
+    check('MENU: подпись тумблера говорит СОСТОЯНИЕ, а не действие',
+          any('Алерты: вкл' in b.text for row in kb.inline_keyboard for b in row),
+          [b.text for row in kb.inline_keyboard for b in row])
+    check('MENU: экран называет общие пороги (их кнопками не крутят)',
+          'Общие пороги' in txt, txt)
+    check('MENU: и говорит, что Nansen сейчас бесплатен', 'бесплат' in txt.lower(), txt)
+
+    # ── КНОПКИ РЕАЛЬНО МЕНЯЮТ НАСТРОЙКУ (гоняем сам роутер с фальшивым callback) ──
+    class Q:
+        def __init__(self, uid, data):
+            self.data = data
+            self.from_user = type('U', (), {'id': uid})()
+            self.message = type('M', (), {'chat_id': uid, 'text': 'x'})()
+            self.shown = []
+
+        async def answer(self, *a, **kw):
+            return True
+
+        async def edit_message_text(self, text, reply_markup=None, **kw):
+            self.shown.append(text)
+            return True
+
+    class Ctx:
+        class bot:
+            sent = []
+
+            @staticmethod
+            async def send_message(chat_id=None, text=None, **kw):
+                Ctx.bot.sent.append((chat_id, text))
+                return True
+
+    def tap(data):
+        q = Q(uid, data)
+        asyncio.run(ui.handle_callback(type('U', (), {'callback_query': q})(), Ctx()))
+        return q
+
+    tap('sen:t:al')
+    check('MENU: тумблер выключил алерты', store.settings(uid)['alerts_on'] == 0)
+    tap('sen:t:al')
+    check('MENU: и включил обратно', store.settings(uid)['alerts_on'] == 1)
+    tap('sen:t:all')
+    check('MENU: «вся площадка» подписала', store.ALL in store.sub_list(uid))
+    tap('sen:t:all')
+    check('MENU: и отписала', store.ALL not in store.sub_list(uid))
+    tap('sen:mp:1')
+    check('MENU: порог поднялся на 1%', store.settings(uid)['min_pct'] == 1.0,
+          store.settings(uid)['min_pct'])
+    tap('sen:mp:-1')
+    check('MENU: и вернулся к «как общий», а не в минус',
+          store.settings(uid)['min_pct'] is None, store.settings(uid)['min_pct'])
+    check('MENU: порог не уходит ниже нуля и не выше 50',
+          ui._step_pct(0.5, -1) is None and ui._step_pct(49, 5) == 50.0)
+    tap('sen:cd:15')
+    check('MENU: пауза стала личной и выросла',
+          store.settings(uid)['cooldown_min'] == (config.cooldown_sec() // 60) + 15,
+          store.settings(uid)['cooldown_min'])
+    check('MENU: личная пауза сильнее общей',
+          store.cooldown_for(uid) == store.settings(uid)['cooldown_min'] * 60)
+    tap('sen:cd:0')
+    check('MENU: сброс паузы возвращает общую',
+          store.cooldown_for(uid) == config.cooldown_sec())
+    tap('sen:cap:-5')
+    check('MENU: потолок опустился', store.cap_for(uid) == config.daily_cap() - 5,
+          store.cap_for(uid))
+    q = tap('sen:q:next')
+    check('MENU: тихие часы идут по лестнице', store.settings(uid)['quiet_from'] == 22,
+          store.settings(uid))
+    check('MENU: экран перерисовывается НА МЕСТЕ, а не новым сообщением', q.shown, 'нет edit')
+    q2 = tap('sen:rep')
+    check('MENU: отчёт уходит отдельным сообщением',
+          any('Попадания' in (t or '') for _c, t in Ctx.bot.sent), Ctx.bot.sent[-1:])
+
+    # ── ДВА ЯЗЫКА. По меню ходит обходчик e2e и требует, чтобы на en кириллицы не было. ──
+    import re as _re
+    en = ui.menu_text(uid, 'en') + ' '.join(b.text for row in ui.menu_kb(uid, 'en').inline_keyboard
+                                            for b in row)
+    check('MENU: на en кириллицы нет', not _re.search(r'[А-Яа-яЁё]', en),
+          _re.findall(r'[А-Яа-яЁё]+', en)[:6])
+    check('MENU: английская справка тоже без кириллицы',
+          not _re.search(r'[А-Яа-яЁё]', ui.HELP_EN.replace('дозор', '')),
+          'команды по-русски оставлены нарочно - их набирают словами')
+
+
+def t_words_and_buttons_share_one_parser():
+    """СЛОВА И КНОПКИ - ОДИН РАЗБОР. Разойдись они, половина команд тихо перестала бы работать."""
+    uid = 991300
+    sent = []
+
+    class Bot:
+        @staticmethod
+        async def send_message(chat_id=None, text=None, reply_markup=None, **kw):
+            sent.append((chat_id, text, reply_markup))
+            return True
+
+    check('ROUTE: чужая фраза не перехвачена',
+          asyncio.run(ui.route_send(Bot, uid, 'что там по дозору')) is False)
+    check('ROUTE: «дозор» отдал экран С КЛАВИАТУРОЙ',
+          asyncio.run(ui.route_send(Bot, uid, 'дозор')) is True and sent
+          and sent[-1][2] is not None, sent[-1:] if sent else None)
+    asyncio.run(ui.route_send(Bot, uid, 'дозор порог 4'))
+    check('ROUTE: порог словами лёг в ту же настройку',
+          store.settings(uid)['min_pct'] == 4.0, store.settings(uid))
+    check('ROUTE: и после правки показан экран',
+          sent and sent[-1][2] is not None, sent[-1:])
+
+
 def main():
     for fn in (t_parse_is_real_and_names_what_is_missing,
                t_detector_needs_both_percent_and_sigma,
@@ -578,7 +857,13 @@ def main():
                t_rings_and_outcome_are_measured_not_told,
                t_commands_are_parsed_exactly_and_refuse_with_words,
                t_no_import_of_the_trading_contour,
-               t_engine_tick_never_throws_and_always_says_something):
+               t_engine_tick_never_throws_and_always_says_something,
+               # ── круг 2 (25.09): боевые отказы с прода Ren + меню и бесплатный Nansen ──
+               t_reads_close_their_cursors_and_never_lock,
+               t_sql_survives_postgres,
+               t_free_hackathon_cap_does_not_block,
+               t_menu_has_buttons_for_everything_the_words_can_do,
+               t_words_and_buttons_share_one_parser):
         print('\n== %s' % fn.__name__)
         try:
             fn()
