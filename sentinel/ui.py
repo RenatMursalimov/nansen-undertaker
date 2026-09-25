@@ -225,6 +225,15 @@ _T = {
                'en': 'Shared thresholds (edited in .env, same for everyone): 15m %.1f%% · '
                      '60m %.1f%% · %.1f sigma · OI %.0f%% · ignition %d addresses/$%.0fk'},
     'btn_report': {'ru': '📊 Попадания', 'en': '📊 Hit rate'},
+    'k_move': {'ru': 'Движения', 'en': 'Moves'},
+    'k_oi': {'ru': 'Интерес', 'en': 'Open interest'},
+    'k_ign': {'ru': 'Зажигание', 'en': 'Ignition'},
+    'k_fund': {'ru': 'Фандинг', 'en': 'Funding'},
+    'k_spread': {'ru': 'Спред', 'en': 'Spread'},
+    'p_nansen': {'ru': 'Нансен', 'en': 'Nansen'},
+    'p_news': {'ru': 'Новости', 'en': 'News'},
+    'what_comes': {'ru': 'Что присылать:', 'en': 'What to send:'},
+    'what_inside': {'ru': 'Что внутри алерта:', 'en': 'Inside the alert:'},
     'btn_refresh': {'ru': '🔄 Обновить', 'en': '🔄 Refresh'},
     'btn_help': {'ru': '❓ Как это работает', 'en': '❓ How it works'},
     'saved': {'ru': 'Готово', 'en': 'Saved'},
@@ -249,6 +258,15 @@ def _lang(uid):
         return 'ru'
 
 
+def _mark(text, on):
+    """Подпись тумблера с отметкой состояния. -> str.
+
+    ГАЛОЧКА И КРЕСТИК, А НЕ СЛОВО «вкл/выкл»: в ряду из трёх кнопок подпись обрезается, и
+    «Движения: в…» не говорит ничего. Знак читается первым и не обрезается никогда.
+    """
+    return ('✓ ' if on else '✗ ') + text
+
+
 def menu_text(uid, lang=None):
     """Экран состояния. ВЕДЁТ ВЕЛИЧИНАМИ: что под дозором, сколько дошло, по чему работает."""
     lang = lang or _lang(uid)
@@ -262,6 +280,18 @@ def menu_text(uid, lang=None):
     else:
         out.append(_t('watch_n', lang) % (len(subs), ', '.join(subs)))
     out.append(_t('today', lang) % (store.sent_today(uid), store.cap_for(uid)))
+    _k = store.kinds_for(uid)
+    _p = store.parts_for(uid)
+    _kn = {'move_up': _t('k_move', lang), 'oi_surge': _t('k_oi', lang),
+           'ignition': _t('k_ign', lang), 'funding_extreme': _t('k_fund', lang),
+           'spread_shock': _t('k_spread', lang)}
+    _on = [v for k, v in _kn.items() if k in _k]
+    out.append('%s %s' % (_t('what_comes', lang),
+                          ', '.join(_on) if _on else _t('quiet_off', lang)))
+    out.append('%s %s' % (_t('what_inside', lang),
+                          ', '.join([_t('p_nansen', lang)] if 'nansen' in _p else [])
+                          + (', ' if ('nansen' in _p and 'news' in _p) else '')
+                          + (_t('p_news', lang) if 'news' in _p else '')))
     out.append('')
     out.append(outbox.status_line(lang))
     out.append('')
@@ -288,6 +318,8 @@ def menu_kb(uid, lang=None):
     cap = store.cap_for(uid)
     q = (_t('quiet_off', lang) if s.get('quiet_from') is None
          else '%02d-%02d UTC' % (int(s['quiet_from']), int(s['quiet_to'])))
+    kinds = store.kinds_for(uid)
+    parts = store.parts_for(uid)
     rows = [
         # ТУМБЛЕРЫ ПОДПИСАНЫ ТЕКУЩИМ СОСТОЯНИЕМ, А НЕ ДЕЙСТВИЕМ. «Алерты: вкл» отвечает на
         # вопрос «как сейчас»; кнопка «Выключить алерты» на него не отвечает, и человек жмёт
@@ -307,6 +339,19 @@ def menu_kb(uid, lang=None):
         [B('−', callback_data='sen:cap:-5'), B(_t('cap', lang) % cap, callback_data='sen:cap:0'),
          B('+', callback_data='sen:cap:5')],
         [B(_t('quiet', lang) % q, callback_data='sen:q:next')],
+        # ЧТО ПРИСЫЛАТЬ - ТУМБЛЕРАМИ С ГАЛОЧКОЙ. Просьба владельца дословно: «настраивать, что
+        # приходят алерты движения плюс нансен движения существенные, или просто Нансен сигналы,
+        # или просто алерты по объёму». Галочка в подписи говорит СОСТОЯНИЕ: кнопка «Движения»
+        # без отметки не отвечает на вопрос «а сейчас они идут?».
+        [B(_mark(_t('k_move', lang), 'move_up' in kinds), callback_data='sen:k:move'),
+         B(_mark(_t('k_oi', lang), 'oi_surge' in kinds), callback_data='sen:k:oi'),
+         B(_mark(_t('k_ign', lang), 'ignition' in kinds), callback_data='sen:k:ign')],
+        [B(_mark(_t('k_fund', lang), 'funding_extreme' in kinds), callback_data='sen:k:fund'),
+         B(_mark(_t('k_spread', lang), 'spread_shock' in kinds), callback_data='sen:k:spread')],
+        # ЧТО ВНУТРИ АЛЕРТА. 'card' (числа площадки) в тумблерах НЕТ нарочно: алерт без чисел -
+        # это уведомление «что-то случилось» без ответа «что именно». Выключается дорогое.
+        [B(_mark(_t('p_nansen', lang), 'nansen' in parts), callback_data='sen:p:nansen'),
+         B(_mark(_t('p_news', lang), 'news' in parts), callback_data='sen:p:news')],
         [B(_t('btn_report', lang), callback_data='sen:rep'),
          B(_t('btn_help', lang), callback_data='sen:help')],
         [B(_t('btn_refresh', lang), callback_data='sen:home')],
@@ -394,6 +439,22 @@ async def handle_callback(update, context):
             else:
                 store.settings_set(uid, daily_cap=max(1, min(200,
                                                              store.cap_for(uid) + int(arg))))
+        elif act == 'k':
+            # ДВИЖЕНИЯ - ОДИН ТУМБЛЕР НА ДВА ВИДА. Разделять «вверх» и «вниз» кнопками значит
+            # предлагать человеку подписку на половину рынка: тот, кто хочет знать о падении,
+            # хочет знать и о росте.
+            _map = {'move': ('move_up', 'move_down'), 'oi': ('oi_surge',),
+                    'ign': ('ignition',), 'fund': ('funding_extreme',),
+                    'spread': ('spread_shock',)}
+            cur = store.kinds_for(uid)
+            group = _map.get(arg) or ()
+            if set(group) & cur:
+                cur -= set(group)
+            else:
+                cur |= set(group)
+            store.kinds_set(uid, cur)
+        elif act == 'p':
+            store.part_toggle(uid, arg)
         elif act == 'q':
             f, t = _quiet_next(store.settings(uid))
             store.settings_set(uid, quiet_from=f, quiet_to=t)

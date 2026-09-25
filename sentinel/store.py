@@ -74,17 +74,23 @@ def _ensure(conn):
         quiet_to INTEGER,
         daily_cap INTEGER,
         enrich_on INTEGER DEFAULT 1,
-        cooldown_min INTEGER)''')
+        cooldown_min INTEGER,
+        kinds TEXT,
+        parts TEXT)''')
     # ЛЕНИВЫЙ ALTER ДЛЯ УЖЕ СОЗДАННОЙ ТАБЛИЦЫ. `CREATE TABLE IF NOT EXISTS` на существующей
     # таблице НЕ добавляет колонку и НЕ жалуется - то есть у того, кто поставил дозорного
     # раньше (прод Ren, 25.09), новой колонки не появилось бы, а SELECT по ней падал бы
     # «no such column». Дубликат колонки - штатный случай второго запуска, остальные ошибки
     # поднимаем: «молча проглотить любую» значит однажды не заметить, что миграции нет.
-    try:
-        conn.execute('ALTER TABLE sentinel_settings ADD COLUMN cooldown_min INTEGER')
-    except Exception as _ae:
-        if not _dup_column(_ae):
-            raise
+    # НАБОРЫ ХРАНИМ СТРОКОЙ ЧЕРЕЗ ЗАПЯТУЮ, А НЕ ТАБЛИЦЕЙ-СВЯЗКОЙ. Значений пять и три, они
+    # читаются на каждой доставке, и JOIN ради этого дал бы два запроса вместо нуля. Порядок в
+    # строке не значит ничего - набор сравнивается множеством.
+    for _col, _type in (('cooldown_min', 'INTEGER'), ('kinds', 'TEXT'), ('parts', 'TEXT')):
+        try:
+            conn.execute('ALTER TABLE sentinel_settings ADD COLUMN %s %s' % (_col, _type))
+        except Exception as _ae:
+            if not _dup_column(_ae):
+                raise
     conn.execute('''CREATE TABLE IF NOT EXISTS sentinel_deliveries (
         event_key TEXT NOT NULL,
         user_id INTEGER NOT NULL,
@@ -411,18 +417,19 @@ def watched():
 
 
 _DEF_SETTINGS = {'alerts_on': 1, 'min_pct': None, 'quiet_from': None, 'quiet_to': None,
-                 'daily_cap': None, 'enrich_on': 1, 'cooldown_min': None}
+                 'daily_cap': None, 'enrich_on': 1, 'cooldown_min': None, 'kinds': None,
+                 'parts': None}
 
 
 def settings(uid):
     r = _one('SELECT alerts_on, min_pct, quiet_from, quiet_to, daily_cap, enrich_on, '
-             'cooldown_min FROM sentinel_settings WHERE user_id=?', (int(uid),))
+             'cooldown_min, kinds, parts FROM sentinel_settings WHERE user_id=?', (int(uid),))
     if not r:
         return dict(_DEF_SETTINGS)
     return {'alerts_on': int(r[0] or 0), 'min_pct': r[1], 'quiet_from': r[2],
             'quiet_to': r[3], 'daily_cap': r[4],
             'enrich_on': 1 if r[5] is None else int(r[5]),
-            'cooldown_min': r[6]}
+            'cooldown_min': r[6], 'kinds': r[7], 'parts': r[8]}
 
 
 def settings_set(uid, **kw):
@@ -436,10 +443,10 @@ def settings_set(uid, **kw):
     c = conn()
     c.execute('INSERT OR REPLACE INTO sentinel_settings '
               '(user_id, alerts_on, min_pct, quiet_from, quiet_to, daily_cap, enrich_on, '
-              'cooldown_min) VALUES (?,?,?,?,?,?,?,?)',
+              'cooldown_min, kinds, parts) VALUES (?,?,?,?,?,?,?,?,?,?)',
               (int(uid), int(cur['alerts_on'] or 0), cur['min_pct'], cur['quiet_from'],
                cur['quiet_to'], cur['daily_cap'], int(cur['enrich_on'] or 0),
-               cur['cooldown_min']))
+               cur['cooldown_min'], cur['kinds'], cur['parts']))
     c.commit()
     return cur
 
@@ -493,6 +500,64 @@ def sent_today(uid, now=None):
              'WHERE user_id=? AND delivered_at IS NOT NULL AND delivered_at>=?',
              (int(uid), day0))
     return int((r or [0])[0] or 0)
+
+
+def kinds_for(uid):
+    """Какие ВИДЫ событий человек хочет получать. -> set.
+
+    ПУСТАЯ НАСТРОЙКА = ДЕФОЛТ ИЗ КОДА, а не «ничего»: человек, ни разу не заходивший в
+    настройки, обязан получать алерты - иначе «включил и тишина» (и это уже было). А вот
+    ПУСТАЯ СТРОКА (он выключил всё руками) - полноправное «ничего», и мы её уважаем.
+    """
+    from . import config
+    raw = settings(uid).get('kinds')
+    if raw is None:
+        return set(config.DEFAULT_KINDS)
+    return {k.strip() for k in str(raw).split(',') if k.strip()}
+
+
+def kinds_set(uid, kinds):
+    return settings_set(uid, kinds=','.join(sorted(set(kinds))))
+
+
+def kind_toggle(uid, kind):
+    """Переключить один вид. -> новый набор. Пустой набор РАЗРЕШЁН: это «тишина по подписке»,
+    и объявить её нельзя только через выключение алертов - человек может хотеть молчания по
+    движениям и звонка по зажиганию."""
+    cur = kinds_for(uid)
+    cur.discard(kind) if kind in cur else cur.add(kind)
+    kinds_set(uid, cur)
+    return cur
+
+
+def parts_for(uid):
+    """Что едет в алерте: 'card' (числа площадки), 'nansen' (ончейн), 'news' (твиттер). -> set.
+
+    'card' НЕЛЬЗЯ ВЫКЛЮЧИТЬ, и это не упущение: алерт без чисел - это уведомление о том, что
+    что-то случилось, без ответа на «что именно». Дорогое (Nansen, X, модель) выключается,
+    дешёвое и детерминированное остаётся.
+    """
+    from . import config
+    raw = settings(uid).get('parts')
+    got = (set(config.DEFAULT_PARTS) if raw is None
+           else {k.strip() for k in str(raw).split(',') if k.strip()})
+    got.add('card')
+    return got
+
+
+def parts_set(uid, parts):
+    p = set(parts)
+    p.add('card')
+    return settings_set(uid, parts=','.join(sorted(p)))
+
+
+def part_toggle(uid, part):
+    cur = parts_for(uid)
+    if part == 'card':
+        return cur                      # см. докстринг parts_for: числа не отключаются
+    cur.discard(part) if part in cur else cur.add(part)
+    parts_set(uid, cur)
+    return cur
 
 
 def cap_for(uid):
