@@ -56,7 +56,7 @@ reading it.
 | `fixtures/sharp_markets.json` | `2db415d3a9eb10b0` | byte-for-byte from the bot |
 | `fixtures/smart_dca.json` | `4d33b3805dcfd104` | byte-for-byte from the bot |
 | `fixtures/smart_trades.json` | `bd5f60c65c35ff9f` | byte-for-byte from the bot |
-| `nansen_api.py` | `a60f96749f46462a` | byte-for-byte from the bot |
+| `nansen_api.py` | `3ea85edb6dff7afc` | byte-for-byte from the bot |
 | `nansen_gate.py` | `27a5f5d2c7c44048` | byte-for-byte from the bot |
 | `nansen_limits.py` | `4ea08d0118f935e2` | byte-for-byte from the bot |
 | `nansen_log.py` | `36bf5601544d45bb` | byte-for-byte from the bot |
@@ -73,16 +73,16 @@ reading it.
 | `sentinel/engine.py` | `333ca025dbbf56b4` | byte-for-byte from the bot |
 | `sentinel/enrichment.py` | `98864e27110d81f8` | byte-for-byte from the bot |
 | `sentinel/ignition.py` | `140934be614c996d` | byte-for-byte from the bot |
-| `sentinel/lab.py` | `5fd9f9e4869c3793` | byte-for-byte from the bot |
+| `sentinel/lab.py` | `0f8cf389440be2b3` | byte-for-byte from the bot |
 | `sentinel/main.py` | `78b4747b108b7d74` | byte-for-byte from the bot |
 | `sentinel/outbox.py` | `4f43ba719b77c1d3` | byte-for-byte from the bot |
 | `sentinel/predict.py` | `9d4808981b9dddb2` | byte-for-byte from the bot |
-| `sentinel/store.py` | `9663f573da44d751` | byte-for-byte from the bot |
+| `sentinel/store.py` | `5154dd43b10da484` | byte-for-byte from the bot |
 | `sentinel/ui.py` | `9f0a3c46af67fa24` | byte-for-byte from the bot |
 | `sentinel/variational_feed.py` | `bcc5bc71585fe0c5` | byte-for-byte from the bot |
 | `sentinel/venues.py` | `ae629063ac479017` | byte-for-byte from the bot |
 | `tests/test_public.py` | `221c07951d891077` | extract-only, this file does not exist in the bot |
-| `tests/test_sentinel.py` | `fa026412cac82adc` | byte-for-byte from the bot |
+| `tests/test_sentinel.py` | `e4be13f69c9cd0bd` | byte-for-byte from the bot |
 | `tools/nansen_catalog.py` | `bc3a4ba352f49927` | byte-for-byte from the bot |
 | `tools/nansen_daily.py` | `699fd28d7d76437d` | byte-for-byte from the bot |
 | `tools/nansen_endpoint_sweep.py` | `10511b78461c253c` | byte-for-byte from the bot |

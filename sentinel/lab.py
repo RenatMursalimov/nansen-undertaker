@@ -114,7 +114,11 @@ def holdings(chain, token_address, days=30, dry_run=True):
                                 # ПОЭТОМУ СВОЙ `_days_range`, А НЕ ПРАВКА ОБЩЕГО: требования у
                                 # ручек ОДНОЙ площадки разные, и «починив» общий, мы сломали бы
                                 # девятнадцать работающих вызовов ради одного нового.
-                                {'chain': _n._nc(chain), 'token_address': token_address,
+                                #  3) «Required field 'body -> chains' is missing. Must be a
+                                #     list of chain names, e.g., ["ethereum", "solana"]» (422,
+                                #     missing_field) - то есть поле зовётся `chains` и это
+                                #     СПИСОК, а не строка `chain`, как у всех остальных ручек.
+                                {'chains': [_n._nc(chain)], 'token_address': token_address,
                                  'date_range': _days_range(days),
                                  'pagination': {'page': 1, 'per_page': 100}},
                                 ckey=None)

@@ -26,7 +26,6 @@ import time
 import types
 
 os.environ.setdefault('DB_BACKEND', 'sqlite')
-os.environ['SENTINEL_LLM_OFF'] = '1'            # пересказ моделью в тестах не зовётся
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
@@ -52,6 +51,37 @@ for _k in ('onchain', 'main'):
         print('ОСТАНОВЛЕНО: база %r это %s, а не временный каталог %s. Тест писал бы в '
               'боевую базу - прогон отменён.' % (_k, _p, _TMP))
         sys.exit(2)
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# ПОРОГИ ДОЗОРНОГО ОТВЯЗЫВАЕМ ОТ МАШИНЫ. НЕ ПЕДАНТИЗМ - ЖИВОЙ ОТКАЗ 26.09
+#
+# `db.py` НА ИМПОРТЕ ЗОВЁТ `env_load.load()`, и на сервере это подтягивает боевой `.env`
+# (у владельца 108 ключей). Все пороги дозорного читаются ИЗ ОКРУЖЕНИЯ на каждом вызове -
+# значит боевые значения переопределяли их прямо в тесте. Живой прогон владельца дал 16
+# отказов там, где в разработке 426 PASS, и причина была не в коде, а в том, что у теста
+# НЕ БЫЛО СВОИХ ПОРОГОВ.
+#
+# ОСОБЕННО ЗЛО ЗДЕСЬ `SENTINEL_DELIVER=0` - аварийный рубильник отправки, который я САМ велел
+# владельцу поставить в `.env`, чтобы погасить поток. То есть выполнение моей же инструкции
+# ломало проверки: тест «после ретрая алерт ушёл» не мог пройти, потому что отправка выключена
+# на уровне машины. Проверка, зависящая от чужой настройки, не проверяет ничего.
+#
+# ЧИСТИМ ВСЁ `SENTINEL_*` И СТАВИМ СВОЁ. Список НЕ перечисляем по именам: ключей уже за
+# тридцать, и забытый в списке однажды вернёт этот же баг. Удаляем по префиксу, затем ставим
+# ровно то, что тесту нужно осознанно.
+for _ek in [k for k in list(os.environ) if k.startswith('SENTINEL_')]:
+    os.environ.pop(_ek, None)
+os.environ['SENTINEL_LLM_OFF'] = '1'            # пересказ моделью в тестах не зовётся
+os.environ['SENTINEL_VENUES'] = 'variational'   # фикстуры сняты с одной площадки
+# ДЕФОЛТЫ ПРЕДОХРАНИТЕЛЯ И ПОРОГА ЗВОНКА СТАВИМ ЯВНО, А НЕ НАДЕЕМСЯ НА КОД: значения из
+# `config` могут поменяться по живому замеру (и уже менялись трижды), а ожидания тестов
+# записаны числами. Пусть расхождение ловится здесь, а не «загадочным» отказом ниже.
+os.environ['SENTINEL_DELIVER'] = '1'
+os.environ['SENTINEL_BURST_MAX'] = '3'
+os.environ['SENTINEL_BURST_WINDOW_SEC'] = '600'
+os.environ['SENTINEL_MIN_SEVERITY'] = '75'
+os.environ['SENTINEL_DIGEST_SEC'] = '600'
+os.environ['SENTINEL_NANSEN_DAY_CREDITS'] = '0'
 
 # ── ЗАГЛУШКА `httpx`, ЕСЛИ БИБЛИОТЕКИ НЕТ ──────────────────────────────────────────────────
 # Ссылки в карточке строит ОДНА общая дверь `nansen_api.tok_link` (пятая копия тега `a href` в
@@ -140,7 +170,6 @@ from sentinel import venues                      # noqa: E402
 # Список площадок сужаем ЯВНО, а не через окружение: окружение на машине разработчика
 # может быть любым, и тест не имеет права зависеть от него.
 venues.DEFAULT_VENUES = ('variational',)
-os.environ['SENTINEL_VENUES'] = 'variational'
 
 UID = 990001
 UID2 = 990002
@@ -1910,6 +1939,137 @@ def t_clusters_count_people_not_addresses():
           ignition._top_wallets({'wallets': {A, B}, 'usd_by': {A: 5.0, B: 5.0}}, 2) == [A, B])
 
 
+def t_one_connection_per_thread_not_per_call():
+    """ОДНО СОЕДИНЕНИЕ НА ПОТОК. Настоящая причина `database is locked`, пережившая два круга.
+
+    ═══ ЖИВОЙ ПРОГОН ВЛАДЕЛЬЦА 26.09 НА ПРОДЕ (Python 3.12) ═══
+    `delivery_plan` падает `database is locked` при `in_transaction=False`, включённом WAL,
+    ожидании 60 секунд, ОДНОМ потоке и tmp-файле, к которому никто больше не обращался. То есть
+    пишущее соединение чистое, а лок держит кто-то ещё в этом же процессе.
+
+    ЗАМЕР НАШЁЛ КОГО (перепись объектов `sqlite3.Connection` через `gc`): `db.get_conn` создаёт
+    НОВОЕ соединение на каждый вызов, кэша там нет, а `_one`/`_all` зовут `conn()` каждый раз.
+    Одна серия чтений в `outbox.plan` подняла число живых соединений с 3 до 15, и каждое держало
+    свой read-lock в WAL.
+
+    ПОЧЕМУ ДВА ПРЕДЫДУЩИХ КРУГА ЛЕЧИЛИ НЕ ТО: круг 2 закрывал курсоры, круг 7 добавил rollback -
+    оба верные и оба лечили ОДНО соединение, пока их плодилось по одному на вызов.
+
+    ПОЧЕМУ ЭТОТ ТЕСТ ЛОВИТ ПРИЧИНУ, А НЕ СИМПТОМ: `locked` воспроизводится не на всякой версии
+    Python и не на всякой машине (в разработке 3.9 - там сборка мусора убирала соединения
+    раньше). А вот «сколько соединений мы наплодили» - число, и оно одинаково везде.
+    """
+    import gc
+    import inspect
+    import sqlite3
+    c1, c2 = store.conn(), store.conn()
+    check('CONN: conn() отдаёт ОДИН И ТОТ ЖЕ объект', c1 is c2,
+          'иначе каждое чтение открывает свою дверь и оставляет её приоткрытой')
+    # ═══ И ТОЛЬКО ПОД SQLITE. ПОД POSTGRES КЭШ УБИЛ БЫ ПРОД ═══
+    # Под PG `db.get_conn` берёт соединение ИЗ ПУЛА (`pool.getconn`), и закэшировав его навсегда,
+    # мы бы никогда его не вернули - пул исчерпался бы и бот встал. Прод владельца именно на PG,
+    # а этот тест идёт под sqlite: без этой проверки правка дошла бы до прода НЕПРОВЕРЕННОЙ
+    # стороной. Проверяем наличие ветки в коде двери - поведенчески её здесь не вызвать (PG в
+    # этом окружении нет), и честнее сказать это прямо, чем изобразить проверку.
+    _src = inspect.getsource(store.conn)
+    check('CONN: под postgres кэша НЕТ - соединение возвращается в пул',
+          "== 'postgres'" in _src and 'return db.ready' in _src,
+          'кэш соединения из пула исчерпал бы пул и остановил бота')
+    before = len([o for o in gc.get_objects() if isinstance(o, sqlite3.Connection)])
+    uid = 778001
+    store.sub_add(uid, 'BTC')
+    store.settings_set(uid, alerts_on=1)
+    # РОВНО ТА СЕРИЯ ЧТЕНИЙ, ЧТО ДЕЛАЕТ `outbox.plan` ПЕРЕД ЗАПИСЬЮ.
+    for _ in range(3):
+        store.subscribers('BTC')
+        store.settings(uid)
+        store.kinds_for(uid)
+        store.venues_for(uid)
+        store.min_sev_for(uid)
+        store.burst_for(uid)
+        store.sent_in_window(uid, 600)
+        store.cooldown_left(uid, 'BTC', 'move_up:1')
+        store.cap_for(uid)
+        store.sent_today(uid)
+        store.nansen_cap()
+    after = len([o for o in gc.get_objects() if isinstance(o, sqlite3.Connection)])
+    check('CONN: 33 чтения НЕ наплодили соединений', after <= before,
+          'было %d, стало %d - на проде так выросло с 3 до 15, и запись упёрлась в чужой лок'
+          % (before, after))
+    # И ЗАПИСЬ ПОСЛЕ ЭТОЙ СЕРИИ ПРОХОДИТ - то, что падало у владельца.
+    ev = dict(_ev_for(now=int(time.time())), key='conn-1')
+    store.event_new(ev)
+    check('CONN: запись после серии чтений проходит', store.delivery_plan('conn-1', uid) is True,
+          'ровно этот вызов падал `database is locked` на проде')
+    check('CONN: и транзакция за собой не осталась',
+          getattr(store.conn(), 'in_transaction', False) is False)
+
+
+def t_thresholds_do_not_depend_on_the_machine():
+    """ПОРОГИ ТЕСТА - СВОИ, А НЕ С МАШИНЫ. Живой отказ 26.09: 16 FAIL на проде при 426 PASS тут.
+
+    `db.py` на импорте зовёт `env_load.load()`, и на сервере это подтягивает боевой `.env` (108
+    ключей). Все пороги дозорного читаются из окружения на каждом вызове - значит боевые
+    значения переопределяли их прямо в тесте.
+
+    ОСОБЕННО ЗЛО: `SENTINEL_DELIVER=0` - аварийный рубильник, который я САМ велел владельцу
+    поставить, чтобы погасить поток. Выполнение моей же инструкции ломало проверки.
+    """
+    for _k in ('SENTINEL_DELIVER', 'SENTINEL_BURST_MAX', 'SENTINEL_MIN_SEVERITY',
+               'SENTINEL_BURST_WINDOW_SEC', 'SENTINEL_DIGEST_SEC'):
+        check('ENV: %s зафиксирован тестом, а не взят с машины' % _k,
+              os.environ.get(_k) is not None, _k)
+    check('ENV: отправка в тесте включена', config.deliver_on() is True,
+          'иначе половина проверок доставки охраняла бы пустоту')
+    check('ENV: предохранитель тестовый (3 за 600с)',
+          (config.burst_max(), config.burst_window_sec()) == (3, 600),
+          (config.burst_max(), config.burst_window_sec()))
+    check('ENV: порог звонка тестовый (75)', config.min_severity() == 75,
+          config.min_severity())
+    # ЭТАЛОН ИЗОЛЯЦИИ: ни одного унаследованного ключа дозорного не осталось.
+    _known = {'SENTINEL_DELIVER', 'SENTINEL_BURST_MAX', 'SENTINEL_BURST_WINDOW_SEC',
+              'SENTINEL_MIN_SEVERITY', 'SENTINEL_DIGEST_SEC', 'SENTINEL_LLM_OFF',
+              'SENTINEL_VENUES', 'SENTINEL_NANSEN_DAY_CREDITS'}
+    _extra = sorted(k for k in os.environ if k.startswith('SENTINEL_') and k not in _known)
+    check('ENV: чужих SENTINEL_* из .env машины не осталось', not _extra,
+          'найдены: %s - они переопределят пороги и отказ будет выглядеть загадочным' % _extra)
+
+
+def t_lab_body_matches_the_venue_schema():
+    """ТЕЛО ЛАБОРАТОРИИ: три поля, и каждое имя СКАЗАЛА САМА ПЛОЩАДКА живым отказом.
+
+    Ручки нет в нашей описи 59 маршрутов, поэтому схему снимали живыми вызовами владельца - три
+    круга подряд, и каждый назвал следующую ошибку:
+      1) «Required field 'body -> date_range' is missing» -> поле не `date`, а `date_range`;
+      2) «Date format not allowed … use YYYY-MM-DD … Time components are not supported» ->
+         своя функция окна, без ISO-времени;
+      3) «Required field 'body -> chains' is missing. Must be a list of chain names» ->
+         поле `chains` и это СПИСОК, а не строка `chain`, как у всех остальных ручек.
+    """
+    import inspect
+    src = inspect.getsource(lab.holdings)
+    check('LAB: chains списком', "'chains': [" in src, src[:200])
+    check('LAB: одиночного chain в теле больше нет', "'chain':" not in src)
+    check('LAB: date_range на месте', "'date_range'" in src)
+    check('LAB: и все три замера записаны рядом с кодом',
+          'date_range' in src and 'YYYY-MM-DD' in src and 'list of chain names' in src)
+    r = lab._days_range(30)
+    check('LAB: дата без времени', 'T' not in r['from'] and 'Z' not in r['to'], r)
+    # ── РЕМОНТ ПОНИМАЕТ ПОДСКАЗКУ ПРО СПИСОК (дословный текст с прода) ───────────────────
+    import nansen_api as _n
+    ERR = ("Required field 'body -> chains' is missing. Must be a list of chain names, "
+           'e.g., ["ethereum", "solana"]')
+    nb, why = _n._apply_hint({'chain': 'ethereum', 'token_address': '0xabc'}, ERR)
+    check('LAB: ремонт СОБРАЛ chains из chain', nb and nb.get('chains') == ['ethereum'],
+          (nb, why))
+    check('LAB: и убрал старое поле, а не оставил рядом', nb and 'chain' not in nb,
+          'иначе следующий круг ответил бы «поле chain не распознано»')
+    check('LAB: причина правки называет оба поля', 'chains' in why and 'chain' in why, why)
+    _nb2, _why2 = _n._apply_hint({'token_address': '0xabc'}, ERR)
+    check('LAB: собрать нечего -> отказ ПОДСКАЗЫВАЕТ, что дописать',
+          _nb2 is None and '_SINGULAR_OF' in _why2, _why2)
+
+
 def _pure_only(predict):
     """Замки моста, проверяемые БЕЗ слоя Polymarket. -> None.
 
@@ -2292,6 +2452,11 @@ def t_emergency_switch_stops_everything():
     outbox.plan(ev)
     bot = FakeBot()
     attach(bot)
+    # ЗАПОМИНАЕМ И ВОССТАНАВЛИВАЕМ, А НЕ УДАЛЯЕМ. Первая редакция в `finally` делала `pop`, то
+    # есть оставляла окружение НЕ ТАКИМ, каким взяла: ключ исчезал, и следующий тест работал уже
+    # на значении из кода вместо тестового. Поймал это сторож изоляции порогов - ровно за тем он
+    # и написан. Уборка, меняющая состояние, хуже отсутствующей.
+    _prev_deliver = os.environ.get('SENTINEL_DELIVER')
     os.environ['SENTINEL_DELIVER'] = '0'
     try:
         check('STOP: рубильник выключен -> отправки нет', config.deliver_on() is False)
@@ -2308,7 +2473,10 @@ def t_emergency_switch_stops_everything():
               any(x[0] == 'emg1' for x in store.delivery_due(limit=50)),
               'рубильник глушит отправку, а не выбрасывает события')
     finally:
-        os.environ.pop('SENTINEL_DELIVER', None)
+        if _prev_deliver is None:
+            os.environ.pop('SENTINEL_DELIVER', None)
+        else:
+            os.environ['SENTINEL_DELIVER'] = _prev_deliver
     check('STOP: рубильник вернули - отправка снова разрешена', config.deliver_on() is True)
     ok2, _ = asyncio.run(outbox.deliver_due())
     check('STOP: и отложенное рубильником уехало', ok2 >= 1, ok2)
@@ -2430,7 +2598,12 @@ def main():
                # ── круг 9 (26.09): настройки кнопками, третья площадка, единица фандинга ──
                t_funding_unit_is_measured_not_guessed,
                t_clusters_count_people_not_addresses,
-               t_prediction_bridge_refuses_to_guess):
+               t_prediction_bridge_refuses_to_guess,
+               # ── круг 9, разбор живого прогона на проде: корень `database is
+               #    locked`, зависимость теста от .env машины, третья схема тела ──
+               t_one_connection_per_thread_not_per_call,
+               t_thresholds_do_not_depend_on_the_machine,
+               t_lab_body_matches_the_venue_schema):
         print('\n== %s' % fn.__name__)
         try:
             fn()

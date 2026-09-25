@@ -909,8 +909,26 @@ def _apply_hint(body, text):
     m = _RE_MISSING.search(text or '')
     if m:
         k = _field_tail(m.group(1))
+        # ── СНАЧАЛА ПРОБУЕМ СОБРАТЬ ПОЛЕ ИЗ ТОГО, ЧТО У НАС УЖЕ ЕСТЬ ──────────────────────
+        # ЖИВОЙ ПРОГОН ВЛАДЕЛЬЦА 26.09: «Required field 'body -> chains' is missing. Must be a
+        # list of chain names, e.g., ["ethereum", "solana"]». Ремонт ответил «построить его нам
+        # нечем» и встал - но построить было ЧЕМ: в теле лежало `chain: "ethereum"`, а площадка
+        # прямо сказала, что нужен СПИСОК тех же имён. Инструкция исполнима целиком, мы просто
+        # читали её до половины.
+        # ПЕРЕИМЕНОВАНИЕ СО ЗАВЁРТЫВАНИЕМ В СПИСОК, А НЕ ДОБАВЛЕНИЕ ВТОРОГО ПОЛЯ: оставив
+        # `chain` рядом с `chains`, мы получили бы «поле chain не распознано» следующим кругом.
+        _sing = _SINGULAR_OF.get(k)
+        if _sing and _sing in b and b[_sing] not in (None, ''):
+            _val = b.pop(_sing)
+            b[k] = list(_val) if isinstance(_val, (list, tuple)) else [_val]
+            return b, ('собрал %r списком из %r (площадка просит список)' % (k, _sing))
         mk = _FIX_DEFAULTS.get(k)
         if mk is None:
+            # ОТКАЗ НАЗЫВАЕТ, ЧТО ИМЕННО МЫ ИСКАЛИ: «нечем» без этого не подсказывает, какую
+            # пару дописать в `_SINGULAR_OF`, когда площадка попросит следующий список.
+            if _RE_WANTS_LIST.search(text or ''):
+                return None, ('нужен СПИСОК в поле %r, а одиночного %r в теле нет - добавь пару '
+                              'в _SINGULAR_OF' % (k, _sing or k.rstrip('s')))
             return None, 'нужно обязательное поле %r, а построить его нам нечем' % k
         b[k] = mk()
         return b, 'подставил обязательное поле %r' % k
@@ -939,6 +957,18 @@ def _apply_hint(body, text):
             return nb, 'обрезал время в датах (%s) - площадка просит YYYY-MM-DD' % ', '.join(hit)
         return None, 'площадка просит YYYY-MM-DD, но дат со временем в теле не нашлось'
     return None, 'в тексте ошибки нет исполнимой инструкции'
+
+
+#: «Required field 'body -> chains' is missing. Must be a list of chain names, e.g.,
+#: ["ethereum", "solana"]». Площадка не просто называет поле - она говорит, что это СПИСОК, и
+#: даже приводит пример. Инструкция исполнимая целиком.
+_RE_WANTS_LIST = re.compile(r"must be a list of ([a-z ]+?)s?(?:\s+names)?\s*,\s*e\.?g\.?", re.I)
+
+#: ПОЛЕ-СТРОКА, ИЗ КОТОРОГО МОЖНО СОБРАТЬ ПОЛЕ-СПИСОК. Только ЯВНЫЕ пары: догадка «однокоренное
+#: имя подойдёт» однажды слепит `token_address` с `token_addresses` там, где площадка имела в
+#: виду другое. Пара добавляется сюда только после того, как площадка сама её назвала.
+_SINGULAR_OF = {'chains': 'chain', 'token_addresses': 'token_address',
+                'addresses': 'address', 'symbols': 'symbol'}
 
 
 #: «Date format not allowed … use YYYY-MM-DD … Time components (T, :, Z, +) are not supported».
