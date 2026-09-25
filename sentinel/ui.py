@@ -109,6 +109,19 @@ def status_text(uid):
                                                            int(s['quiet_to'])))
     cap = store.cap_for(uid)
     lines.append('Сегодня доставлено: %d из %d' % (store.sent_today(uid), cap))
+    # ПРЕДОХРАНИТЕЛЬ ВИДЕН ЧЕЛОВЕКУ И НАЗВАН ГРАНИЦЕЙ. Ограничение, о котором не сказано на
+    # экране, человек примет за поломку («почему пришла сводка, а не алерт») - и будет прав:
+    # молчащее правило неотличимо от сбоя.
+    _bw, _bm = config.burst_window_sec(), config.burst_max()
+    lines.append('Предохранитель: не больше %d сообщений за %d мин (за %d мин уже %d). '
+                 'Остальное — сводкой раз в %d мин.'
+                 % (_bm, _bw // 60, _bw // 60, store.sent_in_window(uid, _bw),
+                    config.digest_sec() // 60))
+    if not config.deliver_on():
+        # РУБИЛЬНИК ОБЪЯВЛЯЕТСЯ НА ЭКРАНЕ ПЕРВЫМ ДЕЛОМ: иначе человек крутит свои настройки и
+        # не понимает, почему ничего не приходит, а причина лежит в `.env` на сервере.
+        lines.append('⛔ Отправка выключена на сервере (SENTINEL_DELIVER=0). '
+                     'Наблюдение идёт, сообщения не уходят.')
     lines.append('')
     lines.append(outbox.status_line())
     lines.append('')
@@ -154,8 +167,16 @@ def route(uid, text):
                 else ('• %s под дозором и не был' % a['ticker'])
         if act == 'alerts':
             store.settings_set(uid, alerts_on=1 if a['on'] else 0)
-            return ('✅ Алерты включены' if a['on']
-                    else '🔇 Алерты выключены. Список инструментов сохранён.')
+            if a['on']:
+                return '✅ Алерты включены'
+            # ═══ «ВЫКЛЮЧИЛ» ЗНАЧИТ «СЕЙЧАС» ═══
+            # ЖИВОЙ ИНЦИДЕНТ 25.09: владелец выключил алерты и продолжил получать поток.
+            # Настройка писалась верно, но в очереди уже лежали десятки доставок, и для них
+            # выключателя не существовало. Гасим очередь ЗДЕСЬ же и НАЗЫВАЕМ ЧИСЛО: тишина
+            # после нажатия неотличима от поломки, если не сказать, что именно отменено.
+            n = store.delivery_drop_user(uid, 'алерты выключены человеком')
+            return ('🔇 Алерты выключены. Список инструментов сохранён.'
+                    + (' Отменено в очереди: %d.' % n if n else ''))
         if act == 'enrich':
             store.settings_set(uid, enrich_on=1 if a['on'] else 0)
             return ('✅ Сводки включены (Нансен + твиттер вторым сообщением)' if a['on']
@@ -482,7 +503,13 @@ async def handle_callback(update, context):
         if act == 't':
             s = store.settings(uid)
             if arg == 'al':
-                store.settings_set(uid, alerts_on=0 if s.get('alerts_on') else 1)
+                _off = bool(s.get('alerts_on'))
+                store.settings_set(uid, alerts_on=0 if _off else 1)
+                if _off:
+                    # ТУМБЛЕР ГАСИТ ОЧЕРЕДЬ ТАК ЖЕ, КАК КОМАНДА СЛОВАМИ. Два пути к одному
+                    # решению обязаны делать одно и то же: «выключил кнопкой, а шлёт» и
+                    # «выключил командой, а шлёт» - один и тот же баг, пойманный 25.09.
+                    store.delivery_drop_user(uid, 'алерты выключены кнопкой')
             elif arg == 'br':
                 store.settings_set(uid, enrich_on=0 if s.get('enrich_on') else 1)
             elif arg == 'all':

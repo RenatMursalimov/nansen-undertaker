@@ -131,7 +131,8 @@ async def _same_thread(fn, *a, **kw):
 
 asyncio.to_thread = _same_thread
 
-from sentinel import cards, config, detector, engine, ignition, outbox, store, ui  # noqa: E402
+from sentinel import cards, config, detector, engine, ignition  # noqa: E402
+from sentinel import lab, outbox, store, ui                     # noqa: E402
 from sentinel import variational_feed as feed    # noqa: E402
 from sentinel import venues                      # noqa: E402
 
@@ -1687,6 +1688,345 @@ def t_link_leads_to_the_instrument():
           'app.hyperliquid.xyz/trade/ENA' in cards.card(hl), cards.card(hl)[-200:])
 
 
+def _ev_for(ticker='BTC', mark='104.0', now=None, kind='move_up'):
+    """Живое событие нужного вида через НАСТОЯЩИЙ детектор. -> ev."""
+    now = int(now if now is not None else time.time())
+    ring = series(60, now - 60 * 900, mark=100.0)
+    hot = [(now - 900, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 900)]
+    got = [e for e in detector.detect(one(ticker=ticker, mark=mark, quote_iso=_iso(now)),
+                                      hot, now=now, ring=ring) if e['kind'] == kind]
+    return got[0] if got else None
+
+
+def t_the_switch_actually_switches_off():
+    """ВЫКЛЮЧАТЕЛЬ ВЫКЛЮЧАЕТ, И ВЫКЛЮЧАЕТ СЕЙЧАС.
+
+    ═══ ЖИВОЙ ИНЦИДЕНТ 25.09, СЛОВА ВЛАДЕЛЬЦА ═══
+    «Я сейчас отключил алерты в Дозорном, всё равно всё шлёт мне сигналы… какой-то спам идёт и
+    идёт». Причина была не в пресетах: все семь проверок стояли ТОЛЬКО в `plan` (постановка в
+    очередь), а `deliver_due` читал очередь и настроек не смотрел ВООБЩЕ. Выключатель управлял
+    правом ВСТАТЬ в очередь, а не правом ПРИЙТИ на телефон.
+
+    ЭТОТ ТЕСТ ПАДАЕТ НА СТАРОМ КОДЕ - в этом его смысл. Он ставит доставку в очередь ПРИ
+    ВКЛЮЧЁННЫХ алертах, затем выключает их и проверяет, что на телефон не ушло НИЧЕГО.
+    """
+    now = int(time.time())
+    uid = 777001
+    store.sub_add(uid, 'BTC')
+    store.settings_set(uid, alerts_on=1, enrich_on=0, daily_cap=None, cooldown_min=None,
+                       min_pct=None, quiet_from=None, quiet_to=None)
+    ev = _ev_for(now=now)
+    ev = dict(ev, key='off-1')
+    store.event_new(ev)
+    outbox.plan(ev)
+    # ПРОВЕРЯЕМ СВОЮ СТРОКУ, А НЕ ОБЩЕЕ ЧИСЛО: на BTC к этому моменту подписаны и другие тесты,
+    # и счёт «поставлено всего» проверял бы соседей, а не выключатель.
+    check('OFF: при включённых алертах доставка встала в очередь',
+          any(x[0] == 'off-1' and x[1] == uid for x in store.delivery_due(limit=99)),
+          store.delivery_due(limit=99))
+
+    # ЧЕЛОВЕК ВЫКЛЮЧАЕТ АЛЕРТЫ УЖЕ ПОСЛЕ ТОГО, КАК СТРОКА ЛЕГЛА В ОЧЕРЕДЬ.
+    store.settings_set(uid, alerts_on=0)
+    bot = FakeBot()
+    attach(bot)
+    asyncio.run(outbox.deliver_due(limit=99))
+    check('OFF: после выключения НИ ОДНО сообщение не ушло',
+          not [c for c, _t in bot.sent if c == uid],
+          'ровно этот дефект владелец видел живьём: «отключил, всё равно шлёт»')
+    st = store.delivery_state(ev['key'], uid)
+    check('OFF: доставка ОТМЕНЕНА, а не оставлена в очереди',
+          st and st['state'] == 'off' and st['delivered_at'] is None, st)
+    check('OFF: и причина отмены записана словами',
+          st and 'выключены' in (st['last_err'] or ''), st)
+
+    # ОТМЕНА, А НЕ ПРОПУСК: на следующем тике строка не возвращается.
+    asyncio.run(outbox.deliver_due(limit=99))
+    check('OFF: на следующем тике строка не всплывает снова',
+          not [c for c, _t in bot.sent if c == uid], bot.sent)
+
+    # ВЫКЛЮЧЕНИЕ ЧИСТИТ ОЧЕРЕДЬ НЕМЕДЛЕННО И НАЗЫВАЕТ ЧИСЛО.
+    store.settings_set(uid, alerts_on=1)
+    ev2 = dict(_ev_for(mark='106.0', now=now + 5), key='off-2')
+    store.event_new(ev2)
+    outbox.plan(ev2)
+    ans = ui.route(uid, 'дозор алерты выкл')
+    check('OFF: команда словами гасит очередь и говорит СКОЛЬКО',
+          ans and 'Отменено в очереди' in ans, ans)
+    check('OFF: в очереди человека больше нечего отправлять',
+          not [x for x in store.delivery_due(limit=50) if x[1] == uid],
+          store.delivery_due(limit=50))
+
+    # ТУМБЛЕР И КОМАНДА ДЕЛАЮТ ОДНО И ТО ЖЕ.
+    store.settings_set(uid, alerts_on=1)
+    ev3 = dict(_ev_for(mark='108.0', now=now + 10), key='off-3')
+    store.event_new(ev3)
+    outbox.plan(ev3)
+    q = _Q(uid, 'sen:t:al')
+    asyncio.run(ui.handle_callback(type('U', (), {'callback_query': q})(), _Ctx()))
+    check('OFF: тумблер правда выключил настройку', store.settings(uid)['alerts_on'] == 0)
+    check('OFF: ТУМБЛЕР тоже гасит очередь, а не только настройку',
+          not [x for x in store.delivery_due(limit=99) if x[1] == uid],
+          'иначе «выключил кнопкой, а шлёт» - тот же баг через другую дверь')
+    # СВОДКА ВЫКЛЮЧЕННОМУ НЕ ЕДЕТ: иначе поток вернулся бы сводкой того же потока.
+    store.digest_add(uid, 'off-3', 90, 'предохранитель')
+    before = len([c for c, _t in bot.sent if c == uid])
+    asyncio.run(outbox.deliver_digest(now=now + 99999))
+    check('OFF: сводка выключенному не едет тоже',
+          len([c for c, _t in bot.sent if c == uid]) == before,
+          'иначе выключатель оставил бы лазейку: поток вернулся бы сводкой')
+
+
+def t_burst_guard_is_a_boundary_not_a_setting():
+    """ПРЕДОХРАНИТЕЛЬ ТЕМПА: три сообщения за окно, остальное — сводкой. ПРЕСЕТ ЕГО НЕ СНИМАЕТ.
+
+    ЗАМЕР ВЛАДЕЛЬЦА: «за минут больше 70 сообщений», «даже нажать ничего нельзя», «все подряд
+    тикеры - это бред». И ключевое: «даже если юзер ошибся или я с выбором пресетов, все подряд
+    не нужно кидать».
+
+    ПОЧЕМУ ПАУЗА И ПОТОЛОК, КОТОРЫЕ УЖЕ БЫЛИ, ЭТОГО НЕ ЛОВИЛИ: оба считались ПО ИНСТРУМЕНТУ, а
+    инструментов 787 - то есть у бота было 787 независимых законных разрешений заговорить.
+    Здесь счёт идёт НА ЧЕЛОВЕКА, поэтому число инструментов роли не играет.
+    """
+    now = int(time.time())
+    uid = 777002
+    store.sub_add(uid, store.ALL)
+    # ПРЕСЕТ «ПОТОК» - САМЫЕ РАЗРЕШАЮЩИЕ НАСТРОЙКИ, КАКИЕ ЧЕЛОВЕК МОЖЕТ ВЫБРАТЬ.
+    store.preset_apply(uid, 'test')
+    store.settings_set(uid, enrich_on=0, quiet_from=None, quiet_to=None)
+    check('BURST: пресет «поток» правда снял паузу и поднял потолок',
+          store.cap_for(uid) == 120 and int(store.settings(uid)['cooldown_min']) == 10)
+
+    bot = FakeBot()
+    attach(bot)
+    # ДЕСЯТЬ РАЗНЫХ ИНСТРУМЕНТОВ - то есть ни одна пауза по инструменту не мешает.
+    for i in range(10):
+        e = _ev_for(ticker='TK%d' % i, mark='104.0', now=now + i)
+        store.event_new(e)
+        outbox.plan(e)
+        asyncio.run(outbox.deliver_due())
+    got = len([c for c, _t in bot.sent if c == uid])
+    check('BURST: ушло не больше границы (%d), а не десять' % config.burst_max(),
+          got <= config.burst_max(), got)
+    check('BURST: и при этом ушло хоть что-то - молчать предохранитель не должен', got > 0, got)
+    pend = store.digest_pending(uid)
+    check('BURST: остальное НЕ ПОТЕРЯНО, а лежит в сводке',
+          len(pend) >= 10 - config.burst_max() - 1, len(pend))
+    check('BURST: у каждой отложенной строки есть ПРИЧИНА отсрочки',
+          all(r[2] for r in pend), pend[:3])
+    check('BURST: причина называется величиной, а не словом «лимит»',
+          any('предохранитель' in (r[2] or '') for r in pend), [r[2] for r in pend[:3]])
+    # ГРАНИЦА ПОВЕРХ ЛЮБЫХ НАСТРОЕК: человек выкрутил всё, что мог, и всё равно не залит.
+    check('BURST: пресет «поток» предохранитель НЕ СНЯЛ',
+          got <= config.burst_max(),
+          'иначе ошибка в пресете снова заливала бы человека до невозможности нажать кнопку')
+
+
+def t_weak_events_do_not_ring():
+    """СЛАБОЕ СОБЫТИЕ НЕ ЗВОНИТ, А ИДЁТ В СВОДКУ. Уверенность — величина, а не украшение."""
+    now = int(time.time())
+    uid = 777003
+    store.sub_add(uid, 'BTC')
+    store.settings_set(uid, alerts_on=1, enrich_on=0, daily_cap=None, cooldown_min=None,
+                       min_pct=None, quiet_from=None, quiet_to=None)
+    ev = _ev_for(now=now)
+    weak = dict(ev, key='sev-weak', severity=40)
+    store.event_new(weak)
+    n, why = outbox.plan(weak)
+    check('SEV: событие на 40/100 нашему подписчику не звонит',
+          not any(x[0] == 'sev-weak' and x[1] == uid for x in store.delivery_due(limit=99)),
+          (n, why))
+    check('SEV: причина называет ОБА числа - его и порог',
+          any('40/100' in w and str(config.min_severity()) in w for w in why), why)
+    check('SEV: и оно легло в сводку, а не пропало',
+          any(r[0] == 'sev-weak' for r in store.digest_pending(uid)))
+    strong = dict(ev, key='sev-strong', severity=90)
+    store.event_new(strong)
+    outbox.plan(strong)
+    check('SEV: событие на 90/100 звонит как раньше',
+          any(x[0] == 'sev-strong' and x[1] == uid for x in store.delivery_due(limit=99)))
+
+
+def t_digest_is_one_message_sorted_by_strength():
+    """СВОДКА: одно сообщение, сильное сверху, кнопки на карточки, остаток назван числом."""
+    now = int(time.time())
+    uid = 777004
+    store.sub_add(uid, store.ALL)
+    store.settings_set(uid, alerts_on=1, enrich_on=0, quiet_from=None, quiet_to=None)
+    keys = []
+    for i, sev in enumerate((55, 95, 70, 88)):
+        e = _ev_for(ticker='DG%d' % i, mark='104.0', now=now + i)
+        e = dict(e, key='dg%d' % i, severity=sev)
+        store.event_new(e)
+        store.digest_add(uid, e['key'], sev, 'предохранитель: 5 сообщений за 10 мин (граница 3)')
+        keys.append((e['key'], sev))
+    pend = store.digest_pending(uid)
+    check('DIG: порядок ПО СИЛЕ, а не по времени',
+          [r[1] for r in pend] == sorted([r[1] for r in pend], reverse=True),
+          [r[1] for r in pend])
+    check('DIG: сильнейшее сверху', pend[0][1] == 95, pend[0])
+
+    bot = FakeBot()
+    attach(bot)
+    # ОКНО ВЫДЕРЖКИ: строки только что созданы, и сводка ждать умеет. Время передаём
+    # аргументом - тест, который спал бы десять минут, не запускают.
+    check('DIG: свежие строки сводкой сразу НЕ уезжают',
+          not [c for c, _t in bot.sent if c == uid],
+          'иначе сводка уезжала бы по одной строке - тот же поток под другим именем')
+    asyncio.run(outbox.deliver_digest(now=now))
+    check('DIG: до конца выдержки сводки нет',
+          not [c for c, _t in bot.sent if c == uid], bot.sent)
+    asyncio.run(outbox.deliver_digest(now=now + config.digest_sec() + 1))
+    # ОДНО СООБЩЕНИЕ НА ЧЕЛОВЕКА - главное свойство сводки. Считаем ИМЕННО наши: к этому моменту
+    # свои накопления есть и у других подписчиков из предыдущих проверок.
+    mine = [t for c, t in bot.sent if c == uid]
+    check('DIG: сводка ушла ОДНИМ сообщением', len(mine) == 1,
+          [c for c, _t in bot.sent])
+    txt = mine[0]
+    check('DIG: в сводке есть все четыре инструмента',
+          all(('DG%d' % i) in txt for i in range(4)), txt[:300])
+    check('DIG: и у каждого ВЕЛИЧИНА, а не только тикер', txt.count('%') >= 4, txt[:300])
+    check('DIG: сказано, почему списком, а не звонком', 'Не звонили' in txt, txt[:200])
+    check('DIG: сводка размечена HTML', '<b>' in txt)
+    check('DIG: строки отмечены отправленными', not store.digest_pending(uid),
+          store.digest_pending(uid))
+    check('DIG: повторно та же сводка не уедет',
+          asyncio.run(outbox.deliver_digest(now=now + 99999))[0] == 0)
+    kb = cards.digest_kb([{'ev': store.event(k), 'why': ''} for k, _s in keys])
+    flat = [b for row in (kb.inline_keyboard if kb else []) for b in row]
+    check('DIG: под сводкой кнопки-тикеры (сквозной сценарий)',
+          any('DG0' in (b.text or '') for b in flat), [b.text for b in flat])
+    check('DIG: кнопка ведёт в карточку инструмента, а не в никуда',
+          any((b.callback_data or '').startswith('sen:card:') for b in flat),
+          [b.callback_data for b in flat])
+    # ОСТАТОК НАЗЫВАЕТСЯ ЧИСЛОМ
+    many = [{'ev': store.event(k), 'why': 'x'} for k, _s in keys]
+    card_txt = cards.digest_card(many, extra=34)
+    check('DIG: хвост назван числом, а не съеден', 'ещё 34' in card_txt, card_txt[-200:])
+
+
+def t_queue_is_taken_by_one_process_only():
+    """ЗАХВАТ ОЧЕРЕДИ: два процесса читают одну базу и НЕ отправляют одно и то же дважды.
+
+    ВТОРАЯ ПРИЧИНА ПОТОКА, НАЙДЕННАЯ ПО КОДУ. Читателей у очереди два - джоба бота
+    (`sentinel_deliver_only`, 30с) и отдельный юнит `sentinel.main` (свой `deliver_tick`, 30с).
+    Аренда `store.lease` держит ОПРОС площадки, а доставку не держал никто: оба брали одни и те
+    же строки и оба звали Telegram. До 50 сообщений за полминуты и каждый алерт ДВАЖДЫ - это
+    ровно арифметика владельца «больше 70 за минуты».
+    """
+    now = int(time.time())
+    uid = 777005
+    store.sub_add(uid, 'ETH')
+    store.settings_set(uid, alerts_on=1, enrich_on=0, daily_cap=None, cooldown_min=None,
+                       min_pct=None, quiet_from=None, quiet_to=None)
+    ev = _ev_for(ticker='ETH', mark='104.0', now=now)
+    store.event_new(ev)
+    outbox.plan(ev)
+    check('CLAIM: первый процесс строку взял', store.delivery_claim(ev['key'], uid) is True)
+    check('CLAIM: второй процесс ту же строку НЕ получил',
+          store.delivery_claim(ev['key'], uid) is False,
+          'без захвата оба процесса отправили бы один алерт дважды')
+    check('CLAIM: взятая строка из очереди пропала',
+          not [x for x in store.delivery_due(limit=50)
+               if x[0] == ev['key'] and x[1] == uid])
+    # СИРОТА: процесс умер между захватом и отправкой - строка обязана вернуться.
+    n = store.delivery_unstick(older_sec=0)
+    check('CLAIM: застрявшая в работе строка возвращается в очередь', n >= 1, n)
+    check('CLAIM: и снова доступна для отправки',
+          any(x[0] == ev['key'] and x[1] == uid for x in store.delivery_due(limit=50)),
+          'иначе захват создал бы новый способ потерять алерт МОЛЧА')
+
+
+def t_emergency_switch_stops_everything():
+    """АВАРИЙНЫЙ РУБИЛЬНИК: `SENTINEL_DELIVER=0` глушит отправку целиком и говорит об этом."""
+    now = int(time.time())
+    uid = 777006
+    store.sub_add(uid, 'BTC')
+    store.settings_set(uid, alerts_on=1, enrich_on=0, daily_cap=None, cooldown_min=None,
+                       min_pct=None, quiet_from=None, quiet_to=None)
+    ev = _ev_for(mark='109.0', now=now)
+    ev = dict(ev, key='emg1')
+    store.event_new(ev)
+    outbox.plan(ev)
+    bot = FakeBot()
+    attach(bot)
+    os.environ['SENTINEL_DELIVER'] = '0'
+    try:
+        check('STOP: рубильник выключен -> отправки нет', config.deliver_on() is False)
+        ok, bad = asyncio.run(outbox.deliver_due())
+        check('STOP: ни одного сообщения не ушло',
+              ok == 0 and not [c for c, _t in bot.sent if c == uid], (ok, bad, bot.sent))
+        check('STOP: сводка тоже молчит',
+              asyncio.run(outbox.deliver_digest(now=now + 99999))[0] == 0)
+        scr = ui.status_text(uid)
+        check('STOP: экран ОБЪЯВЛЯЕТ, что отправка выключена на сервере',
+              'SENTINEL_DELIVER' in scr,
+              'иначе человек крутит свои настройки, а причина лежит в .env')
+        check('STOP: очередь НЕ потеряна - строка ждёт',
+              any(x[0] == 'emg1' for x in store.delivery_due(limit=50)),
+              'рубильник глушит отправку, а не выбрасывает события')
+    finally:
+        os.environ.pop('SENTINEL_DELIVER', None)
+    check('STOP: рубильник вернули - отправка снова разрешена', config.deliver_on() is True)
+    ok2, _ = asyncio.run(outbox.deliver_due())
+    check('STOP: и отложенное рубильником уехало', ok2 >= 1, ok2)
+
+
+def t_guard_is_visible_on_the_screen():
+    """ПРЕДОХРАНИТЕЛЬ ВИДЕН ЧЕЛОВЕКУ. Молчащее правило неотличимо от поломки."""
+    uid = 777007
+    store.settings_set(uid, alerts_on=1)
+    scr = ui.status_text(uid)
+    check('SCR: экран называет границу числом',
+          str(config.burst_max()) in scr and 'Предохранитель' in scr, scr[:400])
+    check('SCR: и говорит, куда девается остальное', 'сводкой' in scr, scr[:400])
+    check('SCR: и сколько уже потрачено из окна', 'уже' in scr, scr[:400])
+
+
+def t_lab_field_name_came_from_the_venue():
+    """ЛАБОРАТОРИЯ: имя поля снято ЖИВЫМ ВЫЗОВОМ, а не угадано.
+
+    Первая редакция послала `date` и получила от площадки дословно: «Required field
+    'body -> date_range' is missing» (http 422, missing_field). Ручки нет в нашей описи 59
+    маршрутов - значит схему называет САМА площадка, и это измерение, а не догадка.
+    """
+    import inspect
+    src = inspect.getsource(lab.holdings)
+    check('LAB: в теле запроса стоит date_range', "'date_range'" in src, src[:200])
+    check('LAB: старого имени поля больше нет', "'date':" not in src)
+    check('LAB: и живой замер записан рядом с кодом', 'date_range' in src and '422' in src)
+    calls, credits, line = lab.plan(['0xabc'], 30)
+    check('LAB: план расхода печатается ДО траты', 'План:' in line and str(credits) in line)
+    rows, refused = lab.holdings('ethereum', '0xabc', days=30)
+    check('LAB: сухой прогон ничего не тратит и говорит об этом',
+          rows == [] and 'сухой прогон' in (refused or ''), refused)
+
+
+class _Q:
+    """Минимальный callback-запрос: нам нужны только uid, data и факт правки экрана."""
+    def __init__(self, uid, data):
+        self.data = data
+        self.from_user = type('U', (), {'id': uid})()
+        self.message = type('M', (), {'chat_id': uid, 'text': 'x'})()
+        self.edited = []
+
+    async def answer(self, *a, **kw):
+        return True
+
+    async def edit_message_text(self, text=None, reply_markup=None, **kw):
+        self.edited.append(text)
+        return True
+
+
+class _Ctx:
+    class bot:
+        sent = []
+
+        @staticmethod
+        async def send_message(chat_id=None, text=None, **kw):
+            _Ctx.bot.sent.append((chat_id, text))
+            return True
+
+
 def main():
     for fn in (t_parse_is_real_and_names_what_is_missing,
                t_detector_needs_both_percent_and_sigma,
@@ -1731,7 +2071,19 @@ def main():
                t_crowd_and_absorption_describe_not_predict,
                # ── круг 7 (25.09): запись после чтений, прямая ссылка на инструмент ──
                t_write_after_many_reads,
-               t_link_leads_to_the_instrument):
+               t_link_leads_to_the_instrument,
+               # ── круг 8 (25.09): ВЫКЛЮЧАТЕЛЬ НЕ ВЫКЛЮЧАЛ + поток 70 сообщений за минуты ──
+               #    Оба дефекта пойманы владельцем на живом боте. Первый - срочный: настройки
+               #    проверялись только при постановке в очередь. Второй - архитектурный: пауза
+               #    и потолок считались по инструменту, а инструментов 787.
+               t_the_switch_actually_switches_off,
+               t_burst_guard_is_a_boundary_not_a_setting,
+               t_weak_events_do_not_ring,
+               t_digest_is_one_message_sorted_by_strength,
+               t_queue_is_taken_by_one_process_only,
+               t_emergency_switch_stops_everything,
+               t_guard_is_visible_on_the_screen,
+               t_lab_field_name_came_from_the_venue):
         print('\n== %s' % fn.__name__)
         try:
             fn()

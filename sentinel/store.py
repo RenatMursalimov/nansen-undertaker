@@ -102,7 +102,19 @@ def _ensure(conn):
         created_at INTEGER,
         delivered_at INTEGER,
         msg_id INTEGER,
+        claimed_at INTEGER,
         UNIQUE(event_key, user_id))''')
+    # ЛЕНИВЫЙ ALTER: `claimed_at` появился в круге 8 вместе с захватом очереди, а таблица у
+    # владельца на проде УЖЕ ЕСТЬ - `CREATE TABLE IF NOT EXISTS` её не меняет.
+    # ПОЧЕМУ ОТДЕЛЬНАЯ КОЛОНКА, А НЕ `created_at`: спасение сирот по возрасту ОЧЕРЕДИ выдернуло
+    # бы строку, которая прямо сейчас в полёте (создана 20 минут назад, взята секунду назад
+    # после ретраев) - и человек получил бы алерт дважды. Возраст ЗАХВАТА отвечает на
+    # правильный вопрос: «сколько времени эта строка у кого-то в работе».
+    try:
+        conn.execute('ALTER TABLE sentinel_deliveries ADD COLUMN claimed_at INTEGER')
+    except Exception as _ae2:
+        if not _dup_column(_ae2):
+            raise
     conn.execute('''CREATE TABLE IF NOT EXISTS sentinel_cooldown (
         user_id INTEGER NOT NULL,
         ticker TEXT NOT NULL,
@@ -157,6 +169,21 @@ def _ensure(conn):
         day TEXT PRIMARY KEY,
         credits INTEGER DEFAULT 0,
         events INTEGER DEFAULT 0)''')
+    # ── ДАЙДЖЕСТ: ЧТО НЕ ПРОШЛО ПРЕДОХРАНИТЕЛЬ, НО НЕ ДОЛЖНО ПРОПАСТЬ.
+    #    Предохранитель темпа без дайджеста был бы второй ложью: человек не получил бы алерт и
+    #    не узнал бы, что его не получил. Строка помнит ПРИЧИНУ отсрочки - в сводке она видна,
+    #    и «почему это приехало списком, а не звонком» имеет ответ.
+    #    Пара (user_id, event_key) уникальна: одно событие не имеет права встать в сводку дважды
+    #    (а попытка будет - проверка идёт и при планировании, и перед отправкой).
+    conn.execute('''CREATE TABLE IF NOT EXISTS sentinel_digest (
+        user_id INTEGER NOT NULL,
+        event_key TEXT NOT NULL,
+        severity INTEGER DEFAULT 0,
+        why TEXT,
+        ts INTEGER,
+        sent_at INTEGER,
+        UNIQUE(user_id, event_key))''')
+    conn.execute('CREATE INDEX IF NOT EXISTS ix_sent_dig ON sentinel_digest(user_id, sent_at)')
 
 
 def _dup_column(e):
@@ -743,11 +770,107 @@ def delivery_plan(event_key, uid):
 
 
 def delivery_due(limit=50):
-    """Что ждёт отправки. -> [(event_key, uid, attempts)]."""
+    """Что ждёт отправки. -> [(event_key, uid, attempts)].
+
+    'work' ИЗ ВЫБОРКИ ИСКЛЮЧЁН НАРОЧНО: строку, уже взятую кем-то в работу, второй читатель
+    брать не должен (см. `delivery_claim` - причина там же, с замером).
+    """
     rows = _all("SELECT event_key, user_id, attempts FROM sentinel_deliveries "
-                "WHERE delivered_at IS NULL AND state<>'dead' "
+                "WHERE delivered_at IS NULL AND state IN ('queued','retry') "
                 "ORDER BY created_at ASC LIMIT ?", (int(limit),))
     return [(r[0], int(r[1]), int(r[2] or 0)) for r in rows]
+
+
+def delivery_claim(event_key, uid):
+    """Взять доставку в работу АТОМАРНО. -> True, если взяли мы.
+
+    ═══ ОЧЕРЕДЬ БЕЗ ЗАХВАТА ЧИТАЕТСЯ ДВУМЯ ПРОЦЕССАМИ, И ОБА ОТПРАВЛЯЮТ ═══
+    ВТОРАЯ ПРИЧИНА ПОТОКА, НАЙДЕННАЯ ПО КОДУ 25.09. `delivery_due` был обычным SELECT, а
+    читателей у очереди ДВА: джоба бота (`sentinel_deliver_only`, каждые 30с) и отдельный юнит
+    `sentinel.main` (свой `deliver_tick`, тоже каждые 30с). Аренда (`store.lease`) их не
+    разводит - она держит ОПРОС площадки, и в её докстринге так и написано; доставку не держал
+    никто. Значит оба процесса брали одни и те же 25 строк и оба звали Telegram: до 50 сообщений
+    за полминуты и КАЖДЫЙ АЛЕРТ ДВАЖДЫ. Арифметика владельца («больше 70 за минуты») сходится
+    ровно здесь.
+    ПОЧЕМУ UPDATE, А НЕ ФЛАГ В ПАМЯТИ: процессы разные, общая у них только база. Атомарность даёт
+    условие в самом UPDATE (`state IN ('queued','retry')`) плюс `rowcount`: кто изменил строку,
+    тот и владелец. Это тот же приём, что уже работает у `enrich_claim`, - и там он стоит по той
+    же причине (два тика купили бы одну сводку дважды).
+    """
+    c = conn()
+    try:
+        cur = c.execute("UPDATE sentinel_deliveries SET state='work', claimed_at=? WHERE "
+                        'event_key=? AND user_id=? AND delivered_at IS NULL AND '
+                        "state IN ('queued','retry')", (_now(), event_key, int(uid)))
+        c.commit()
+        got = getattr(cur, 'rowcount', 1)
+        _shut(cur)
+        # ОБЁРТКА, НЕ УМЕЮЩАЯ `rowcount`, ОТДАЁТ -1. Считать это «не взяли» значило бы
+        # остановить доставку вовсе, поэтому неизвестность трактуем как «взяли»: хуже
+        # дубликата только тишина. Публичная выжимка живёт на своей маленькой `db.py`.
+        return True if got is None or int(got) < 0 else int(got) > 0
+    except Exception as e:
+        _say_fail('доставка не взята в работу', e)
+        return False
+
+
+def delivery_cancel(event_key, uid, why):
+    """Снять доставку с очереди С ПРИЧИНОЙ. -> None.
+
+    ОТМЕНА, А НЕ ПРОПУСК, И ЭТО СУТЬ СРОЧНОГО ФИКСА. Пропустить строку значит оставить её в
+    очереди - и на следующем тике она снова придёт на проверку, и снова, и снова: человек,
+    выключивший алерты, получал бы отказ в логе каждые 30 секунд вечно. Отмена закрывает вопрос
+    один раз и ОСТАВЛЯЕТ ПРИЧИНУ В БАЗЕ: «почему мне это не пришло» обязано иметь ответ.
+    """
+    c = conn()
+    c.execute("UPDATE sentinel_deliveries SET state='off', last_err=? "
+              'WHERE event_key=? AND user_id=? AND delivered_at IS NULL',
+              (str(why)[:200], event_key, int(uid)))
+    c.commit()
+
+
+def delivery_drop_user(uid, why='выключено человеком'):
+    """ПОГАСИТЬ ВСЮ ОЧЕРЕДЬ ЧЕЛОВЕКА. -> сколько строк погасили.
+
+    ═══ «ВЫКЛЮЧИЛ» ЗНАЧИТ «СЕЙЧАС», А НЕ «КОГДА ОЧЕРЕДЬ КОНЧИТСЯ» ═══
+    ЖИВОЙ ИНЦИДЕНТ 25.09: владелец выключил алерты тумблером и продолжил получать поток. Тумблер
+    работал - но он менял только ПРАВО ВСТАВАТЬ В ОЧЕРЕДЬ, а в очереди уже лежали десятки
+    доставок, и для них выключателя не существовало. Проверка на отправке (`mute_reason`) это
+    закрывает, однако её одной мало: без гашения человек ещё много тиков видел бы, как бот
+    «думает» над его очередью, а в логе копились бы отказы по строкам, которые никому не нужны.
+    Поэтому выключение алертов и пресет «тихий» ЧИСТЯТ очередь сразу и ВОЗВРАЩАЮТ ЧИСЛО -
+    интерфейс обязан сказать человеку, сколько сообщений он только что отменил, иначе тишина
+    после нажатия неотличима от поломки.
+    НЕ УДАЛЯЕМ, А ПОМЕЧАЕМ: строка с причиной - единственный способ разобрать следующий случай
+    «а куда девался алерт». Удаление молча - то, от чего этот модуль защищается везде.
+    """
+    c = conn()
+    cur = c.execute("UPDATE sentinel_deliveries SET state='off', last_err=? "
+                    'WHERE user_id=? AND delivered_at IS NULL '
+                    "AND state IN ('queued','retry','work')", (str(why)[:200], int(uid)))
+    c.commit()
+    n = getattr(cur, 'rowcount', 0)
+    _shut(cur)
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = 0
+    return max(0, n)
+
+
+def sent_in_window(uid, sec, now=None):
+    """Сколько алертов ДОШЛО до человека за последние `sec` секунд. -> int.
+
+    СЧИТАЕМ ПО `delivered_at`, А НЕ ПО ПОПЫТКАМ: предохранитель защищает телефон человека, а
+    отправка, которую Telegram не принял, его не тревожила. Тот же закон, что у суточного
+    потолка, - и он здесь не для симметрии: иначе серия сетевых сбоев «съедала» бы окно, и
+    человек не получил бы НИЧЕГО.
+    """
+    now = int(now if now is not None else time.time())
+    r = _one('SELECT COUNT(*) FROM sentinel_deliveries '
+             'WHERE user_id=? AND delivered_at IS NOT NULL AND delivered_at>=?',
+             (int(uid), now - int(sec)))
+    return int((r or [0])[0] or 0)
 
 
 def delivery_ok(event_key, uid, msg_id=None):
@@ -788,6 +911,112 @@ def delivered_users(event_key):
     rows = _all('SELECT user_id FROM sentinel_deliveries WHERE event_key=? '
                 'AND delivered_at IS NOT NULL', (event_key,))
     return [int(r[0]) for r in rows]
+
+
+def delivery_unstick(older_sec=600):
+    """Вернуть в очередь доставки, застрявшие в работе. -> сколько вернули.
+
+    ЗАЧЕМ, ЕСЛИ ЗАХВАТ УЖЕ ЕСТЬ. Захват создаёт новый способ потерять алерт МОЛЧА: процесс
+    взял строку в работу и умер (рестарт, OOM, `kill`) - строка навсегда осталась в 'work', и
+    никто её больше не прочитает. Это ровно тот исход, от которого очередь и завели, только
+    теперь с нашей же подписью. Спасение по времени закрывает дыру без второй таблицы: живой
+    круг доставки занимает секунды, и всё, что висит в работе десять минут, - это сирота.
+
+    СЧИТАЕМ ПО `claimed_at`, А НЕ ПО `created_at`, И ЭТО НЕ ПРИДИРКА: строка могла быть создана
+    двадцать минут назад и несколько раз уйти в ретрай, а взята в работу секунду назад. Возраст
+    ОЧЕРЕДИ назвал бы сиротой строку, которая прямо сейчас в полёте, - и человек получил бы
+    алерт ДВАЖДЫ, то есть лечение вернуло бы ту самую болезнь.
+    """
+    c = conn()
+    cur = c.execute("UPDATE sentinel_deliveries SET state='queued' WHERE state='work' "
+                    'AND delivered_at IS NULL AND COALESCE(claimed_at, 0) <= ?',
+                    (_now() - int(older_sec),))
+    c.commit()
+    n = getattr(cur, 'rowcount', 0)
+    _shut(cur)
+    try:
+        return max(0, int(n))
+    except (TypeError, ValueError):
+        return 0
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# ДАЙДЖЕСТ: ОТСРОЧЕННОЕ - НЕ ЗНАЧИТ ВЫБРОШЕННОЕ
+# ══════════════════════════════════════════════════════════════════════════════════════════
+def digest_add(uid, event_key, severity=0, why=''):
+    """Отложить событие в сводку. -> True, если легло (False = уже лежало).
+
+    ПРИЧИНА ОТСРОЧКИ ХРАНИТСЯ РЯДОМ С СОБЫТИЕМ. «Почему это приехало списком, а не звонком» -
+    вопрос, который человек задаст первым, и отвечать на него догадкой нельзя.
+    """
+    c = conn()
+    try:
+        c.execute('INSERT INTO sentinel_digest (user_id, event_key, severity, why, ts) '
+                  'VALUES (?,?,?,?,?)',
+                  (int(uid), event_key, int(severity or 0), str(why or '')[:120], _now()))
+        c.commit()
+        return True
+    except Exception as e:
+        if _is_dup(e):
+            return False
+        _say_fail('в дайджест не легло', e)
+        return False
+
+
+def digest_pending(uid, limit=200):
+    """Что накопилось человеку. -> [(event_key, severity, why, ts)], СИЛЬНОЕ СВЕРХУ.
+
+    ПОРЯДОК ПО СИЛЕ, А НЕ ПО ВРЕМЕНИ, И ЭТО РЕШЕНИЕ, А НЕ ВКУС. Лента по времени читается как
+    набор случайных строк: глаз доходит до третьей и бросает. Сводка нужна, чтобы человек за
+    десять секунд увидел САМОЕ КРУПНОЕ, поэтому сверху крупное, а время - вторым ключом.
+    """
+    rows = _all('SELECT event_key, severity, why, ts FROM sentinel_digest '
+                'WHERE user_id=? AND sent_at IS NULL '
+                'ORDER BY severity DESC, ts DESC LIMIT ?', (int(uid), int(limit)))
+    return [(r[0], int(r[1] or 0), r[2], int(r[3] or 0)) for r in rows]
+
+
+def digest_users(older_than_sec=0, now=None):
+    """Кому пора отправить сводку. -> [uid].
+
+    ОТБИРАЕМ ПО ВОЗРАСТУ САМОЙ СТАРОЙ СТРОКИ, а не «всем, у кого есть»: иначе сводка уезжала бы
+    на каждом тике по одной строке и превратилась бы в тот же поток, от которого создана.
+    """
+    now = int(now if now is not None else time.time())
+    rows = _all('SELECT user_id, MIN(ts) FROM sentinel_digest WHERE sent_at IS NULL '
+                'GROUP BY user_id', ())
+    out = []
+    for r in rows:
+        if int(r[1] or 0) <= now - int(older_than_sec):
+            out.append(int(r[0]))
+    return out
+
+
+def digest_mark(uid, keys, now=None):
+    """Отметить строки отправленными. ЗОВЁТ ТОЛЬКО ТОТ, КТО ПОЛУЧИЛ ОТВЕТ ТЕЛЕГРАМА.
+
+    Тот же закон, что у `delivery_ok` и `cooldown_mark`: отметка до подтверждения превращает
+    сбой сети в молчаливую потерю всей накопленной сводки.
+    """
+    if not keys:
+        return 0
+    now = int(now if now is not None else time.time())
+    c = conn()
+    n = 0
+    for k in keys:
+        c.execute('UPDATE sentinel_digest SET sent_at=? WHERE user_id=? AND event_key=? '
+                  'AND sent_at IS NULL', (now, int(uid), k))
+        n += 1
+    c.commit()
+    return n
+
+
+def digest_prune(days=3):
+    """Убрать отправленные строки старше N суток. Сводка — не архив."""
+    c = conn()
+    c.execute('DELETE FROM sentinel_digest WHERE sent_at IS NOT NULL AND sent_at < ?',
+              (_now() - int(days) * 86400,))
+    c.commit()
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
