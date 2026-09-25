@@ -803,24 +803,33 @@ def _date_range(days=7):
             "to": to.strftime("%Y-%m-%dT23:59:59Z")}
 
 
-def _post(path, body, ckey=None, timeout=60):
+def _post(path, body, ckey=None, timeout=60, ttl=None):
     """Общий POST к Nansen. -> распарсенный JSON (dict) или None. Кэш по ckey.
 
     Возврат остался прежним (JSON | None), потому что его читают двадцать мест. НО ПРИЧИНА
     ОТКАЗА БОЛЬШЕ НЕ ТЕРЯЕТСЯ: она уезжает в коробку вызова (`nansen_log`), и верхний слой
     берёт её `nansen_log.outcome()`. Раньше `None` от 402, 429, 500 и «данных правда нет»
-    были неразличимы, `_rows(None)` давал `[]`, и пустота выглядела как чистота."""
+    были неразличимы, `_rows(None)` давал `[]`, и пустота выглядела как чистота.
+
+    `ttl` - СВОЙ СРОК ЖИЗНИ КЭША ДЛЯ ЭТОГО ВЫЗОВА, в секундах. Появился ради живого дозорного
+    (`sentinel/`): общий `_CACHE_TTL` = 30 минут, и наблюдатель, который обязан заметить вход
+    смарт-денег «сейчас», получал бы один и тот же ответ ПОЛЧАСА - то есть «живые алерты»
+    приходили бы партиями по тридцать минут и выглядели бы при этом совершенно исправно.
+    ЧИСТИТЬ ОБЩИЙ КЭШ БЫЛО НЕЛЬЗЯ: на тех же ключах живут дайджест и твит-джобы, и укоротив
+    срок всем, мы бы умножили их расход кредитов. Поэтому у дозорного СВОЙ ключ кэша и свой
+    короткий срок, а поведение остальных вызовов не меняется вовсе (ttl=None - как было).
+    """
     if not _key():
         _tele.note('nokey')
         return None
     if ckey:
-        c = _cache_get(ckey)
+        c = _cache_get(ckey, ttl=ttl)
         if c is not None:
             _cache_hit(path, c)
             return c
     j, http = _http_post(_BASE, path, body, timeout, "")
     if j is not None and ckey:
-        _cache_put(ckey, j)
+        _cache_put(ckey, j, ttl=ttl)
     return j
 
 
@@ -955,14 +964,16 @@ def _schema_learn(path, before, after):
         print('[nansen] схему %s запомнить не удалось: %s' % (path, e))
 
 
-def _post_fix(path, body, ckey=None, timeout=60):
+def _post_fix(path, body, ckey=None, timeout=60, ttl=None):
     """POST к эндпоинту с НЕСНЯТОЙ схемой: при 400/422 правим тело по словам площадки.
-    -> распарсенный JSON | None. Кэш и телеметрия - те же, что у `_post`."""
+    -> распарсенный JSON | None. Кэш и телеметрия - те же, что у `_post`, включая свой `ttl`
+    (зачем он нужен - разобрано в докстринге `_post`: живому наблюдателю 30-минутный общий
+    кэш превращает «сейчас» в «раз в полчаса»)."""
     if not _key():
         _tele.note('nokey')
         return None
     if ckey:
-        c = _cache_get(ckey)
+        c = _cache_get(ckey, ttl=ttl)
         if c is not None:
             _cache_hit(path, c)
             return c
@@ -984,7 +995,7 @@ def _post_fix(path, body, ckey=None, timeout=60):
                       % (path, rnd, json.dumps(b, ensure_ascii=False)[:400]))
                 _schema_learn(path, _b0, b)
             if j is not None and ckey:
-                _cache_put(ckey, j)
+                _cache_put(ckey, j, ttl=ttl)
             return j
         if _classify(http) != 'badreq' or rnd >= _FIX_ROUNDS:
             return None
@@ -2396,7 +2407,7 @@ def perp_pnl_leaderboard(token, per_page=10, days=7):
 
 
 # ── Smart Money: то, чего не было ─────────────────────────────────────────────
-def sm_dex_trades(chains=None, per_page=25):
+def sm_dex_trades(chains=None, per_page=25, live=False, ttl=None):
     """Сделки smart money на DEX за последние 24ч. -> [dict]. ~1-5 кр.
 
     САМОЕ БЛИЗКОЕ К «ЧТО ОНИ ДЕЛАЮТ ПРЯМО СЕЙЧАС»: netflow это агрегат за окно, а здесь
@@ -2404,17 +2415,28 @@ def sm_dex_trades(chains=None, per_page=25):
 
     Схема подтверждена живой пробой 19.09, поэтому обычный `_post`, а не `_post_fix`:
     capped corpus считает один client invocation как один физический запрос; автоматические
-    repair-retries здесь могли пробить обещанный hard cap."""
+    repair-retries здесь могли пробить обещанный hard cap.
+
+    `live=True` - РЕЖИМ ЖИВОГО НАБЛЮДЕНИЯ (дозорный). Меняет РОВНО ДВЕ вещи: ключ кэша и его
+    срок. Ключ ДРУГОЙ нарочно - иначе короткий срок дозорного лёг бы на ту же клетку, из
+    которой берут дайджест и твит-джобы, и они начали бы платить кредитами за чужую
+    свежесть. Сам кэш не выключаем совсем: два тика подряд в одну секунду (наложение) не
+    должны стоить двух запросов."""
     chains = chains or ["ethereum", "solana", "base"]
+    _k = 'smdexlive' if live else 'smdex'
     return _rows(_post("smart-money/dex-trades",
                        {"chains": chains,
                         "pagination": {"page": 1, "per_page": per_page},
                         "order_by": [{"field": "block_timestamp", "direction": "DESC"}]},
-                       ckey=f"smdex:{','.join(chains)}:{per_page}"))
+                       ckey=f"{_k}:{','.join(chains)}:{per_page}",
+                       ttl=(ttl if ttl is not None else (20 if live else None))))
 
 
-def sm_perp_trades(per_page=25):
+def sm_perp_trades(per_page=25, live=False, ttl=None):
     """Что smart money торгует на Hyperliquid. -> [dict]. ~1-5 кр.
+
+    `live=True` - тот же режим живого наблюдения, что у `sm_dex_trades`: свой ключ кэша и
+    короткий срок, чтобы дозорный не читал получасовой снимок как «прямо сейчас».
 
     СХЕМА ПОДТВЕРЖДЕНА ЖИВОЙ ПРОБОЙ 19.09 (200, строки есть). Поля ответа:
     action, side, type, token_symbol, token_amount, price_usd, value_usd, block_timestamp,
@@ -2425,7 +2447,8 @@ def sm_perp_trades(per_page=25):
     return _rows(_post_fix("smart-money/perp-trades",
                        {"pagination": {"page": 1, "per_page": per_page},
                         "order_by": [{"field": "block_timestamp", "direction": "DESC"}]},
-                       ckey=f"smperp:{per_page}"))
+                       ckey=f"{'smperplive' if live else 'smperp'}:{per_page}",
+                       ttl=(ttl if ttl is not None else (20 if live else None))))
 
 
 # ── Profiler: то, чего не было ────────────────────────────────────────────────

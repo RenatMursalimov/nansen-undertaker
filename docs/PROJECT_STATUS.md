@@ -1,6 +1,6 @@
 # Nansen Undertaker — project status
 
-**Updated:** 23 September 2026  
+**Updated:** 25 September 2026  
 **Buildathon deadline:** 27 September 2026, 23:59 UTC  
 **Status:** product and eligibility proven; recording, X post and official form remain.
 
@@ -17,6 +17,7 @@
 | No identifier typing left | ✅ Complete | market id travels from the card (`🧾 N` in chat, a button on the market card in the app); only tickers are typed, and a ticker is knowledge the user already has |
 | Smart Money trade as % of market cap | ✅ Complete | no extra request; value, market cap and token age from one response |
 | Honest outcomes | ✅ Complete | 8 distinct states; partial failures never become wallet properties |
+| Sentinel: live alerts | ✅ Built, sandbox acceptance pending | `sentinel/` (12 modules); five event kinds on Variational Omni plus Smart Ignition on Nansen; 104 offline checks in `tests/test_sentinel.py`; live proof in `proofs/sentinel_live_proof.py`; spec in [`SENTINEL_SPEC.md`](SENTINEL_SPEC.md) |
 | Telemetry | ✅ Complete | 28 workflow/operations scenes; one production reader; submission export |
 | Public repository | ✅ Public, CI green | https://github.com/RenatMursalimov/nansen-undertaker |
 | 1,000-call eligibility | ✅ Threshold exceeded | Nansen screenshot: **5,484 used on Sep 20**, 13,850 total in 30D |
