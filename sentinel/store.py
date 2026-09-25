@@ -648,11 +648,13 @@ def venue_toggle(uid, venue):
 #: пороги детектора остаются как есть, потому что они одни на всех подписчиков.
 PRESETS = {
     'test': {'min_pct': None, 'cooldown_min': 10, 'daily_cap': 120,
-             'kinds': 'move_up,move_down,oi_surge,vol_surge,ignition',
+             'kinds': 'move_up,move_down,oi_surge,vol_surge,ignition,venue_gap,'
+                      'crowded,absorption',
              'why': 'поток для проверки: все виды кроме спреда и фандинга, пауза 10 минут, '
                     'потолок 120 в сутки'},
     'normal': {'min_pct': None, 'cooldown_min': None, 'daily_cap': None,
-               'kinds': 'move_up,move_down,oi_surge,vol_surge,ignition',
+               'kinds': 'move_up,move_down,oi_surge,vol_surge,ignition,venue_gap,'
+                        'crowded,absorption',
                'why': 'рабочий режим: пауза час, потолок 25 в сутки'},
     'quiet': {'min_pct': 3.0, 'cooldown_min': 180, 'daily_cap': 10,
               'kinds': 'move_up,move_down,ignition',

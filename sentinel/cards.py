@@ -46,6 +46,8 @@ _KIND_TITLE = {
     'spread_shock': '⚠️',
     'ignition': '🔥',
     'venue_gap': '⚖️',
+    'crowded': '🧨',
+    'absorption': '🧲',
 }
 
 _KIND_WORD = {
@@ -54,6 +56,8 @@ _KIND_WORD = {
     'oi_surge': 'открытый интерес',
     'vol_surge': 'всплеск оборота',
     'venue_gap': 'цена расходится между площадками',
+    'crowded': 'тесная толпа',
+    'absorption': 'поглощение',
     'funding_extreme': 'ставка в хвосте',
     'spread_shock': 'котировка разъехалась',
     'ignition': 'смарт-зажигание',
@@ -175,6 +179,24 @@ def _links(ev, bot_un=None):
     return '🔗 ' + ' · '.join(out)
 
 
+def depth_or_spread(p):
+    """Строка цены входа. -> str.
+
+    ОДНА СТРОКА НА ОБЕ ПЛОЩАДКИ, И ОНА НЕ ЖАЛУЕТСЯ. У Variational есть котировки на объём
+    ($100k, $1M) - показываем их. У Hyperliquid их нет, зато есть спред из цен исполнения
+    на заметный размер - показываем его. Прежняя редакция печатала «Вход на $100k: котировки
+    нет · котировке возраст не назван», то есть две жалобы вместо одного числа, которое у
+    нас было.
+    """
+    d100 = p.get('depth_100k_bps')
+    if d100 is not None:
+        return 'Вход на $100k: %.0f б.п. · котировке %s' % (d100, _age(p.get('quote_age_s')))
+    sp = p.get('spread_bps')
+    if sp is not None:
+        return 'Спред на размер: %.1f б.п.' % sp
+    return 'Цену входа площадка не отдаёт'
+
+
 def card(ev, lang='ru', bot_un=None):
     """Событие -> HTML-текст алерта (str).
 
@@ -200,6 +222,12 @@ def card(ev, lang='ru', bot_un=None):
         lines.append('%s <b>%s</b>  оборот <b>%s</b> за час (+%s)'
                      % (icon, tick, _pct(p.get('vol_change_pct')),
                         _usd(p.get('vol_change_usd'))))
+    elif kind == 'crowded':
+        lines.append('%s <b>%s</b>  <b>%.0f%%</b> интереса в %s и платят по верхней ставке'
+                     % (icon, tick, p.get('crowd_pct') or 0, p.get('crowd_side') or '?'))
+    elif kind == 'absorption':
+        lines.append('%s <b>%s</b>  интерес <b>%s</b> за час, а цена стоит'
+                     % (icon, tick, _pct(p.get('oi_change_pct'))))
     elif kind == 'venue_gap':
         lines.append('%s <b>%s</b>  расхождение <b>%.0f б.п.</b> между площадками'
                      % (icon, tick, p.get('gap_bps') or 0))
@@ -279,10 +307,7 @@ def card(ev, lang='ru', bot_un=None):
         lines.append(' · '.join(_mkt))
         # ЦЕНА ВХОДА - ЕДИНСТВЕННОЕ, ЧТО ЧЕЛОВЕК ДЕЛАЕТ ПОСЛЕ АЛЕРТА, поэтому строка есть
         # всегда. Базовый спред отдельной строкой не идёт: заходят на сумму, а не на копейку.
-        d100 = p.get('depth_100k_bps')
-        lines.append('Вход на $100k: %s · котировке %s'
-                     % (('%.0f б.п.' % d100) if d100 is not None else 'котировки нет',
-                        _age(p.get('quote_age_s'))))
+        lines.append(depth_or_spread(p))
         # ФАНДИНГ ТОЛЬКО ТАМ, ГДЕ ОН СОБЫТИЕ ИЛИ НЕ НУЛЕВОЙ: строка «funding_rate: 0» в каждом
         # алерте - шум, а единица у поля всё равно не заявлена провайдером (долг №1 в спеке).
         fr = p.get('funding_raw')
@@ -301,6 +326,15 @@ def card(ev, lang='ru', bot_un=None):
         lines.append('Уверенность <b>%d/100</b>' % sev)
     if kind == 'spread_shock':
         lines.append('<i>Это предостережение о цене входа, а не сигнал.</i>')
+    elif kind == 'crowded':
+        # НАПРАВЛЕНИЕ НЕ НАЗЫВАЕМ. Сигнал описывает конструкцию («выносить будут против
+        # толпы»), а не предсказывает ход; подмена одного другим - это финсовет, которого
+        # дозорный не даёт.
+        lines.append('<i>Это описание конструкции: каскад ликвидаций идёт против толпы. '
+                     'Направление дозорный не предсказывает.</i>')
+    elif kind == 'absorption':
+        lines.append('<i>Кто-то набирает против потока, и его пока хватает. '
+                     'Подтверждения направления здесь нет.</i>')
     else:
         # ОДНА СТРОКА ВМЕСТО ЧЕТЫРЁХ ПУНКТОВ: длинный дисклеймер в каждом алерте перестают
         # читать на третьем, и тогда он не защищает никого.

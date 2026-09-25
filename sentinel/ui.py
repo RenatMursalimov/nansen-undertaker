@@ -229,6 +229,8 @@ _T = {
     'k_oi': {'ru': 'Интерес', 'en': 'Open interest'},
     'k_vol': {'ru': 'Объём', 'en': 'Volume'},
     'k_gap': {'ru': 'Расхождение', 'en': 'Venue gap'},
+    'k_crowd': {'ru': 'Толпа', 'en': 'Crowded'},
+    'k_absorb': {'ru': 'Поглощение', 'en': 'Absorption'},
     'k_ign': {'ru': 'Зажигание', 'en': 'Ignition'},
     'k_fund': {'ru': 'Фандинг', 'en': 'Funding'},
     'k_spread': {'ru': 'Спред', 'en': 'Spread'},
@@ -303,7 +305,8 @@ def menu_text(uid, lang=None):
     _k = store.kinds_for(uid)
     _p = store.parts_for(uid)
     _kn = {'move_up': _t('k_move', lang), 'vol_surge': _t('k_vol', lang),
-           'venue_gap': _t('k_gap', lang),
+           'venue_gap': _t('k_gap', lang), 'crowded': _t('k_crowd', lang),
+           'absorption': _t('k_absorb', lang),
            'oi_surge': _t('k_oi', lang),
            'ignition': _t('k_ign', lang), 'funding_extreme': _t('k_fund', lang),
            'spread_shock': _t('k_spread', lang)}
@@ -396,6 +399,9 @@ def menu_kb(uid, lang=None):
         [B(_mark(_t('k_move', lang), 'move_up' in kinds), callback_data='sen:k:move'),
          B(_mark(_t('k_vol', lang), 'vol_surge' in kinds), callback_data='sen:k:vol'),
          B(_mark(_t('k_oi', lang), 'oi_surge' in kinds), callback_data='sen:k:oi')],
+        [B(_mark(_t('k_crowd', lang), 'crowded' in kinds), callback_data='sen:k:crowd'),
+         B(_mark(_t('k_absorb', lang), 'absorption' in kinds),
+           callback_data='sen:k:absorb')],
         [B(_mark(_t('k_ign', lang), 'ignition' in kinds), callback_data='sen:k:ign'),
          B(_mark(_t('k_gap', lang), 'venue_gap' in kinds), callback_data='sen:k:gap'),
          B(_mark(_t('k_fund', lang), 'funding_extreme' in kinds), callback_data='sen:k:fund'),
@@ -508,6 +514,7 @@ async def handle_callback(update, context):
             # хочет знать и о росте.
             _map = {'move': ('move_up', 'move_down'), 'oi': ('oi_surge',),
                     'vol': ('vol_surge',), 'gap': ('venue_gap',),
+                    'crowd': ('crowded',), 'absorb': ('absorption',),
                     'ign': ('ignition',), 'fund': ('funding_extreme',),
                     'spread': ('spread_shock',)}
             cur = store.kinds_for(uid)
@@ -530,7 +537,10 @@ async def handle_callback(update, context):
             f, t = _quiet_next(store.settings(uid))
             store.settings_set(uid, quiet_from=f, quiet_to=t)
         elif act == 'now':
-            return await _send(q, context, now_text(lang))
+            return await _send(q, context, now_text(lang), now_kb(lang))
+        elif act == 'card':
+            _v, _tk = (arg, parts[3]) if len(parts) > 3 else ('', arg)
+            return await _send(q, context, await card_link(_tk, _v, lang))
         elif act == 'rep':
             return await _send(q, context, report_text(lang))
         elif act == 'help':
@@ -618,6 +628,41 @@ async def _send(q, context, text, kb=None):
                                    parse_mode='HTML', disable_web_page_preview=True)
 
 
+def now_kb(lang='ru'):
+    """Кнопки-тикеры под срезом рынка. -> InlineKeyboardMarkup | None.
+
+    СКВОЗНОЙ СЦЕНАРИЙ: тап по тикеру ведёт в НАШУ карточку токена, откуда уже есть
+    график и избранное. Без этих кнопок экран был тупиком: человек читал «BR +8.37%»
+    и шёл набирать «BR» руками в другом окне - работу, которую мы умеем сделать сами.
+    """
+    from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup
+    m = engine.market_now()
+    seen, rows, cur = set(), [], []
+    for _a, t, _b, _c, _d, v in (m.get('moves') or []):
+        if t in seen:
+            continue
+        seen.add(t)
+        cur.append(B('📊 %s' % t, callback_data='sen:card:%s:%s' % (v, t)))
+        if len(cur) == 3:
+            rows.append(cur)
+            cur = []
+    for dv, t, _u, v in (m.get('vols') or []):
+        if t in seen or len(rows) >= 3:
+            continue
+        seen.add(t)
+        cur.append(B('📊 %s' % t, callback_data='sen:card:%s:%s' % (v, t)))
+        if len(cur) == 3:
+            rows.append(cur)
+            cur = []
+    if cur:
+        rows.append(cur)
+    if not rows:
+        return None
+    rows.append([B(_t('btn_home', lang) if 'btn_home' in _T else '👁 Дозор',
+                   callback_data='sen:home')])
+    return InlineKeyboardMarkup(rows)
+
+
 def now_text(lang='ru'):
     """СРЕЗ РЫНКА ИЗ НАШЕГО КОЛЬЦА. -> str. Ни одного запроса к площадке, ни одного кредита.
 
@@ -689,6 +734,39 @@ def _vt(venue):
 def _money(v):
     from .cards import _usd
     return _usd(v)
+
+
+async def card_link(ticker, venue=None, lang='ru'):
+    """Тикер -> сообщение со ССЫЛКАМИ в наши экраны. -> HTML-строка.
+
+    ДВЕ ССЫЛКИ, А НЕ ОДНА: карточка токена (график, избранное) и экран Nansen по тому
+    же контракту - это разные вопросы, и человек в моменте хочет то один, то другой.
+    ОТКАЗ НАЗЫВАЕТ ПРИЧИНУ: «цены нет в кольце», «ни один контракт не совпал с ценой»
+    и «дверь упала» требуют разных действий, а «не получилось» - никаких.
+    """
+    from .cards import esc
+    tk = esc(str(ticker or "?").upper())
+    addr, chain, why = await engine.resolve_ticker(ticker, venue or None)
+    if not addr:
+        return (('📊 <b>%s</b>\nКарточку открыть не вышло: %s' % (tk, esc(why or "?")))
+                if lang != 'en' else
+                ('📊 <b>%s</b>\nCould not open the card: %s' % (tk, esc(why or "?"))))
+    un = await outbox.bot_un()
+    if not un:
+        # БЕЗ ИМЕНИ БОТА ССЫЛКИ НЕТ ВОВСЕ: на тест-боте прод-имя увело бы человека в
+        # прод. Отдаём контракт текстом - его можно скопировать тапом.
+        return '📊 <b>%s</b>\n<code>%s</code>\n<i>%s</i>' % (
+            tk, esc(addr), esc(chain or ''))
+    lines = ['📊 <b>%s</b> · <code>%s</code>' % (tk, esc(addr))]
+    if chain:
+        lines.append('<i>%s</i>' % esc(chain))
+    lines.append('')
+    lines.append('<a href="https://t.me/%s?start=tok_%s">Карточка токена</a> — '
+                 'график, паспорт, в избранное' % (un, addr)
+                 if lang != 'en' else
+                 '<a href="https://t.me/%s?start=tok_%s">Token card</a> — chart, '
+                 'passport, favourites' % (un, addr))
+    return '\n'.join(lines)
 
 
 def report_text(lang='ru'):

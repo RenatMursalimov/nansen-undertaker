@@ -79,6 +79,37 @@ def _fresh_enough(t, now, tw):
     return (now - float(ts)) <= config.x_max_age_min() * 60
 
 
+#: ПРИЗНАКИ ПЛАТНОГО СИГНАЛЬНОГО СПАМА. Список закрытый и короткий: это НЕ фильтр вкуса, а
+#: список форм, которые в живой сводке 25.09 пришли дословно - «TP1/TP2/STOP LOSS» от
+#: сигнального канала, «I made $80,000 by following his trades» тремя одинаковыми постами от
+#: трёх разных аккаунтов и «Less than 100 votes are needed to list $XPL». Ни одна из этих
+#: строк не отвечает на вопрос «почему цена пошла», а место в сводке конечно.
+_SPAM_MARKS = ('tp1', 'tp2', 'tp3', 'stop loss', 'leverage: cross', 'free signals',
+               'join our free', 'click on the link', 'i made $', 'votes are needed',
+               'leaderboard', 'dm me', 'link in bio', 'not financial advice',
+               'risk management is key', 'entry zone')
+
+
+def _norm(txt):
+    """Текст -> отпечаток для сверки на копипасту. -> str.
+
+    ЗАЧЕМ. В живой сводке стояли ТРИ ОДИНАКОВЫХ твита от трёх разных аккаунтов («$ARCC $W
+    $FTI … I made $80,000»). Дедупликация по автору их не ловит - авторы разные; по ссылке
+    тоже - ссылки разные. Ловит только сам текст, приведённый к сравнимому виду: без
+    регистра, без ссылок, без знаков и без лишних пробелов.
+    """
+    import re as _re
+    t = _re.sub(r'https?://\S+', ' ', str(txt or '').lower())
+    t = _re.sub(r'[^a-zа-я0-9$ ]+', ' ', t)
+    return ' '.join(t.split())[:160]
+
+
+def _is_spam(txt):
+    """Платный сигнальный спам и накрутка голосов. -> True/False."""
+    low = str(txt or "").lower()
+    return any(m in low for m in _SPAM_MARKS)
+
+
 def _relevant(t, tick, name, tw):
     """Твит вообще про этот актив? -> bool.
 
@@ -114,7 +145,8 @@ async def _x_lines(tick, name, uid=None):
         return [], 'X: %s' % (out.get('error') or 'отказ без причины')
     import time as _t
     now = _t.time()
-    kept, dropped = [], {'old': 0, 'small': 0, 'offtopic': 0}
+    kept, dropped = [], {'old': 0, 'small': 0, 'offtopic': 0, 'spam': 0, 'copy': 0}
+    _seen_fp = set()
     for t in (tweets or []):
         if not isinstance(t, dict):
             continue
@@ -128,16 +160,27 @@ async def _x_lines(tick, name, uid=None):
         if not _relevant(t, tick, name, tw):
             dropped['offtopic'] += 1
             continue
+        _txt = str(t.get('text') or '')
+        if _is_spam(_txt):
+            dropped['spam'] += 1
+            continue
+        # КОПИПАСТА ОТ РАЗНЫХ АВТОРОВ - ОДНА НОВОСТЬ, А НЕ ТРИ. Три одинаковых поста в сводке
+        # выглядят как подтверждение, которого нет: это один текст, размноженный ботами.
+        _fp = _norm(_txt)
+        if _fp in _seen_fp:
+            dropped['copy'] += 1
+            continue
+        _seen_fp.add(_fp)
         kept.append(t)
         if len(kept) >= X_LIMIT:
             break
     if not kept:
         # ЧТО ИМЕННО ОТСЕЯЛИ - ЧИСЛАМИ. «Ничего не нашли» и «нашли двадцать, но все старше трёх
         # часов» требуют разных выводов: второе значит, что новость есть, просто не сейчас.
-        return [], ('X: свежих и по делу нет (отсеяно: старше %d мин — %d, мелкие аккаунты — %d, '
-                    'не про этот актив — %d)'
+        return [], ('X: свежих и по делу нет (отсеяно: старше %d мин — %d, мелкие — %d, '
+                    'не про актив — %d, сигнальный спам — %d, копипаста — %d)'
                     % (config.x_max_age_min(), dropped['old'], dropped['small'],
-                       dropped['offtopic']))
+                       dropped['offtopic'], dropped['spam'], dropped['copy']))
     lines = ['<b>X</b> <i>(за %d мин, аккаунты от %s подписчиков)</i>'
              % (config.x_max_age_min(), _short_n(config.x_min_followers()))]
     for t in kept:
@@ -146,19 +189,42 @@ async def _x_lines(tick, name, uid=None):
 
 
 def _short_n(v):
+    """Вес аккаунта коротко. -> str.
+
+    ДО ДЕСЯТИ ТЫСЯЧ - С ДЕСЯТОЙ ДОЛЕЙ. Округление до «9k» стирает разницу между 8 600 и 9 400
+    подписчиков ровно в том диапазоне, где она решает: это граница между «мелкий аккаунт» и
+    «на него смотрят». Выше десяти тысяч десятая доля уже ничего не добавляет.
+    """
     v = float(v)
-    return ('%.0fk' % (v / 1000)) if v >= 1000 else '%.0f' % v
+    if v >= 1e6:
+        return '%.1fM' % (v / 1e6)
+    if v >= 10000:
+        return '%.0fk' % (v / 1000)
+    if v >= 1000:
+        return '%.1fk' % (v / 1000)
+    return '%.0f' % v
 
 
 def _tweet_line(t, tw, now):
-    """Один твит — ОДНОЙ строкой со ссылкой. Две строки на твит превращают сводку в простыню."""
+    """Один твит для сводки. -> HTML-строка.
+
+    ФОРМАТ ПЕРЕДЕЛАН ПО ЖИВОЙ СВОДКЕ 25.09: прежняя строка склеивала автора, вес, возраст и
+    180 символов текста в две слипшиеся строки - читать это в телефоне невозможно. Теперь
+    первая строка отвечает «кто и когда» (автор ссылкой, вес, возраст), а сам текст идёт
+    ЦИТАТОЙ (`blockquote`) - Telegram рисует её отступом, и глаз отделяет чужие слова от
+    наших чисел без всякого усилия.
+    ТЕКСТ КОРОЧЕ: 180 символов в сводке из трёх твитов - это экран целиком. 140 хватает,
+    чтобы понять, о чём речь, а полный текст - в один тап по автору.
+    """
     from .cards import esc
     a = tw.tweet_author(t) or {}
     who = a.get('handle') or '?'
     f = a.get('followers')
     ts = tw.tweet_ts(t)
-    age = ('%dм' % int((now - float(ts)) / 60)) if ts else '?'
-    txt = ' '.join(str(t.get('text') or '').split())[:180]
+    mins = int((now - float(ts)) / 60) if ts else None
+    age = ('%dм' % mins) if mins is not None and mins < 60 else (
+        ('%dч' % (mins // 60)) if mins is not None else '?')
+    txt = ' '.join(str(t.get('text') or '').split())[:140]
     url = ''
     try:
         url = tw.tweet_url(t) or ''
@@ -167,9 +233,11 @@ def _tweet_line(t, tw, now):
     head = '@%s' % esc(who)
     if url:
         head = '<a href="%s">%s</a>' % (url, head)
-    tail = ' · '.join(x for x in (('%s подписчиков' % _short_n(f)) if f else '', age) if x)
-    return '• %s <i>(%s)</i>\n  %s' % (head, esc(tail), esc(txt))
-
+    bits = [head]
+    if f:
+        bits.append(_short_n(f))
+    bits.append(age)
+    return '%s\n<blockquote>%s</blockquote>' % (' · '.join(bits), esc(txt))
 
 #: ПОЛЯ ОБЪЁМА У NANSEN - СПИСКОМ, И ПЕРВЫЕ ДВА ВАЖНЕЕ ОСТАЛЬНЫХ. `tgm/who-bought-sold` отдаёт
 #: `bought_volume_usd`/`sold_volume_usd` (имена видны в `order_by` нашего же клиента), и их

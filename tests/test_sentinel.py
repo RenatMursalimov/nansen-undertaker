@@ -144,6 +144,9 @@ os.environ['SENTINEL_VENUES'] = 'variational'
 UID = 990001
 UID2 = 990002
 _OK, _FAIL, _SKIP = 0, 0, 0
+#: ИМЕНА УПАВШИХ ПРОВЕРОК. Без списка в конце человек читает «11 FAIL» и идёт
+#: перелистывать тысячу строк вывода - а прислать одну строку итога дешевле для всех.
+_FAILED = []
 
 
 def check(name, cond, note=''):
@@ -153,6 +156,7 @@ def check(name, cond, note=''):
         print('  ok  %s' % name)
     else:
         _FAIL += 1
+        _FAILED.append(name)
         print('FAIL  %s %s' % (name, note))
 
 
@@ -1439,6 +1443,171 @@ def t_screens_are_sent_as_html():
           sent and sent[0].get('parse_mode') == 'HTML', sent[:1])
 
 
+def t_every_screen_leads_further():
+    """СКВОЗНОЙ ПЕРЕХОД: из любого экрана можно попасть в карточку токена.
+
+    ТРЕБОВАНИЕ ВЛАДЕЛЬЦА ДВАЖДЫ: «в что сейчас приходят тикер без ссылок на карточки токенов или
+    контрактов (мемов), не забывай, у нас все сценарии сквозные, чтобы сразу на карточку попасть и
+    если что в избранное закинуть». Экран-тупик заставляет человека набирать тикер руками в другом
+    окне - то есть мы отдаём ему работу, которую умеем сделать сами.
+    """
+    engine._HOT.clear()
+    now = int(time.time())
+    for t, (p0, p1) in (('AAA', (100.0, 102.0)), ('BBB', (5.0, 5.05))):
+        engine._HOT[venues.key('variational', t)] = [
+            (now - 900, p0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 900),
+            (now, p1, 9e8, 1000.0, 900.0, 0.05, 1.0, now)]
+    kb = ui.now_kb('ru')
+    data = [b.callback_data for row in (kb.inline_keyboard if kb else []) for b in row]
+    check('CROSS: под срезом рынка есть кнопки тикеров',
+          any(d.startswith('sen:card:') for d in data), data)
+    check('CROSS: кнопка несёт И площадку, И тикер',
+          'sen:card:variational:AAA' in data, data)
+    check('CROSS: кнопка возврата в дозор тоже есть', 'sen:home' in data, data)
+    check('CROSS: цена для сопоставления берётся из кольца, а не запросом',
+          engine.last_mark('AAA') == 102.0, engine.last_mark('AAA'))
+    check('CROSS: тикера, которого мы не видели, в кольце нет',
+          engine.last_mark('НЕТТАКОГО') is None)
+    # ── ОТКАЗ СОПОСТАВЛЕНИЯ НАЗЫВАЕТ ПРИЧИНУ, А НЕ МОЛЧИТ ──
+    txt = asyncio.run(ui.card_link('НЕТТАКОГО', 'variational', 'ru'))
+    check('CROSS: без цены в кольце - отказ со словами',
+          'цены нет в кольце' in txt, txt)
+    check('CROSS: и на en он тоже есть',
+          'Could not open' in asyncio.run(ui.card_link('НЕТТАКОГО', 'variational', 'en')))
+    engine._HOT.clear()
+
+
+def t_tweets_are_readable_and_not_spam():
+    """ТВИТЫ: спам и копипаста не попадают, а то, что попало, ЧИТАЕМО.
+
+    ЖИВАЯ СВОДКА 25.09 пришла с тремя дефектами разом: сигнальный канал («TP1/TP2/STOP LOSS,
+    Leverage: Cross 25x - 50x»), накрутка голосов («Less than 100 votes are needed to list $XPL»)
+    и ТРИ ОДИНАКОВЫХ поста от трёх разных аккаунтов («I made $80,000 by following his trades»).
+    Дедупликация по автору их не ловит - авторы разные; по ссылке тоже - ссылки разные.
+    """
+    from sentinel import enrichment as en
+    check('TW: сигнальный канал отсеян',
+          en._is_spam('$XPL/USDT BUY (LONG) Leverage: Cross 25x TP1: 0.1165 STOP LOSS: 0.1070'))
+    check('TW: накрутка голосов отсеяна',
+          en._is_spam('Less than 100 votes are needed to list $XPL on the Moonshot Leaderboard'))
+    check('TW: «я заработал $80,000» отсеяно',
+          en._is_spam('$ARCC $W $FTI . I made $80,000 by following his trades'))
+    check('TW: обычная новость НЕ отсеяна',
+          not en._is_spam('Plasma unlock today: $160M worth of tokens unlocked'))
+    # ── КОПИПАСТА: РАЗНЫЕ ССЫЛКИ И РЕГИСТР, ОДИН ОТПЕЧАТОК ──
+    a = en._norm('$ARCC $W $FTI . I made $80,000 https://t.co/aaa')
+    b = en._norm('$arcc $w $fti . i made $80,000  https://t.co/bbb')
+    check('TW: копипаста с разными ссылками даёт ОДИН отпечаток', a == b, (a, b))
+    check('TW: разные тексты дают разные отпечатки',
+          en._norm('XPL whale bought the dip') != a)
+
+    # ── ФОРМАТ: АВТОР ССЫЛКОЙ, ТЕКСТ ЦИТАТОЙ ──
+    # ПРОВЕРКИ АНТИСПАМА ВЫШЕ РАБОТАЮТ ВЕЗДЕ (это чистые функции), а формат строки требует разбора
+    # возраста из чужого модуля. В публичной выжимке слоя X нет - он не про Nansen, - поэтому здесь
+    # честный пропуск с именем, а не молчаливо зелёная проверка.
+    try:
+        import twitter_api as tw
+    except ImportError:
+        global _SKIP
+        _SKIP += 1
+        print('SKIP  формат строки твита: в этой сборке нет модуля X (в боте проверка идёт)')
+        return
+    import datetime
+    d = datetime.datetime.utcfromtimestamp(time.time() - 300)
+    t = {'createdAt': d.strftime('%a %b %d %H:%M:%S +0000 %Y'),
+         'text': 'Plasma unlock today: $160M worth of tokens unlocked and this is not a one-off',
+         'id': '123', 'author': {'userName': 'someone', 'followers': 8600}}
+    line = en._tweet_line(t, tw, time.time())
+    check('TW: автор - ССЫЛКА на твит', '<a href="https://x.com/someone/status/123">' in line, line)
+    check('TW: текст идёт ЦИТАТОЙ (Telegram рисует отступ)',
+          '<blockquote>' in line and '</blockquote>' in line, line)
+    check('TW: вес аккаунта и возраст в одной строке с автором',
+          '8.6k' in line and '5м' in line, line)
+    check('TW: возраст больше часа печатается часами',
+          '2ч' in en._tweet_line(dict(t, createdAt=datetime.datetime.utcfromtimestamp(
+              time.time() - 7300).strftime('%a %b %d %H:%M:%S +0000 %Y')), tw, time.time()),
+          'иначе «123м» человек переводит в часы в голове')
+
+
+def t_venue_gaps_do_not_pay_for_missing_fields():
+    """ЧТО ПЛОЩАДКА НЕ ОТДАЁТ - НЕ ДЕФЕКТ СОБЫТИЯ.
+
+    ЖИВОЙ ПРОГОН 25.09: карточки с Hyperliquid шли с уверенностью 40/100 и тремя штрафами, которые
+    все про одно - у этой площадки таких полей нет ВООБЩЕ («возраст котировки не назван»,
+    «котировки на $100k нет», «провайдер не дал: quotes»). Мы наказывали событие за свойство
+    источника, и сильное движение на самой ликвидной площадке выглядело сомнительным.
+    """
+    now = int(time.time())
+    ring = series(60, now - 60 * 900)
+    hot = [(now - 900, 100.0, 8e8, None, None, 1.25e-05, 0.21, None)]
+    hl = feed.Listing(ticker='ZEC', name='ZEC', mark=102.0, volume_24h=5.4e8,
+                      oi_long=None, oi_short=None, oi_total_raw=1.2e6,
+                      funding_raw=1.25e-05, funding_interval_s=3600, spread_bps=0.21,
+                      quote_ts=None, quotes={}, missing=('oi_long/oi_short', 'quotes'),
+                      venue='hyperliquid')
+    evs = [e for e in detector.detect(hl, hot, now=now, ring=ring) if e['kind'] == 'move_up']
+    check('HLPEN: движение на HL поймано', evs, 'событие не создалось')
+    pen = evs[0]['payload']['penalties'] if evs else []
+    body = ' | '.join(pen)
+    check('HLPEN: три жалобы на отсутствие полей стали ОДНОЙ строкой',
+          sum(1 for x in pen if 'не отдаёт' in x) == 1, pen)
+    check('HLPEN: и в ней названа площадка и поля',
+          'Hyperliquid не отдаёт' in body and 'ёмкость на $100k' in body, body)
+    check('HLPEN: за отсутствие полей уверенность НЕ снижена',
+          evs[0]['severity'] >= 70, (evs[0]['severity'], pen))
+    check('HLPEN: строка-пояснение печатается без «(-0)»', '(-0)' not in body, body)
+    txt = cards.card(evs[0])
+    check('HLPEN: карточка вместо «котировки нет» печ──ет спред на размер',
+          'Спред на размер: 0.2 б.п.' in txt, txt)
+    check('HLPEN: и не жалуется на возраст, которого у площадки нет',
+          'возраст не назван' not in txt, txt)
+
+
+def t_crowd_and_absorption_describe_not_predict():
+    """ТОЛПА И ПОГЛОЩЕНИЕ: два вида из роудмапа, и оба НЕ предсказывают направление."""
+    now = int(time.time())
+    # ── ТЕСНАЯ ТОЛПА: перекос И дорогая ставка ──
+    ring_f = [(now - (60 - i) * 900, 100.0, 8e8, 1000.0, 900.0, 0.01 * (i % 7), 1.0, 0)
+              for i in range(60)]
+    hot = [(now - 3600, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 3600)]
+    x = one(mark='100.0', oi_l='9600', oi_s='400', funding='9.9', quote_iso=_iso(now))
+    evs = detector.detect(x, hot, now=now, ring=ring_f)
+    cr = [e for e in evs if e['kind'] == 'crowded']
+    check('CROWD: 96% в лонгах при верхней ставке - событие', cr, {e['kind'] for e in evs})
+    check('CROWD: сторона и доля названы числом',
+          cr and cr[0]['payload']['crowd_side'] == 'лонги'
+          and abs(cr[0]['payload']['crowd_pct'] - 96.0) < 1, cr[0]['payload'] if cr else None)
+    txt = cards.card(cr[0]) if cr else ''
+    check('CROWD: карточка говорит «конструкция», а не «пойдёт вниз»',
+          'каскад ликвидаций идёт против толпы' in txt and 'Направление дозорный не предсказывает'
+          in txt, txt)
+    # ПЕРЕКОС БЕЗ ПЛАТЫ - НЕ СОБЫТИЕ (иначе алерт на устройство рынка)
+    calm = detector.detect(one(mark='100.0', oi_l='9600', oi_s='400', funding='0.0',
+                               quote_iso=_iso(now)), hot, now=now, ring=ring_f)
+    check('CROWD: перекос без дорогой ставки событием НЕ считается',
+          'crowded' not in {e['kind'] for e in calm}, {e['kind'] for e in calm})
+    # ── ПОГЛОЩЕНИЕ: интерес растёт, цена стоит ──
+    ring = series(60, now - 60 * 900)
+    hot2 = [(now - 3600, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 3600)]
+    ab = detector.detect(one(mark='100.2', oi_l='4000', oi_s='900', quote_iso=_iso(now)),
+                         hot2, now=now, ring=ring)
+    kinds = {e['kind'] for e in ab}
+    check('ABSORB: интерес +150% при стоящей цене - событие', 'absorption' in kinds, kinds)
+    a0 = [e for e in ab if e['kind'] == 'absorption'][0]
+    txt2 = cards.card(a0)
+    check('ABSORB: карточка ведёт интересом и говорит «цена стоит»',
+          'а цена стоит' in txt2, txt2[:140])
+    check('ABSORB: и честно признаёт, что направления здесь нет',
+          'Подтверждения направления здесь нет' in txt2, txt2)
+    # ЦЕНА УШЛА - ЭТО УЖЕ НЕ ПОГЛОЩЕНИЕ, А ДВИЖЕНИЕ
+    moved = detector.detect(one(mark='104.0', oi_l='4000', oi_s='900', quote_iso=_iso(now)),
+                            hot2, now=now, ring=ring)
+    check('ABSORB: при ушедшей цене поглощением это не называется',
+          'absorption' not in {e['kind'] for e in moved}, {e['kind'] for e in moved})
+    check('ABSORB: оба вида включены по умолчанию',
+          {'crowded', 'absorption'} <= set(config.DEFAULT_KINDS), config.DEFAULT_KINDS)
+
+
 def main():
     for fn in (t_parse_is_real_and_names_what_is_missing,
                t_detector_needs_both_percent_and_sigma,
@@ -1475,7 +1644,12 @@ def main():
                # ── круг 5 (25.09): площадки как данные, пресеты, HTML на экранах ──
                t_venues_are_data_not_branches,
                t_venue_filter_and_presets_are_personal,
-               t_screens_are_sent_as_html):
+               t_screens_are_sent_as_html,
+               # ── круг 6 (25.09): сквозные переходы, читаемые твиты, толпа, поглощение ──
+               t_every_screen_leads_further,
+               t_tweets_are_readable_and_not_spam,
+               t_venue_gaps_do_not_pay_for_missing_fields,
+               t_crowd_and_absorption_describe_not_predict):
         print('\n== %s' % fn.__name__)
         try:
             fn()
@@ -1484,12 +1658,18 @@ def main():
             _FAIL += 1
             import traceback
             traceback.print_exc()
+            _FAILED.append(fn.__name__ + ' (исключение)')
             print('FAIL  %s упал: %s' % (fn.__name__, e))
             # ЗАМЕРЫ БАЗЫ РЯДОМ С ОТКАЗОМ, А НЕ В ГОЛОВЕ РАЗБИРАЮЩЕГО. `database is locked` без
             # пути, бэкенда и таймаута - это приглашение гадать; с ними разбор идёт по числам.
             print('      замеры базы: %s' % _db_diag())
     print('\n%d PASS / %d FAIL%s' % (_OK, _FAIL,
                                     (' / %d SKIP' % _SKIP) if _SKIP else ''))
+    if _FAILED:
+        print('УПАЛИ (%d):' % len(_FAILED))
+        for _n in _FAILED:
+            print('  · %s' % _n)
+        print('Пришли этот список - по нему причина видна без перелистывания вывода.')
     return 1 if _FAIL else 0
 
 

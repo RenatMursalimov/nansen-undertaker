@@ -47,7 +47,7 @@ W15, W60 = 900, 3600
 TOL = 180
 
 KINDS = ('move_up', 'move_down', 'oi_surge', 'vol_surge', 'funding_extreme',
-         'spread_shock', 'ignition', 'venue_gap')
+         'spread_shock', 'ignition', 'venue_gap', 'crowded', 'absorption')
 
 
 # ── ЭЛЕМЕНТАРНАЯ АРИФМЕТИКА, ВЫНЕСЕННАЯ РАДИ ОДНОГО: ДЕЛЕНИЯ НА НОЛЬ ──────────────────────
@@ -162,36 +162,75 @@ def confidence(base, penalties):
         if cost:
             score -= float(cost)
             lines.append('%s (-%d)' % (why, int(cost)))
+        else:
+            # ПРИЧИНА БЕЗ ЦЕНЫ - ЭТО ПОЯСНЕНИЕ, А НЕ ШТРАФ. «(-0)» рядом с текстом читается как
+            # ошибка счёта, поэтому ноль печатается молча: строка есть, вычета нет.
+            lines.append(str(why))
     return max(0, min(100, int(round(score)))), lines
 
 
 def _quote_penalties(listing, now):
-    """Штрафы, которые НЕ ЗАВИСЯТ от вида события: свежесть котировки и ёмкость."""
+    """Штрафы, НЕ зависящие от вида события: свежесть котировки и ёмкость. -> [(текст, цена)].
+
+    ═══ «ПЛОЩАДКА ЭТОГО НЕ ОТДАЁТ» - НЕ ДЕФЕКТ СОБЫТИЯ ═══
+    ЖИВОЙ ПРОГОН 25.09: карточки с Hyperliquid приходили с уверенностью 40/100 и тремя
+    штрафами подряд - «возраст котировки провайдер не назвал (-15)», «котировки на $100k нет
+    (-10)», «провайдер не дал: oi_long/oi_short, quotes (-10)». Все три про ОДНО И ТО ЖЕ: у
+    этой площадки таких полей нет ВООБЩЕ. То есть мы наказывали событие за свойство
+    источника, и сильное движение на самой ликвидной площадке выглядело сомнительным.
+    ПРАВИЛО: чего площадка не отдаёт НИКОГДА (перечислено в `missing`), то НАЗЫВАЕТСЯ одной
+    строкой без штрафа. Штраф остаётся там, где поле есть, но ПЛОХОЕ: котировка старая,
+    вход дорогой. Разница принципиальная - «не измерено» и «измерено и плохо» ведут к разным
+    решениям, и складывать их в одну цифру значит терять оба.
+    """
     out = []
+    miss = set(listing.missing or ())
+    not_measured = []
     age = listing.quote_age(now)
     if age is None:
-        out.append(('возраст котировки провайдер не назвал', 15))
+        if 'quotes' in miss:
+            not_measured.append('возраст котировки')
+        else:
+            out.append(('возраст котировки провайдер не назвал', 15))
     elif age > config.quote_warn_sec():
         out.append(('котировка старше %ds (возраст %ds)'
                     % (int(config.quote_warn_sec()), int(age)), 20))
     d100 = listing.depth_bps('size_100k')
     if d100 is None:
-        out.append(('котировки на $100k нет', 10))
+        if 'quotes' in miss:
+            not_measured.append('ёмкость на $100k')
+        else:
+            out.append(('котировки на $100k нет', 10))
     elif d100 > 50:
         out.append(('вход на $100k стоит %.0f б.п.' % d100, 15))
-    if listing.missing:
-        out.append(('провайдер не дал: %s' % ', '.join(listing.missing), 10))
+    if listing.oi_long is None and listing.oi_short is None and listing.oi_total is not None:
+        not_measured.append('перекос лонгов и шортов')
+    if not_measured:
+        # ОДНОЙ СТРОКОЙ И БЕЗ ЦЕНЫ: человек должен знать, чего в карточке нет и почему, но
+        # платить уверенностью за выбор площадки событие не обязано.
+        out.append(('%s не отдаёт: %s' % (_venue_name(listing),
+                                          ', '.join(not_measured)), 0))
     return out
 
+
+def _venue_name(listing):
+    try:
+        from .venues import title
+        return title(getattr(listing, 'venue', 'variational'))
+    except Exception:
+        return 'площадка'
 
 def digest_key(*parts):
     """Стабильный короткий ключ из частей. -> 24 символа hex.
 
-    ОДНА ДВЕРЬ НА ВСЕ КЛЮЧИ ДОЗОРНОГО, и лежит она здесь — в модуле без базы и без сети.
-    Первая редакция держала её в `store`, и живое доказательство (`nansen/proofs/
-    sentinel_live_proof.py`) упало с «DB_BACKEND не задан»: путь «разобрать ответ площадки и
-    собрать карточку» не должен требовать базы вовсе, иначе демонстрацию нельзя запустить ни
-    на чужой машине, ни в тесте без временной СУБД.
+    ОДНА ДВЕРЬ НА ВСЕ КЛЮЧИ ДОЗОРНОГО, и лежит она здесь - в модуле без базы и без сети.
+    Первая редакция держала её в `store`, и живое доказательство падало с «DB_BACKEND не
+    задан»: путь «разобрать ответ площадки и собрать карточку» не должен требовать базы.
+
+    ВОЗВРАЩЕНА ПОСЛЕ СВОЕГО ЖЕ ИСЧЕЗНОВЕНИЯ: широкая замена блока штрафов (круг 6) вырезала
+    её вместе с соседями, и `store` упал на реэкспорте - ImportError на ИМПОРТЕ пакета, то
+    есть дозорный не поднялся бы вовсе. Урок записан рядом с функцией: заменять НАДО по
+    точным границам одной функции, а не «от сих до следующего def» - между ними живут соседи.
     """
     raw = '|'.join('' if p is None else str(p) for p in parts)
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()[:24]
@@ -442,6 +481,57 @@ def detect(listing, rows, now=None, ring=None):
                         'severity': conf,
                         'payload': dict(common, funding_rank=rank,
                                         funding_points=len(hist), step=1, penalties=notes)})
+
+    # ── ТЕСНАЯ ТОЛПА: ВСЕ В ОДНУ СТОРОНУ И ДОРОГО ПЛАТЯТ ──────────────────────────────────
+    # Роудмап, шаг 2, пункт 2. Сигнал описывает КОНСТРУКЦИЮ рынка, а не направление: когда
+    # почти весь интерес в одной стороне и за него платят по верхнему проценти́лю ставки,
+    # каскад ликвидаций идёт против толпы. Оба условия обязательны: перекос без платы бывает
+    # структурным (кто-то хеджирует спот), и алерт на него один был бы алертом на устройство
+    # рынка, а не на событие.
+    skew = listing.oi_skew
+    if skew is not None and listing.funding_raw is not None and len(ring) >= 50:
+        side = max(skew, 1.0 - skew)
+        hist_f = [r[5] for r in ring if r[5] is not None]
+        below_f, above_f = tail_share(hist_f, listing.funding_raw)
+        # ПЛАТИТ ИМЕННО БОЛЬШИНСТВО: лонги платят при высокой ставке, шорты - при низкой.
+        pays = (below_f if skew > 0.5 else above_f)
+        if (side >= config.crowd_skew() and pays is not None
+                and pays >= config.crowd_funding_rank() and len(hist_f) >= 50):
+            pen = list(base_pen)
+            if (listing.volume_24h or 0) < config.min_volume_usd() * 10:
+                pen.append(('оборот за сутки всего $%.0fk - выносить особо некого'
+                            % ((listing.volume_24h or 0) / 1000), 20))
+            conf, notes = confidence(85, pen)
+            out.append({'kind': 'crowded', 'ticker': listing.ticker, 'ts': now,
+                        'key': key('crowded', '%s:%s' % (_venue, listing.ticker),
+                                   _window(now), 1),
+                        'severity': conf,
+                        'payload': dict(common, crowd_side=('лонги' if skew > 0.5 else 'шорты'),
+                                        crowd_pct=side * 100.0, funding_rank=pays,
+                                        step=1, penalties=notes)})
+
+    # ── ПОГЛОЩЕНИЕ: ИНТЕРЕС РАСТЁТ, ЦЕНА СТОИТ ────────────────────────────────────────────
+    # Роудмап, шаг 2, пункт 3. Единственный наш сигнал, который срабатывает на ОТСУТСТВИИ
+    # хода цены: кто-то набирает против потока, и его пока хватает. Видно ДО движения - в
+    # этом вся ценность, и в этом же слабость: подтверждения направления здесь нет, и
+    # карточка обязана сказать это прямо, а не намекать на рост.
+    if oi_now and r60 is not None and p60 is not None:
+        oi_then_a = (r60[3] or 0) + (r60[4] or 0) or (r60[3] if r60[3] else None)
+        d_oi_a = pct(oi_now, oi_then_a if oi_then_a else None)
+        d_usd_a = abs(oi_now - (oi_then_a or 0)) * (listing.mark or 0)
+        if (d_oi_a is not None and d_oi_a >= config.absorb_oi_pct()
+                and abs(p60) <= config.absorb_ret_pct()
+                and d_usd_a >= config.oi_min_usd()):
+            pen = list(base_pen)
+            conf, notes = confidence(80, pen)
+            step = _step(d_oi_a, config.absorb_oi_pct())
+            out.append({'kind': 'absorption', 'ticker': listing.ticker, 'ts': now,
+                        'key': key('absorption', '%s:%s' % (_venue, listing.ticker),
+                                   _window(now), step),
+                        'severity': conf,
+                        'payload': dict(common, oi_change_pct=d_oi_a,
+                                        oi_change_usd=d_usd_a, step=step,
+                                        penalties=notes)})
 
     # ── СПРЕД: ЭТО ПРЕДОСТЕРЕЖЕНИЕ ────────────────────────────────────────────────────────
     if listing.spread_bps is not None and listing.spread_bps >= config.spread_min_bps():
