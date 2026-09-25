@@ -91,6 +91,11 @@ async def once():
 
 
 def main(argv=None):
+    # ЮНИТ САМ ОБЪЯВЛЯЕТ СЕБЯ ОПРАШИВАЮЩИМ. Строка в `.env` может отсутствовать
+    # (человек забыл), и тогда опрос вели бы двое: один из них постоянно
+    # проигрывал бы аренду и писал об этом в лог. Здесь переменная ставится в
+    # СВОЁМ процессе - на бота это не влияет, он читает свою.
+    os.environ.setdefault('SENTINEL_IN_BOT', '0')
     argv = list(argv if argv is not None else sys.argv[1:])
     tok = os.getenv('TELEGRAM_BOT_TOKEN') or os.getenv('BOT_TOKEN')
     if tok:

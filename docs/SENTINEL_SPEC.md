@@ -3,7 +3,7 @@
 Live alerts on Variational Omni plus Smart Ignition on Nansen. What is built, on which
 measurements, where the limits are, and what comes next.
 
-Date: 2026-09-25. Package: `sentinel/`. Tests: `python3 tests/test_sentinel.py` (281 checks, no
+Date: 2026-09-25. Package: `sentinel/`. Tests: `python3 tests/test_sentinel.py` (293 checks, no
 network needed) plus `t_live_watcher_has_its_own_cache_door` in `tests/test_nansen_contest.py`.
 Live proof: `python3 nansen/proofs/sentinel_live_proof.py MSTR 4.5`.
 
@@ -242,7 +242,7 @@ hourly at :13). That is a deliberate first step: the module and the control pane
 before the move, otherwise the "separate process" would have to be debugged together with new
 logic.
 
-Acceptance on the sandbox: pull, run `tests/test_sentinel.py` (expect 281 PASS / 0 FAIL), run
+Acceptance on the sandbox: pull, run `tests/test_sentinel.py` (expect 293 PASS / 0 FAIL), run
 the live proof, restart the test service, check it is `active`, then grep `[sentinel]` in
 `bot.log` and use the commands in the test bot's direct messages. Production repeats the same
 steps only after the sandbox run is green.
@@ -486,6 +486,57 @@ the move, which is its value and its weakness, and the card says so plainly.
 **The test prints the list of failures.** "11 FAIL" without names forces scrolling through a
 thousand lines of output; a single summary line is cheaper for everyone.
 
+## 14. Round seven: the link debt closed by measurement, the unit switched on, the relay measured
+
+**A direct link to an instrument - three rounds of debt removed by one browser run.** The spec
+said "format not measured" for three rounds: two path shapes answer 403 and a query parameter
+returns 200 exactly as the bare root does. That was correct in fact and lazy in method: for a
+single-page application the path is visible FROM the application. Opening the root with a
+market query parameter REDIRECTED by itself to `/perpetual/BTC`, and the page title became
+"BTC PERP". Five tickers of different classes then returned 200 each. Cards now lead to the
+instrument itself and the link label names it. The lesson sits in the code next to the path:
+"403 on two paths" does not equal "there is no direct link" - just as "404" in this project
+once did not mean "the feature does not exist".
+
+**`database is locked`: closing a cursor is not closing a transaction.** The previous round
+closed cursors and considered the matter settled; the failure returned, and the measurements
+named the PLACE - a write passes, the next write fails, and between them a delivery planner
+issues a dozen SELECTs. Correct file, WAL on, a full minute of wait: that is an unfinished
+READ on the connection, not impatience. Why it did not reproduce locally: the moment when
+`sqlite3` releases its implicit transaction depends on the Python version (3.12+ on the
+owner's server against 3.9 in development). The right answer is not to match versions but to
+leave no open reads behind: both read doors now finish the transaction in `finally`, and the
+measurements print the transaction state. The test reproduces the ORDER OF CALLS from the live
+failure rather than the interpreter version.
+
+**The separate unit is switched on** by the owner's decision. It ships in
+`deploy/sentinel.service`, sets its own environment flag and writes to its own log, because
+the bot's main log is read with grep and mixing a second service into it breaks the primary
+diagnostic tool. Only polling and ignition move out: delivery, briefs and outcome measurement
+stay in the bot, since the queue lives in the shared database and sending from a process that
+already holds a live Telegram client is cheaper than raising a second one. The lease would
+cover the overlap anyway, but a switch is needed precisely because insurance is not a
+decision - a process that constantly loses the race and logs about it creates noise that gets
+ignored within a week.
+
+**Relay across assets: measured, and the result is negative.** Six snapshots forty seconds
+apart across BTC and three crypto-adjacent equities showed prices updating ONCE in four
+minutes with signs diverging: BTC down 0.081 per cent, one equity down 0.040, two others up
+0.044 and 0.116. On minute-scale windows there is no visible link, and building a feature on
+an invisible link is invention. What would settle it: the relay must be measured over hours
+and days, and for TradFi instruments only during trading hours. The cold ring accumulates
+seven days, so the measurement becomes possible by itself, without new code, after a week of
+the sentinel running. The feature stays in the roadmap with that note rather than "postponed".
+
+**The lab: a separate daily cap and a probe of historical holdings.** Two roadmap items stand
+on one endpoint, so they close through one door. The cap is SEPARATE from the sentinel: the
+sentinel spends a little constantly, the lab rarely and much, and a shared cap would mean one
+research run silencing alerts for a day - which the human would learn about through silence.
+Dry run is the default: it prints exactly what would happen and spends nothing, and only a
+human removes it by argument. The request schema for that endpoint is NOT captured - it is
+absent from our route inventory - so the first live call goes through repair by the
+provider's own words.
+
 ## 12. Limits, debts and refuted hypotheses
 
 **The boundary with the trading contour is hard.** No file in `sentinel/` imports
@@ -516,7 +567,7 @@ a call search). Entering a position happens by hand on the venue.
 
 ---
 
-## 15. Roadmap, ordered by value over cost
+## 16. Roadmap, ordered by value over cost
 
 **Step 1 - finish the sentinel (1-2 days).** Sandbox acceptance, then production. The separate
 `sentinel.main` unit plus lease (code is ready; only the unit file and the owner's decision are
@@ -557,7 +608,7 @@ token.
 
 ---
 
-## 16. Reconciliation with the scouting report
+## 17. Reconciliation with the scouting report
 
 Nine requested items. Fully delivered here: the alert engine stages 0-2 (dedupe by
 `transaction_hash`, a Nansen daily cap, per-token cooldown, one outcome row per alert), the
