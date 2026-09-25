@@ -214,10 +214,9 @@ async def ignition_tick():
     Variational бесплатен и идёт раз в 15 секунд, а лента Nansen стоит кредиты — её темп
     задаётся бюджетом, а не желанием.
     """
-    if store.budget_left() <= 0:
-        used, _ = store.spend_today()
-        return 'зажигание пропущено: бюджет дозорного сегодня исчерпан (%d из %d кр)' % (
-            used, config.nansen_day_credits())
+    _stop = store.budget_block()
+    if _stop:
+        return 'зажигание пропущено: %s' % _stop
     try:
         import asyncio
         evs, note = await asyncio.to_thread(ignition.scan)

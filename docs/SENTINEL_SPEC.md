@@ -3,7 +3,7 @@
 Live alerts on Variational Omni plus Smart Ignition on Nansen. What is built, on which
 measurements, where the limits are, and what comes next.
 
-Date: 2026-09-25. Package: `sentinel/`. Tests: `python3 tests/test_sentinel.py` (104 checks, no
+Date: 2026-09-25. Package: `sentinel/`. Tests: `python3 tests/test_sentinel.py` (154 checks, no
 network needed) plus `t_live_watcher_has_its_own_cache_door` in `tests/test_nansen_contest.py`.
 Live proof: `python3 nansen/proofs/sentinel_live_proof.py MSTR 4.5`.
 
@@ -55,7 +55,7 @@ while the live response shows MRNA = 0.442690, MSTR = 0.455416, US500 = 0. No hy
 the measurement. **Consequence in code:** the number is printed under the provider's field name
 together with the interval, no annualisation is performed, and funding events are detected by the
 instrument's percentile against itself - a criterion that does not depend on the unit at all.
-Verification debt #1 (see section 9).
+Verification debt #1 (see section 10).
 
 **A negative funding rate on an equity can be a dividend rather than positioning** - the
 provider says so directly
@@ -172,12 +172,33 @@ translation of the same run - the bot speaks the owner's language.)
 
 ---
 
-## 5. Commands
+## 5. Commands and menu
 
-Direct-message commands take a subscription (one instrument or the whole venue), a personal
-percentage floor, quiet hours in UTC (the window across midnight works), switches for alerts
-and for briefs separately, and a weekly hit-rate report. Matching is exact and anchored at the
-head of the message, so the word inside a sentence routes onwards as usual.
+**Buttons are the main path.** The sentinel screen opens from **two** menus, which is the owner's
+request verbatim ("through Nansen, and in parallel through On-chain"): *On-chain -> Alerts ->
+Sentinel* and *Nansen -> What smart money is doing -> Sentinel*. Both lead to ONE screen
+(`sen:*` in `sentinel/ui.py`); there is no second copy, because two copies diverge on the first
+edit. The screen carries toggles for alerts, briefs and whole-venue watching, plus minus/plus
+controls for the **personal** move threshold, cooldown and daily cap, a quiet-hours ladder, the
+hit-rate report and help. Toggle captions state the CURRENT STATE ("Alerts: on"), not the
+action - "Turn alerts off" does not answer the question "how is it now".
+
+**Only personal settings are on buttons.** The shared thresholds (3 % / 2.5 sigma / ignition) are
+the same for every subscriber, so a "+1 %" button under one person would silently change everyone
+else's behaviour. They are shown on the screen as a line (so you can see what the sentinel runs
+on) and edited in `.env`.
+
+**Words are the fast path,** and English forms work through the `en_triggers` registry (English is
+data in this project, not a second branch of logic): `sentinel BTC`, `watch all`,
+`sentinel remove ETH`, `sentinel threshold 5`, `sentinel quiet 22 8`, `sentinel off` /
+`sentinel on`, `sentinel briefs off`, `sentinel report`. The `sentinel off` rule sits BEFORE the
+general `sentinel <ticker>` on purpose: without it the most likely phrasing subscribed the person
+to a non-existent instrument called "OFF" - they asked for silence and got a complaint about a
+ticker.
+
+Words and buttons share ONE parser: had they diverged, half the commands would have quietly
+stopped working. Matching is exact and anchored at the head of the message, so the word inside a
+sentence routes onwards as usual.
 
 ---
 
@@ -187,7 +208,7 @@ head of the message, so the word inside a sentence routes onwards as usual.
 |---|---|---|
 | Venue polling | 15 s | limit is 10/10 s; three polls 3 s apart returned identical numbers, so below ~10 s there is no new data |
 | Ignition (Nansen) | 3 min | it costs credits; the feed is trailing and does not refresh instantly |
-| Sentinel daily budget | 3000 credits | autonomous spend happens **without a human**; the global cap does not catch that case |
+| Sentinel daily cap | **off** (0) | the owner's decision: Nansen is free for the hackathon. The mechanism stays - put a number in `.env` and it limits again. Spend is always measured and shown on the screen |
 | Cooldown per (instrument, kind, step) | 60 min | the step is in the event key: "the move doubled" is separate news |
 | Daily cap per person | 25 alerts | hitting it is printed as a quantity: "cap 24/25" |
 | Quiet hours | optional | window across midnight |
@@ -221,7 +242,7 @@ hourly at :13). That is a deliberate first step: the module and the control pane
 before the move, otherwise the "separate process" would have to be debugged together with new
 logic.
 
-Acceptance on the sandbox: pull, run `tests/test_sentinel.py` (expect 104 PASS / 0 FAIL), run
+Acceptance on the sandbox: pull, run `tests/test_sentinel.py` (expect 154 PASS / 0 FAIL), run
 the live proof, restart the test service, check it is `active`, then grep `[sentinel]` in
 `bot.log` and use the commands in the test bot's direct messages. Production repeats the same
 steps only after the sandbox run is green.
@@ -233,7 +254,43 @@ does not change on the move: both paths call `engine.*`.
 
 ---
 
-## 9. Limits, debts and refuted hypotheses
+## 9. Round two: what live production found (2026-09-25)
+
+The sentinel went to production and produced three defects that no green test could see. Each is
+a separate class, so all three are written down in full.
+
+**1. `SELECT DISTINCT … ORDER BY d.delivered_at` - briefs did not work at all.** PostgreSQL
+answers "for SELECT DISTINCT, ORDER BY expressions must appear in select list", and the brief job
+failed EVERY MINUTE - dozens of identical lines in the log. On sqlite (sandbox, tests) the same
+query passes, so 104 green checks guaranteed nothing. Fixed with `GROUP BY d.event_key` and
+`MAX(d.delivered_at)`. Guarded by a test that parses the module's queries through `ast` (Python
+folds implicit string concatenation itself, so each query is exactly one literal) and fails on any
+`DISTINCT` ordered by a column outside the select list. The project's rule held: a PG-specific
+failure cannot be dismissed as "test only" - the test is precisely the thing that is green.
+
+**2. `database is locked` - 14 test failures on the server.** Not an environment issue:
+`conn.execute('SELECT …').fetchone()` reads one row and abandons the cursor UNFINISHED, and an
+unfinished cursor holds a read transaction. In sqlite that blocks writes; in PostgreSQL it leaves
+the connection "idle in transaction" - worse on production, not better. Nine functions did this,
+each leaving its own lock. Fixed with two shared read doors, `_one` and `_all`, which close the
+cursor in `finally`. A cleanup you must remember twenty-two times will be forgotten the
+twenty-third, so the fix goes in the bottleneck rather than at every call site. Guarded by a test
+that performs six reads and then REQUIRES the next write to succeed.
+
+**3. A zero cap meant "no money" instead of "no ceiling".** The owner: "everything Nansen-related
+is free for the hackathon; switch the cap on later." The default became zero - and at zero
+`budget_left()` returned zero remaining, so a disabled limiter looked like a triggered one: the
+sentinel would quietly stop calling Nansen while the log claimed "budget exhausted" at zero
+spend. Fixed: `store.budget_block()` answers with a REASON rather than yes/no, zero blocks
+nothing, `budget_left()` returns `None` when the cap is off (a full answer: "no ceiling"), and
+spend is always measured and printed as "N credits spent, cap off" - not "N of 0", because the
+second reads as exactly the opposite.
+
+One more: the test now STOPS if the database path is not inside a temporary directory. It gets run
+on the server next to the live service, and a test that could write to the production database is
+more dangerous than no test at all.
+
+## 10. Limits, debts and refuted hypotheses
 
 **The boundary with the trading contour is hard.** No file in `sentinel/` imports
 `nansen_signer` or calls quote/prepare/execute. The `ISOLATION` test holds it (import graph plus
@@ -263,7 +320,7 @@ a call search). Entering a position happens by hand on the venue.
 
 ---
 
-## 10. Roadmap, ordered by value over cost
+## 11. Roadmap, ordered by value over cost
 
 **Step 1 - finish the sentinel (1-2 days).** Sandbox acceptance, then production. The separate
 `sentinel.main` unit plus lease (code is ready; only the unit file and the owner's decision are
@@ -304,7 +361,7 @@ token.
 
 ---
 
-## 11. Reconciliation with the scouting report
+## 12. Reconciliation with the scouting report
 
 Nine requested items. Fully delivered here: the alert engine stages 0-2 (dedupe by
 `transaction_hash`, a Nansen daily cap, per-token cooldown, one outcome row per alert), the

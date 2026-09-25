@@ -73,7 +73,18 @@ def _ensure(conn):
         quiet_from INTEGER,
         quiet_to INTEGER,
         daily_cap INTEGER,
-        enrich_on INTEGER DEFAULT 1)''')
+        enrich_on INTEGER DEFAULT 1,
+        cooldown_min INTEGER)''')
+    # ЛЕНИВЫЙ ALTER ДЛЯ УЖЕ СОЗДАННОЙ ТАБЛИЦЫ. `CREATE TABLE IF NOT EXISTS` на существующей
+    # таблице НЕ добавляет колонку и НЕ жалуется - то есть у того, кто поставил дозорного
+    # раньше (прод Ren, 25.09), новой колонки не появилось бы, а SELECT по ней падал бы
+    # «no such column». Дубликат колонки - штатный случай второго запуска, остальные ошибки
+    # поднимаем: «молча проглотить любую» значит однажды не заметить, что миграции нет.
+    try:
+        conn.execute('ALTER TABLE sentinel_settings ADD COLUMN cooldown_min INTEGER')
+    except Exception as _ae:
+        if not _dup_column(_ae):
+            raise
     conn.execute('''CREATE TABLE IF NOT EXISTS sentinel_deliveries (
         event_key TEXT NOT NULL,
         user_id INTEGER NOT NULL,
@@ -140,8 +151,70 @@ def _ensure(conn):
         events INTEGER DEFAULT 0)''')
 
 
+def _dup_column(e):
+    """«Колонка уже есть» -> True. Любая другая ошибка ALTER -> False (её поднимают выше).
+
+    ЧУЖУЮ ДВЕРЬ БЕРЁМ, ЕСЛИ ОНА ЕСТЬ, И НЕ ТРЕБУЕМ ЕЁ. У бота `db.is_duplicate_column` знает
+    оба бэкенда и остаётся источником правды. Но этот же модуль уезжает в публичную выжимку, где
+    `db.py` — своя маленькая реализация того же интерфейса БЕЗ этой функции, и жёсткий вызов
+    ронял там ВСЕ тесты с базой (`module 'db' has no attribute …`). Фолбэк по тексту ошибки
+    хуже, чем настоящая проверка, поэтому он и стоит ВТОРЫМ, а не первым.
+    """
+    fn = getattr(db, 'is_duplicate_column', None)
+    if fn is not None:
+        try:
+            return bool(fn(e))
+        except Exception:
+            pass
+    s = str(e).lower()
+    return 'duplicate column' in s or 'already exists' in s or 'уже существует' in s
+
+
 def conn():
     return db.ready('sentinel', _ensure, key=DB_KEY)
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# ДВЕ ДВЕРИ ЧТЕНИЯ, И ОНИ ЗАКРЫВАЮТ КУРСОР. НЕ КОСМЕТИКА - БОЕВОЙ ОТКАЗ
+#
+# ЖИВОЙ ПРОГОН ВЛАДЕЛЬЦА 25.09 НА СЕРВЕРЕ: `tests/test_sentinel.py` упал 14 отказами с
+# `sqlite3.OperationalError: database is locked` - на записях, при живом боте рядом. Локально
+# те же тесты давали 104 PASS, и «у меня работает» тут ничего не значило: причина была не в
+# среде, а в том, ЧТО МЫ ОСТАВЛЯЕМ ЗА СОБОЙ.
+#
+# `conn.execute('SELECT …').fetchone()` читает ОДНУ строку и бросает курсор НЕДОЧИТАННЫМ.
+# Недочитанный курсор держит read-транзакцию: в sqlite это блокирует запись (WAL или нет), а
+# в PostgreSQL даёт соединение в состоянии «idle in transaction» - то есть на проде это хуже,
+# а не лучше. Функций с `fetchone()` здесь было девять, и каждая оставляла свой замок.
+#
+# ПОЧЕМУ ОБЩАЯ ДВЕРЬ, А НЕ `.close()` ПО МЕСТАМ: закрытие, которое надо не забыть двадцать два
+# раза, забудут на двадцать третий (закон №5 проекта - врезка в горловину, а не у вызывающих).
+# ══════════════════════════════════════════════════════════════════════════════════════════
+def _one(sql, args=()):
+    """Одна строка или None. Курсор закрывается ВСЕГДА, включая путь с исключением."""
+    cur = conn().execute(sql, args)
+    try:
+        return cur.fetchone()
+    finally:
+        _shut(cur)
+
+
+def _all(sql, args=()):
+    """Все строки списком. Курсор закрывается ВСЕГДА."""
+    cur = conn().execute(sql, args)
+    try:
+        return cur.fetchall() or []
+    finally:
+        _shut(cur)
+
+
+def _shut(cur):
+    """Закрыть курсор молча. Обёртка `db.py` не обязана уметь close - тогда и закрывать нечего,
+    а падать из-за уборки нельзя: уборка, роняющая чтение, хуже отсутствующей."""
+    try:
+        cur.close()
+    except Exception:
+        pass
 
 
 def _now():
@@ -193,10 +266,9 @@ def history(ticker, since_ts=None, limit=4000):
     был). Порядок полей зафиксирован в докстринге — это и есть контракт.
     """
     since = int(since_ts if since_ts is not None else 0)
-    rows = conn().execute(
-        'SELECT ts, mark, vol24, oi_long, oi_short, funding, spread_bps, quote_ts '
-        'FROM sentinel_snapshots WHERE ticker=? AND ts>=? ORDER BY ts ASC LIMIT ?',
-        (ticker, since, int(limit))).fetchall()
+    rows = _all('SELECT ts, mark, vol24, oi_long, oi_short, funding, spread_bps, quote_ts '
+                'FROM sentinel_snapshots WHERE ticker=? AND ts>=? ORDER BY ts ASC LIMIT ?',
+                (ticker, since, int(limit)))
     return [tuple(r[i] for i in range(8)) for r in rows]
 
 
@@ -215,13 +287,14 @@ def prune(days=None):
         return int(cur.rowcount)
     except Exception:
         return -1
+    finally:
+        _shut(cur)
 
 
 def tickers_seen(since_ts=None):
     """Какие инструменты вообще есть в кольце. -> set(тикеров)."""
     since = int(since_ts if since_ts is not None else _now() - 86400)
-    rows = conn().execute('SELECT DISTINCT ticker FROM sentinel_snapshots WHERE ts>=?',
-                          (since,)).fetchall()
+    rows = _all('SELECT DISTINCT ticker FROM sentinel_snapshots WHERE ts>=?', (since,))
     return {r[0] for r in rows}
 
 
@@ -263,8 +336,8 @@ def _is_dup(e):
 
 def event(event_key):
     """-> dict события | None."""
-    r = conn().execute('SELECT event_key, ts, kind, ticker, severity, payload '
-                       'FROM sentinel_events WHERE event_key=?', (event_key,)).fetchone()
+    r = _one('SELECT event_key, ts, kind, ticker, severity, payload '
+             'FROM sentinel_events WHERE event_key=?', (event_key,))
     if not r:
         return None
     try:
@@ -276,8 +349,8 @@ def event(event_key):
 
 
 def events_since(ts, limit=200):
-    rows = conn().execute('SELECT event_key FROM sentinel_events WHERE ts>=? '
-                          'ORDER BY ts ASC LIMIT ?', (int(ts), int(limit))).fetchall()
+    rows = _all('SELECT event_key FROM sentinel_events WHERE ts>=? ORDER BY ts ASC LIMIT ?',
+                (int(ts), int(limit)))
     return [r[0] for r in rows]
 
 
@@ -319,36 +392,37 @@ def sub_del(uid, ticker):
 
 
 def sub_list(uid):
-    rows = conn().execute('SELECT ticker FROM sentinel_subs WHERE user_id=? ORDER BY ticker',
-                          (int(uid),)).fetchall()
+    rows = _all('SELECT ticker FROM sentinel_subs WHERE user_id=? ORDER BY ticker',
+                (int(uid),))
     return [r[0] for r in rows]
 
 
 def subscribers(ticker):
     """Кому интересен этот инструмент. -> [uid]. Включает подписчиков '*'."""
-    rows = conn().execute('SELECT DISTINCT user_id FROM sentinel_subs WHERE ticker=? OR ticker=?',
-                          ((ticker or '').upper(), ALL)).fetchall()
+    rows = _all('SELECT DISTINCT user_id FROM sentinel_subs WHERE ticker=? OR ticker=?',
+                ((ticker or '').upper(), ALL))
     return [int(r[0]) for r in rows]
 
 
 def watched():
     """Все инструменты под дозором. -> set. `ALL` в наборе означает «вся площадка»."""
-    rows = conn().execute('SELECT DISTINCT ticker FROM sentinel_subs').fetchall()
+    rows = _all('SELECT DISTINCT ticker FROM sentinel_subs')
     return {r[0] for r in rows}
 
 
 _DEF_SETTINGS = {'alerts_on': 1, 'min_pct': None, 'quiet_from': None, 'quiet_to': None,
-                 'daily_cap': None, 'enrich_on': 1}
+                 'daily_cap': None, 'enrich_on': 1, 'cooldown_min': None}
 
 
 def settings(uid):
-    r = conn().execute('SELECT alerts_on, min_pct, quiet_from, quiet_to, daily_cap, enrich_on '
-                       'FROM sentinel_settings WHERE user_id=?', (int(uid),)).fetchone()
+    r = _one('SELECT alerts_on, min_pct, quiet_from, quiet_to, daily_cap, enrich_on, '
+             'cooldown_min FROM sentinel_settings WHERE user_id=?', (int(uid),))
     if not r:
         return dict(_DEF_SETTINGS)
     return {'alerts_on': int(r[0] or 0), 'min_pct': r[1], 'quiet_from': r[2],
             'quiet_to': r[3], 'daily_cap': r[4],
-            'enrich_on': 1 if r[5] is None else int(r[5])}
+            'enrich_on': 1 if r[5] is None else int(r[5]),
+            'cooldown_min': r[6]}
 
 
 def settings_set(uid, **kw):
@@ -361,10 +435,11 @@ def settings_set(uid, **kw):
         cur[k] = v
     c = conn()
     c.execute('INSERT OR REPLACE INTO sentinel_settings '
-              '(user_id, alerts_on, min_pct, quiet_from, quiet_to, daily_cap, enrich_on) '
-              'VALUES (?,?,?,?,?,?,?)',
+              '(user_id, alerts_on, min_pct, quiet_from, quiet_to, daily_cap, enrich_on, '
+              'cooldown_min) VALUES (?,?,?,?,?,?,?,?)',
               (int(uid), int(cur['alerts_on'] or 0), cur['min_pct'], cur['quiet_from'],
-               cur['quiet_to'], cur['daily_cap'], int(cur['enrich_on'] or 0)))
+               cur['quiet_to'], cur['daily_cap'], int(cur['enrich_on'] or 0),
+               cur['cooldown_min']))
     c.commit()
     return cur
 
@@ -376,13 +451,24 @@ def cooldown_left(uid, ticker, kind, now=None):
     """Сколько секунд ещё молчим по этой паре. -> 0, если можно."""
     from . import config
     now = int(now if now is not None else time.time())
-    r = conn().execute('SELECT last_ts FROM sentinel_cooldown '
-                       'WHERE user_id=? AND ticker=? AND kind=?',
-                       (int(uid), ticker, kind)).fetchone()
+    r = _one('SELECT last_ts FROM sentinel_cooldown WHERE user_id=? AND ticker=? AND kind=?',
+             (int(uid), ticker, kind))
     if not r or not r[0]:
         return 0
-    left = config.cooldown_sec() - (now - int(r[0]))
+    left = cooldown_for(uid) - (now - int(r[0]))
     return max(0, int(left))
+
+
+def cooldown_for(uid):
+    """Пауза ЭТОГО человека в секундах. Своя настройка сильнее общей.
+
+    ЛИЧНАЯ НАСТРОЙКА, А НЕ ОБЩАЯ ПРАВКА `.env`, потому что шум - вещь личная: одному «раз в
+    час по инструменту» мало, другому много, и крутить общий порог ради одного значит менять
+    поведение для всех. Общее число остаётся дефолтом."""
+    from . import config
+    s = settings(uid)
+    m = s.get('cooldown_min')
+    return int(float(m) * 60) if m else config.cooldown_sec()
 
 
 def cooldown_mark(uid, ticker, kind, now=None):
@@ -403,9 +489,9 @@ def sent_today(uid, now=None):
     """Сколько алертов человек получил за сутки UTC. Считаем ДОСТАВЛЕННЫЕ, а не задуманные."""
     now = int(now if now is not None else time.time())
     day0 = now - (now % 86400)
-    r = conn().execute('SELECT COUNT(*) FROM sentinel_deliveries '
-                       'WHERE user_id=? AND delivered_at IS NOT NULL AND delivered_at>=?',
-                       (int(uid), day0)).fetchone()
+    r = _one('SELECT COUNT(*) FROM sentinel_deliveries '
+             'WHERE user_id=? AND delivered_at IS NOT NULL AND delivered_at>=?',
+             (int(uid), day0))
     return int((r or [0])[0] or 0)
 
 
@@ -440,9 +526,9 @@ def delivery_plan(event_key, uid):
 
 def delivery_due(limit=50):
     """Что ждёт отправки. -> [(event_key, uid, attempts)]."""
-    rows = conn().execute("SELECT event_key, user_id, attempts FROM sentinel_deliveries "
-                          "WHERE delivered_at IS NULL AND state<>'dead' "
-                          "ORDER BY created_at ASC LIMIT ?", (int(limit),)).fetchall()
+    rows = _all("SELECT event_key, user_id, attempts FROM sentinel_deliveries "
+                "WHERE delivered_at IS NULL AND state<>'dead' "
+                "ORDER BY created_at ASC LIMIT ?", (int(limit),))
     return [(r[0], int(r[1]), int(r[2] or 0)) for r in rows]
 
 
@@ -461,8 +547,8 @@ MAX_ATTEMPTS = int(os.getenv('SENTINEL_MAX_ATTEMPTS') or 5)
 
 def delivery_fail(event_key, uid, err):
     c = conn()
-    r = c.execute('SELECT attempts FROM sentinel_deliveries WHERE event_key=? AND user_id=?',
-                  (event_key, int(uid))).fetchone()
+    r = _one('SELECT attempts FROM sentinel_deliveries WHERE event_key=? AND user_id=?',
+             (event_key, int(uid)))
     n = int((r or [0])[0] or 0) + 1
     state = 'dead' if n >= MAX_ATTEMPTS else 'retry'
     c.execute('UPDATE sentinel_deliveries SET state=?, attempts=?, last_err=? '
@@ -473,16 +559,16 @@ def delivery_fail(event_key, uid, err):
 
 
 def delivery_state(event_key, uid):
-    r = conn().execute('SELECT state, attempts, last_err, delivered_at FROM sentinel_deliveries '
-                       'WHERE event_key=? AND user_id=?', (event_key, int(uid))).fetchone()
+    r = _one('SELECT state, attempts, last_err, delivered_at FROM sentinel_deliveries '
+             'WHERE event_key=? AND user_id=?', (event_key, int(uid)))
     if not r:
         return None
     return {'state': r[0], 'attempts': int(r[1] or 0), 'last_err': r[2], 'delivered_at': r[3]}
 
 
 def delivered_users(event_key):
-    rows = conn().execute('SELECT user_id FROM sentinel_deliveries WHERE event_key=? '
-                          'AND delivered_at IS NOT NULL', (event_key,)).fetchall()
+    rows = _all('SELECT user_id FROM sentinel_deliveries WHERE event_key=? '
+                'AND delivered_at IS NOT NULL', (event_key,))
     return [int(r[0]) for r in rows]
 
 
@@ -518,8 +604,8 @@ def enrich_done(event_key, body, credits=0, err=None):
 
 
 def enrich_get(event_key):
-    r = conn().execute('SELECT state, body, credits, err FROM sentinel_enrich '
-                       'WHERE event_key=?', (event_key,)).fetchone()
+    r = _one('SELECT state, body, credits, err FROM sentinel_enrich WHERE event_key=?',
+             (event_key,))
     if not r:
         return None
     return {'state': r[0], 'body': r[1], 'credits': int(r[2] or 0), 'err': r[3]}
@@ -531,11 +617,16 @@ def enrich_pending(limit=20):
     ПОРЯДОК ИМЕННО ТАКОЙ: обогащаем ТО, ЧТО УЖЕ УШЛО. Обогащать недоставленное значит платить
     кредитами за сводку к алерту, которого человек не видел.
     """
-    rows = conn().execute(
-        'SELECT DISTINCT d.event_key FROM sentinel_deliveries d '
-        'LEFT JOIN sentinel_enrich e ON e.event_key = d.event_key '
-        'WHERE d.delivered_at IS NOT NULL AND e.event_key IS NULL '
-        'ORDER BY d.delivered_at DESC LIMIT ?', (int(limit),)).fetchall()
+    # ГРУППИРОВКА, А НЕ DISTINCT, И ЭТО БОЕВОЙ ФИКС, А НЕ ВКУС. Первая редакция писала
+    # `SELECT DISTINCT d.event_key … ORDER BY d.delivered_at`, и PostgreSQL отвергает такое:
+    # «for SELECT DISTINCT, ORDER BY expressions must appear in select list». На sqlite (стенд,
+    # тесты) это ПРОХОДИЛО, а на проде (PG) джоба сводок падала КАЖДУЮ минуту - у Ren в bot.log
+    # эта строка стояла подряд десятками. Класс бага знаком проекту: PG-специфичный отказ
+    # нельзя списывать как «только на тесте», потому что тест как раз зелёный.
+    rows = _all('SELECT d.event_key, MAX(d.delivered_at) AS last_at FROM sentinel_deliveries d '
+                'LEFT JOIN sentinel_enrich e ON e.event_key = d.event_key '
+                'WHERE d.delivered_at IS NOT NULL AND e.event_key IS NULL '
+                'GROUP BY d.event_key ORDER BY last_at DESC LIMIT ?', (int(limit),))
     return [r[0] for r in rows]
 
 
@@ -567,7 +658,7 @@ def outcomes(kind=None, horizon_min=60, since_ts=None):
     if since_ts:
         sql += ' AND e.ts>=?'
         args.append(int(since_ts))
-    rows = conn().execute(sql, tuple(args)).fetchall()
+    rows = _all(sql, tuple(args))
     return [(r[0], r[1], r[2], r[3]) for r in rows]
 
 
@@ -575,11 +666,10 @@ def outcome_due(horizon_min, now=None):
     """События, у которых горизонт истёк, а исход не записан. -> [(event_key, ticker, ts)]."""
     now = int(now if now is not None else time.time())
     cut = now - int(horizon_min) * 60
-    rows = conn().execute(
-        'SELECT e.event_key, e.ticker, e.ts FROM sentinel_events e '
-        'LEFT JOIN sentinel_outcome o ON o.event_key=e.event_key AND o.horizon_min=? '
-        'WHERE e.ts<=? AND o.event_key IS NULL ORDER BY e.ts ASC LIMIT 200',
-        (int(horizon_min), cut)).fetchall()
+    rows = _all('SELECT e.event_key, e.ticker, e.ts FROM sentinel_events e '
+                'LEFT JOIN sentinel_outcome o ON o.event_key=e.event_key AND o.horizon_min=? '
+                'WHERE e.ts<=? AND o.event_key IS NULL ORDER BY e.ts ASC LIMIT 200',
+                (int(horizon_min), cut))
     return [(r[0], r[1], int(r[2] or 0)) for r in rows]
 
 
@@ -602,7 +692,7 @@ def lease(name='variational', ttl=None, owner=None, now=None):
     ttl = int(ttl or max(30, config.poll_sec() * 3))
     who = owner or _me()
     c = conn()
-    r = c.execute('SELECT owner, until FROM sentinel_lease WHERE name=?', (name,)).fetchone()
+    r = _one('SELECT owner, until FROM sentinel_lease WHERE name=?', (name,))
     if r and r[0] != who and int(r[1] or 0) > now:
         return False
     c.execute('INSERT INTO sentinel_lease (name, owner, until) VALUES (?,?,?) '
@@ -613,7 +703,7 @@ def lease(name='variational', ttl=None, owner=None, now=None):
 
 
 def lease_owner(name='variational'):
-    r = conn().execute('SELECT owner, until FROM sentinel_lease WHERE name=?', (name,)).fetchone()
+    r = _one('SELECT owner, until FROM sentinel_lease WHERE name=?', (name,))
     return (r[0], int(r[1] or 0)) if r else (None, 0)
 
 
@@ -636,30 +726,66 @@ def spend_add(credits=0, events=0, day=None):
 
 
 def spend_today(day=None):
-    r = conn().execute('SELECT credits, events FROM sentinel_spend WHERE day=?',
-                       (day or _today(),)).fetchone()
+    r = _one('SELECT credits, events FROM sentinel_spend WHERE day=?', (day or _today(),))
     return (int((r or [0, 0])[0] or 0), int((r or [0, 0])[1] or 0))
 
 
 def budget_left():
-    """Сколько кредитов дозорному ещё можно сжечь сегодня. -> int (0 = стоп).
+    """Остаток кредитов дозорного на сегодня. -> int | None, если кап ВЫКЛЮЧЕН.
 
-    ВЕЛИЧИНА, А НЕ ФЛАГ: «обогащение включено» не отвечает на вопрос «а есть ли на него
-    деньги». Строка в карточке будет говорить остаток числом.
+    None - ПОЛНОПРАВНЫЙ ОТВЕТ, а не «неизвестно»: он значит «потолка нет, тратим свободно».
+    Раньше на выключенном капе эта функция возвращала НОЛЬ, и ноль читался как «денег нет» -
+    то есть «лимит выключен» и «лимит исчерпан» выглядели одинаково, и дозорный молча не ходил
+    бы в Nansen вовсе. Ровно тот класс, что закон «признак наличия не равен признаку пользы»,
+    только наоборот: отсутствие ограничителя выглядело как срабатывание ограничителя.
     """
     from . import config
     cap = config.nansen_day_credits()
     if cap <= 0:
-        return 0
+        return None
     used, _ = spend_today()
     return max(0, cap - used)
+
+
+def budget_block():
+    """Можно ли ещё тратить. -> None (можно) | строка с ПРИЧИНОЙ (нельзя).
+
+    ОДНА ДВЕРЬ НА ВСЕ ПРОВЕРКИ БЮДЖЕТА, и отвечает она не «да/нет», а причиной: текст едет
+    человеку в сводку и в лог, и «обогащения нет» без причины читается как поломка бота.
+    """
+    from . import config
+    cap = config.nansen_day_credits()
+    if cap <= 0:
+        return None
+    used, _ = spend_today()
+    if used >= cap:
+        return 'суточный кап дозорного исчерпан (%d из %d кр)' % (used, cap)
+    return None
+
+
+def spend_line(lang='ru'):
+    """Строка расхода для экранов. ВЕДЁТ ЧИСЛОМ СОЖЖЁННОГО, а кап - вторично.
+
+    Пока Nansen на время хакатона бесплатен (решение владельца), кап выключен - и тогда
+    честнее показать «сожжено N кр, кап выключен», чем «N из 0»: второе читается как
+    исчерпанный лимит, то есть ровно наоборот.
+    """
+    from . import config
+    used, _ = spend_today()
+    cap = config.nansen_day_credits()
+    if lang == 'en':
+        return ('%d credits spent today, daily cap off' % used) if cap <= 0 else (
+            '%d of %d credits spent today' % (used, cap))
+    if cap <= 0:
+        return 'кредитов сожжено сегодня %d, суточный кап выключен' % used
+    return 'кредитов сожжено сегодня %d из %d' % (used, cap)
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
 # КУРСОРЫ И УЧТЁННЫЕ СДЕЛКИ
 # ══════════════════════════════════════════════════════════════════════════════════════════
 def cursor_get(name):
-    r = conn().execute('SELECT value FROM sentinel_cursor WHERE name=?', (name,)).fetchone()
+    r = _one('SELECT value FROM sentinel_cursor WHERE name=?', (name,))
     return (r[0] if r else None)
 
 

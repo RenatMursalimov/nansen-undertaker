@@ -29,7 +29,7 @@
 
 import os
 
-from . import config, ignition, store
+from . import config, ignition, store  # noqa: F401
 
 #: Окно поиска по X. Час, а не сутки: сводка нужна к движению ПОСЛЕДНИХ минут, а суточная
 #: выборка утонет в обычном фоне тикера и покажет вчерашние новости как объяснение сегодняшних.
@@ -106,11 +106,11 @@ async def build(ev, uid=None):
     tick = ev.get('ticker') or p.get('symbol') or '?'
     lines, refusals, credits = [], [], 0
 
-    left = store.budget_left()
-    if left <= 0:
-        used, _ = store.spend_today()
-        refusals.append('ончейн не смотрели: суточный бюджет дозорного исчерпан (%d из %d кр)'
-                        % (used, config.nansen_day_credits()))
+    _stop = store.budget_block()
+    if _stop:
+        # ПРИЧИНА ЕДЕТ СЛОВАМИ ПЛОЩАДКИ НАШЕГО ЖЕ БЮДЖЕТА, а не «сводки нет». Пустая строка
+        # выглядит одинаково при исчерпанном капе, отказе провайдера и правдивой тишине.
+        refusals.append('ончейн не смотрели: %s' % _stop)
     elif ev.get('kind') == 'ignition':
         # У ЗАЖИГАНИЯ КОНТРАКТ УЖЕ ЕСТЬ — он пришёл из той же ленты, что и событие, и
         # сопоставлять тикер не нужно вовсе. Второй запрос за тем же адресом был бы платой за
@@ -145,9 +145,7 @@ async def build(ev, uid=None):
     brief = {'lines': lines, 'refused': ('; '.join(refusals) if refusals else None),
              'summary': '', 'credits': credits}
     brief['summary'] = await _summary(ev, lines)
-    used, _ = store.spend_today()
-    brief['cost_line'] = ('Стоимость сводки: %d кр Nansen · сегодня дозорный сжёг %d из %d'
-                          % (credits, used, config.nansen_day_credits()))
+    brief['cost_line'] = 'Стоимость сводки: %d кр Nansen · %s' % (credits, store.spend_line())
     return brief
 
 
