@@ -3,7 +3,7 @@
 Live alerts on Variational Omni plus Smart Ignition on Nansen. What is built, on which
 measurements, where the limits are, and what comes next.
 
-Date: 2026-09-25. Package: `sentinel/`. Tests: `python3 tests/test_sentinel.py` (216 checks, no
+Date: 2026-09-25. Package: `sentinel/`. Tests: `python3 tests/test_sentinel.py` (248 checks, no
 network needed) plus `t_live_watcher_has_its_own_cache_door` in `tests/test_nansen_contest.py`.
 Live proof: `python3 nansen/proofs/sentinel_live_proof.py MSTR 4.5`.
 
@@ -242,7 +242,7 @@ hourly at :13). That is a deliberate first step: the module and the control pane
 before the move, otherwise the "separate process" would have to be debugged together with new
 logic.
 
-Acceptance on the sandbox: pull, run `tests/test_sentinel.py` (expect 216 PASS / 0 FAIL), run
+Acceptance on the sandbox: pull, run `tests/test_sentinel.py` (expect 248 PASS / 0 FAIL), run
 the live proof, restart the test service, check it is `active`, then grep `[sentinel]` in
 `bot.log` and use the commands in the test bot's direct messages. Production repeats the same
 steps only after the sandbox run is green.
@@ -380,6 +380,67 @@ through one door that prints, next to the failure: backend, the **file taken fro
 connection** (`PRAGMA database_list` - the setting says what we requested, the pragma says where
 the engine actually writes), journal mode, `busy_timeout` and thread name.
 
+## 12. Round five: a second venue, presets, and an answer to "what should I set to catch more"
+
+**Hyperliquid is now a second venue.** The transport already existed in the bot and is used
+by the risk board, so this is not a new client but an **adapter**: the existing engine
+returns its own dictionary and we map it onto `Listing`, the single shape the detector,
+the rings and the card understand. Adding a venue means adding a row to `VENUES`.
+Measured 2026-09-25: Variational 553 instruments per GET; Hyperliquid 234 perps per POST,
+with BTC turnover of $3.49B - more than all of Variational ($3.22B), which means more
+events. Lighter is declared and switched off **with a stated reason**: its engine reads
+positions by address rather than a market list, and that endpoint was asked not to be
+spammed.
+
+Three fields were added to the shared engine door (`oi_base`, `funding`, `spread_bps` from
+`impactPxs`) - one edit in the SHARED door rather than a second fetcher to the same
+endpoint. Hyperliquid spread is computed from impact prices, i.e. it measures the real cost
+of entry rather than the middle of the book.
+
+**Instrument identity became a pair.** "BTC" on Variational and "BTC" on Hyperliquid are
+different markets with different price, spread and funding. Ring keys and event keys now
+carry the venue; without that the two series would merge into one and the detector would
+see "moves" at every source switch. Same class as merging same-ticker tokens, only more
+expensive: there one screen lied, here the whole sentinel would.
+
+**What Hyperliquid does not provide, the card does not print:** the response carries open
+interest as a single number with no long/short split, so those fields stay empty and are
+named in `missing`. Drawing "50 % long" would be invention.
+
+**A new event kind: venue gap** (roadmap step 2, item 1). In the roadmap this was
+"spot versus perp" against an external source; with a second venue it became cheaper and
+more honest - we read both series ourselves, in one tick. The event fires when one ticker
+diverges by at least 40 bps with at least $1M turnover on both sides. A live run found four
+gaps, and the important part of the card is the **honest note about costs**: on one of them
+the gap was 44 bps while entry on both sides cost 92 bps, and confidence dropped to 50 with
+the reason stated plainly. Without that line the "opportunity" would exist only on paper.
+
+**Presets answer "what should I set to catch more".** Three buttons, each touching ONLY
+personal settings, because shared thresholds are the same for every subscriber: *firehose*
+(10-minute cooldown, cap 120/day, personal floor removed), *normal* (hourly cooldown, cap
+25), *quiet* (moves from 3 %, three-hour cooldown, cap 10). Spread and funding are
+deliberately NOT in the firehose: they are useful on a card as the cost of entry, but as a
+reason to ring they produce exactly the spam that started round three.
+
+**Screen formatting: tags are no longer visible.** The "Market now" screen arrived literally
+as `<b>Market now</b>`. Cards go through `outbox` where `parse_mode` is set, while menu
+screens were sent by another door without it - one door knew about markup, the other did
+not, and they diverged silently. All three send paths use HTML now, and a test checks the
+CALL ARGUMENTS rather than the text. The server hostname was also removed from the status
+line: `host:pid` of the production machine tells a human nothing and is infrastructure
+layout for everyone else.
+
+**`database is locked`: the cause was named by the measurement.** `backend=sqlite · file=
+/tmp/… · journal_mode=wal · busy_timeout=60000 · thread=MainThread` - the file is correct,
+the wait is a full minute, and the refusal still arrives instantly. That is not impatience
+but a **race between two connections of one process**: part of the tick goes through
+`asyncio.to_thread`, the thread pool opens a second connection to the same file, and sqlite
+refuses immediately. Production does not know this class of failure - it runs PostgreSQL,
+where parallel connections are the normal mode. So it was not the sentinel failing but
+sqlite under test-only concurrency. The tick therefore runs in one thread in tests, and the
+substitution is declared out loud so nobody mistakes it for a fix. The earlier guess about
+unfinished cursors remains **refuted**: a replay on clean sqlite produces no lock.
+
 ## 12. Limits, debts and refuted hypotheses
 
 **The boundary with the trading contour is hard.** No file in `sentinel/` imports
@@ -410,7 +471,7 @@ a call search). Entering a position happens by hand on the venue.
 
 ---
 
-## 13. Roadmap, ordered by value over cost
+## 14. Roadmap, ordered by value over cost
 
 **Step 1 - finish the sentinel (1-2 days).** Sandbox acceptance, then production. The separate
 `sentinel.main` unit plus lease (code is ready; only the unit file and the owner's decision are
@@ -451,7 +512,7 @@ token.
 
 ---
 
-## 14. Reconciliation with the scouting report
+## 15. Reconciliation with the scouting report
 
 Nine requested items. Fully delivered here: the alert engine stages 0-2 (dedupe by
 `transaction_hash`, a Nansen daily cap, per-token cooldown, one outcome row per alert), the

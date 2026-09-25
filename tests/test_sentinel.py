@@ -110,8 +110,36 @@ except Exception:
     _tg.Bot = object
     sys.modules['telegram'] = _tg
 
+# ── ТИК В ОДНОМ ПОТОКЕ: УБИРАЕМ ИЗ ТЕСТА ТО, ЧЕГО НЕТ НА ПРОДЕ ─────────────────────────────
+# ЗАМЕР С СЕРВЕРА ВЛАДЕЛЬЦА НАЗВАЛ ПРИЧИНУ САМ: `backend=sqlite · file=/tmp/… · journal_mode=wal
+# · busy_timeout=60000 · поток=MainThread`. Файл правильный (временный), таймаут ожидания
+# минута - и при этом `database is locked` приходит мгновенно. Так выглядит НЕ нехватка
+# терпения, а гонка двух соединений одного процесса: часть тика уходит в `asyncio.to_thread`,
+# пул потоков открывает ВТОРОЕ соединение к тому же файлу, и sqlite отказывает сразу.
+# ПРОД ЭТОГО КЛАССА ОТКАЗА НЕ ЗНАЕТ: там PostgreSQL, где параллельные соединения - штатный
+# режим (`backend=postgres` в той же строке замеров это и показывает). То есть падал не
+# дозорный, а sqlite под тестовой многопоточностью.
+# ПОЭТОМУ ЗДЕСЬ НЕ «ПОЧИНКА», А ЧЕСТНОЕ СУЖЕНИЕ: тик выполняется в одном потоке, и тест
+# проверяет ЛОГИКУ дозорного, а не поведение sqlite при гонке. Подмена объявлена вслух
+# ровно затем, чтобы никто не принял её за исправление настоящей проблемы.
+_real_to_thread = asyncio.to_thread
+
+
+async def _same_thread(fn, *a, **kw):
+    return fn(*a, **kw)
+
+
+asyncio.to_thread = _same_thread
+
 from sentinel import cards, config, detector, engine, ignition, outbox, store, ui  # noqa: E402
 from sentinel import variational_feed as feed    # noqa: E402
+from sentinel import venues                      # noqa: E402
+
+# ТОЛЬКО VARIATIONAL В ТЕСТАХ: вторая площадка - живая сеть, а тесты сети не требуют.
+# Список площадок сужаем ЯВНО, а не через окружение: окружение на машине разработчика
+# может быть любым, и тест не имеет права зависеть от него.
+venues.DEFAULT_VENUES = ('variational',)
+os.environ['SENTINEL_VENUES'] = 'variational'
 
 UID = 990001
 UID2 = 990002
@@ -711,21 +739,21 @@ def _scenes_ok():
 
 def t_engine_tick_never_throws_and_always_says_something():
     """ТИК: не бросает ни при какой поломке и ВСЕГДА печатает, что произошло."""
-    orig = feed.fetch
+    orig = venues.VENUES['variational']['fetch']
 
-    def boom():
+    async def boom():
         raise feed.FeedError('http', 'HTTP 403', http=403)
-    feed.fetch = boom
+    venues.VENUES['variational']['fetch'] = boom
     note = asyncio.run(engine.ingest_tick())
-    feed.fetch = orig
+    venues.VENUES['variational']['fetch'] = orig
     check('TICK: отказ фида назван классом, а не «не получилось»',
-          '403' in note and 'площадка не прочитана' in note, note)
+          '403' in note and 'не прочитана' in note, note)
 
-    def kaput():
+    async def kaput():
         raise RuntimeError('что угодно')
-    feed.fetch = kaput
+    venues.VENUES['variational']['fetch'] = kaput
     note2 = asyncio.run(engine.ingest_tick())
-    feed.fetch = orig
+    venues.VENUES['variational']['fetch'] = orig
     check('TICK: любая другая поломка тоже не роняет джобу',
           'упал' in note2 or 'не прочитана' in note2, note2)
     check('TICK: строка состояния ведёт величинами',
@@ -1173,12 +1201,13 @@ def t_hot_ring_actually_grows():
     base = 1800000000
     for i in range(6):
         engine._hot_put(x, base + i * 30)        # опрос раз в 30с
-    arr = engine._HOT['RING']
+    arr = engine._HOT[venues.key('variational', 'RING')]
     check('RING: шесть опросов дали шесть точек, а не одну', len(arr) == 6, len(arr))
     check('RING: время точек растёт', [r[0] for r in arr] == sorted(r[0] for r in arr))
     engine._hot_put(x, base + 5 * 30)            # тот же миг: наложение тиков
     check('RING: два тика в одну секунду дают одну точку',
-          len(engine._HOT['RING']) == 6, len(engine._HOT['RING']))
+          len(engine._HOT[venues.key('variational', 'RING')]) == 6,
+          len(engine._HOT[venues.key('variational', 'RING')]))
     old = engine._hot_put(x, base + 200 * 60)    # далеко в будущем - старое выпадает
     check('RING: точки старше глубины выпадают', len(old) < 7, len(old))
     engine._HOT.clear()
@@ -1232,6 +1261,184 @@ def t_db_failure_speaks_with_measurements():
           'замеры в каждом except по месту однажды забудут в одном из десяти')
 
 
+def t_venues_are_data_not_branches():
+    """ПЛОЩАДКИ - ДАННЫЕ. Добавление площадки не правит ни детектор, ни кольца, ни меню.
+
+    Просьба владельца: «разные площадки бы потестил и включил бы в настройки (Variational уже
+    работает, дальше бы HL, Lighter - у них все есть уже готовые движки у нас)». Ключевое -
+    «готовые движки»: транспорт Hyperliquid в проекте уже написан и используется бордом риска,
+    поэтому второй клиент к той же ручке был бы дублем транспорта (закон №40).
+    """
+    check('VENUE: реестр знает три площадки',
+          {'variational', 'hyperliquid', 'lighter'} <= set(venues.VENUES), list(venues.VENUES))
+    check('VENUE: у выключенной названа ПРИЧИНА, а её нет молча',
+          venues.why_off('lighter') and 'не спамить' in venues.why_off('lighter'),
+          venues.why_off('lighter'))
+    check('VENUE: причина есть и по-английски (по экрану ходит обходчик)',
+          venues.why_off('lighter', 'en')
+          and not __import__('re').search(r'[А-Яа-яЁё]', venues.why_off('lighter', 'en')),
+          venues.why_off('lighter', 'en'))
+    check('VENUE: выключенная площадка в live() не попадает',
+          'lighter' not in venues.live(), venues.live())
+    # ── ИДЕНТИЧНОСТЬ ПАРНАЯ: «BTC» на двух площадках - разные инструменты ──
+    k1, k2 = venues.key('variational', 'btc'), venues.key('hyperliquid', 'BTC')
+    check('VENUE: ключ кольца включает площадку', k1 != k2 and k1 == 'variational:BTC', (k1, k2))
+    check('VENUE: ключ разбирается обратно',
+          venues.split(k2) == ('hyperliquid', 'BTC'), venues.split(k2))
+    check('VENUE: старый ключ без площадки читается как Variational',
+          venues.split('BTC') == ('variational', 'BTC'), venues.split('BTC'))
+    # ── ПЕРЕХОДНИК HYPERLIQUID НА ЗАПИСАННОМ ОТВЕТЕ ДВИЖКА (сети не требует) ──
+    import sentinel.venues as V
+    orig = V._oc_perps
+
+    class FakeOC:
+        @staticmethod
+        async def hl_universe():
+            return {'BTC': {'mark': 84797.0, 'vol24': 3.49e9, 'oi_usd': 3.4e9,
+                            'oi_base': 39982.7, 'funding': 1.25e-05, 'spread_bps': 0.21,
+                            'chg24': 1.7},
+                    'DEAD': {'mark': None, 'vol24': 0}}
+    V._oc_perps = lambda: FakeOC
+    try:
+        rows, meta = asyncio.run(V.hl_fetch())
+    finally:
+        V._oc_perps = orig
+    check('VENUE: переходник HL отдал строку', len(rows) == 1 and rows[0].ticker == 'BTC',
+          [r.ticker for r in rows])
+    x = rows[0]
+    check('VENUE: площадка проставлена в инструменте', x.venue == 'hyperliquid', x.venue)
+    check('VENUE: инструмент без цены отброшен, а не записан нулём',
+          all(r.ticker != 'DEAD' for r in rows))
+    check('VENUE: открытый интерес лёг в одиночное поле, а не в лонги',
+          x.oi_long is None and x.oi_total == 39982.7, (x.oi_long, x.oi_total))
+    check('VENUE: отсутствие разбивки сторон НАЗВАНО, а не нарисовано',
+          'oi_long/oi_short' in x.missing, x.missing)
+    check('VENUE: интервал фандинга у HL - час', x.funding_interval_s == 3600,
+          x.funding_interval_s)
+    check('VENUE: пустой ответ движка - ОТКАЗ, а не «рынок замер»', _hl_empty_is_refusal(V),
+          'пустота стала бы утверждением о рынке')
+    # ── КАРТОЧКА НАЗЫВАЕТ ПЛОЩАДКУ И ВЕДЁТ ИМЕННО НА НЕЁ ──
+    ev = {'kind': 'move_up', 'ticker': 'BTC', 'ts': int(time.time()), 'severity': 90,
+          'payload': {'venue': 'hyperliquid', 'mark': 84797.0, 'move_pct': 2.1,
+                      'volume_24h': 3.49e9, 'penalties': []}}
+    txt = cards.card(ev)
+    check('VENUE: карточка называет площадку', 'Hyperliquid' in txt, txt[:160])
+    check('VENUE: и ссылка ведёт на неё, а не на Variational',
+          'app.hyperliquid.xyz' in txt and 'omni.variational' not in txt, txt[-200:])
+
+
+def _hl_empty_is_refusal(V):
+    orig = V._oc_perps
+
+    class Empty:
+        @staticmethod
+        async def hl_universe():
+            return {}
+    V._oc_perps = lambda: Empty
+    try:
+        asyncio.run(V.hl_fetch())
+        return False
+    except feed.FeedError:
+        return True
+    finally:
+        V._oc_perps = orig
+
+
+def t_venue_filter_and_presets_are_personal():
+    """ПЛОЩАДКА И ПРЕСЕТ - ЛИЧНЫЕ НАСТРОЙКИ. Отсев по площадке стоит на доставке."""
+    uid = 991500
+    store.settings_set(uid, alerts_on=1, enrich_on=0, venues=None, kinds=None)
+    store.sub_add(uid, 'BTC')
+    check('VF: по умолчанию слушаем все живые площадки',
+          store.venues_for(uid) == set(venues.live()), store.venues_for(uid))
+    now = int(time.time())
+    ev = {'kind': 'move_up', 'ticker': 'BTC', 'ts': now, 'severity': 80,
+          'key': 'vf%d' % now,
+          'payload': {'venue': 'hyperliquid', 'mark': 1.0, 'move_pct': 2.0, 'penalties': []}}
+    store.event_new(ev)
+    store.venues_set(uid, {'variational'})
+    n, why = outbox.plan(ev)
+    check('VF: алерт чужой площадки НЕ уходит', n == 0, (n, why))
+    check('VF: и причина названа словами',
+          any('площадка hyperliquid выключена' in w for w in why), why)
+    store.venue_toggle(uid, 'hyperliquid')
+    ev2 = dict(ev, key=ev['key'] + 'b')
+    store.event_new(ev2)
+    check('VF: после включения - уходит', outbox.plan(ev2)[0] == 1)
+    # ── ПРЕСЕТЫ: ОТВЕТ НА «КАКИЕ НАСТРОЙКИ ВЫСТАВИТЬ, ЧТОБЫ ПОБОЛЬШЕ АЛЕРТОВ» ──
+    nm, why2 = store.preset_apply(uid, 'test')
+    s = store.settings(uid)
+    check('PRESET: «поток» применился и назвал себя словами',
+          nm == 'test' and 'пауза 10 минут' in why2, (nm, why2))
+    check('PRESET: пауза опущена', s['cooldown_min'] == 10, s['cooldown_min'])
+    check('PRESET: потолок поднят', store.cap_for(uid) == 120, store.cap_for(uid))
+    check('PRESET: личный порог снят (ловим всё, что даёт общий)',
+          s['min_pct'] is None, s['min_pct'])
+    check('PRESET: спред и фандинг в поток НЕ включены (они не повод звонить)',
+          'spread_shock' not in store.kinds_for(uid)
+          and 'funding_extreme' not in store.kinds_for(uid), store.kinds_for(uid))
+    store.preset_apply(uid, 'quiet')
+    check('PRESET: «тихий» ставит порог и длинную паузу',
+          store.settings(uid)['min_pct'] == 3.0 and store.settings(uid)['cooldown_min'] == 180,
+          store.settings(uid))
+    check('PRESET: чужое имя - отказ со словом',
+          store.preset_apply(uid, 'нет такого')[0] is None)
+    check('PRESET: пресет НЕ трогает общие пороги детектора',
+          config.move_pct_15m() == 1.2, config.move_pct_15m())
+
+
+def t_screens_are_sent_as_html():
+    """ЭКРАНЫ УХОДЯТ С РАЗМЕТКОЙ. Иначе человек читает теги глазами.
+
+    ЖИВОЙ СЛУЧАЙ 25.09: экран «Что сейчас» пришёл владельцу буквально как
+    `<b>Что сейчас на площадке</b>`. Карточки алертов ходят через `outbox`, где parse_mode задан,
+    а экраны меню отправлялись другой дверью - без него. Одна дверь знала про разметку, вторая
+    нет, и разошлись они молча.
+    """
+    seen = []
+
+    class Ctx:
+        class bot:
+            @staticmethod
+            async def send_message(chat_id=None, text=None, **kw):
+                seen.append(kw)
+                return True
+
+    class Q:
+        data = 'sen:now'
+        from_user = type('U', (), {'id': 991600})()
+        message = type('M', (), {'chat_id': 991600, 'text': 'x'})()
+        edits = []
+
+        async def answer(self, *a, **kw):
+            return True
+
+        async def edit_message_text(self, text, reply_markup=None, **kw):
+            Q.edits.append(kw)
+            return True
+
+    q = Q()
+    asyncio.run(ui.handle_callback(type('U', (), {'callback_query': q})(), Ctx()))
+    check('HTML: экран отправлен с parse_mode=HTML',
+          seen and seen[0].get('parse_mode') == 'HTML', seen[:1])
+    check('HTML: превью ссылок выключено',
+          seen and seen[0].get('disable_web_page_preview') is True, seen[:1])
+    asyncio.run(ui.handle_callback(
+        type('U', (), {'callback_query': type('Q2', (Q,), {'data': 'sen:t:al'})()})(), Ctx()))
+    check('HTML: и перерисовка экрана тоже с разметкой',
+          Q.edits and Q.edits[-1].get('parse_mode') == 'HTML', Q.edits[-1:])
+    sent = []
+
+    class Bot:
+        @staticmethod
+        async def send_message(chat_id=None, text=None, reply_markup=None, **kw):
+            sent.append(kw)
+            return True
+    asyncio.run(ui.route_send(Bot, 991600, 'дозор'))
+    check('HTML: ответ на команду словами - тоже HTML',
+          sent and sent[0].get('parse_mode') == 'HTML', sent[:1])
+
+
 def main():
     for fn in (t_parse_is_real_and_names_what_is_missing,
                t_detector_needs_both_percent_and_sigma,
@@ -1264,7 +1471,11 @@ def main():
                t_silence_is_explained_by_numbers_not_by_faith,
                t_hot_ring_actually_grows,
                t_volume_is_its_own_signal,
-               t_db_failure_speaks_with_measurements):
+               t_db_failure_speaks_with_measurements,
+               # ── круг 5 (25.09): площадки как данные, пресеты, HTML на экранах ──
+               t_venues_are_data_not_branches,
+               t_venue_filter_and_presets_are_personal,
+               t_screens_are_sent_as_html):
         print('\n== %s' % fn.__name__)
         try:
             fn()

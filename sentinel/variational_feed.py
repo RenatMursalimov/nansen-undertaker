@@ -124,12 +124,20 @@ class Listing:
     quote_ts: float = None
     quotes: dict = field(default_factory=dict)   # {'base': (bid, ask), 'size_1k': …}
     missing: tuple = ()                # чего в ответе не было — поимённо, а не «данных нет»
+    #: ПЛОЩАДКА В САМОМ ИНСТРУМЕНТЕ. Появилась вместе со второй площадкой: «BTC» на
+    #: Variational и «BTC» на Hyperliquid - РАЗНЫЕ рынки с разной ценой и спредом, и без
+    #: этого поля они слиплись бы в один ряд кольца, породив выдуманные «движения» на
+    #: каждом переключении источника.
+    venue: str = 'variational'
+    #: ОТКРЫТЫЙ ИНТЕРЕС ОДНИМ ЧИСЛОМ - для площадок, которые не разбивают его на стороны
+    #: (Hyperliquid). Положить весь интерес в `oi_long` значило бы соврать про перекос.
+    oi_total_raw: float = None
 
     @property
     def oi_total(self):
         a, b = self.oi_long, self.oi_short
         if a is None and b is None:
-            return None
+            return self.oi_total_raw
         return (a or 0.0) + (b or 0.0)
 
     @property

@@ -76,7 +76,8 @@ def _ensure(conn):
         enrich_on INTEGER DEFAULT 1,
         cooldown_min INTEGER,
         kinds TEXT,
-        parts TEXT)''')
+        parts TEXT,
+        venues TEXT)''')
     # ЛЕНИВЫЙ ALTER ДЛЯ УЖЕ СОЗДАННОЙ ТАБЛИЦЫ. `CREATE TABLE IF NOT EXISTS` на существующей
     # таблице НЕ добавляет колонку и НЕ жалуется - то есть у того, кто поставил дозорного
     # раньше (прод Ren, 25.09), новой колонки не появилось бы, а SELECT по ней падал бы
@@ -85,7 +86,8 @@ def _ensure(conn):
     # НАБОРЫ ХРАНИМ СТРОКОЙ ЧЕРЕЗ ЗАПЯТУЮ, А НЕ ТАБЛИЦЕЙ-СВЯЗКОЙ. Значений пять и три, они
     # читаются на каждой доставке, и JOIN ради этого дал бы два запроса вместо нуля. Порядок в
     # строке не значит ничего - набор сравнивается множеством.
-    for _col, _type in (('cooldown_min', 'INTEGER'), ('kinds', 'TEXT'), ('parts', 'TEXT')):
+    for _col, _type in (('cooldown_min', 'INTEGER'), ('kinds', 'TEXT'), ('parts', 'TEXT'),
+                        ('venues', 'TEXT')):
         try:
             conn.execute('ALTER TABLE sentinel_settings ADD COLUMN %s %s' % (_col, _type))
         except Exception as _ae:
@@ -473,18 +475,18 @@ def watched():
 
 _DEF_SETTINGS = {'alerts_on': 1, 'min_pct': None, 'quiet_from': None, 'quiet_to': None,
                  'daily_cap': None, 'enrich_on': 1, 'cooldown_min': None, 'kinds': None,
-                 'parts': None}
+                 'parts': None, 'venues': None}
 
 
 def settings(uid):
     r = _one('SELECT alerts_on, min_pct, quiet_from, quiet_to, daily_cap, enrich_on, '
-             'cooldown_min, kinds, parts FROM sentinel_settings WHERE user_id=?', (int(uid),))
+             'cooldown_min, kinds, parts, venues FROM sentinel_settings WHERE user_id=?', (int(uid),))
     if not r:
         return dict(_DEF_SETTINGS)
     return {'alerts_on': int(r[0] or 0), 'min_pct': r[1], 'quiet_from': r[2],
             'quiet_to': r[3], 'daily_cap': r[4],
             'enrich_on': 1 if r[5] is None else int(r[5]),
-            'cooldown_min': r[6], 'kinds': r[7], 'parts': r[8]}
+            'cooldown_min': r[6], 'kinds': r[7], 'parts': r[8], 'venues': r[9]}
 
 
 def settings_set(uid, **kw):
@@ -498,10 +500,10 @@ def settings_set(uid, **kw):
     c = conn()
     c.execute('INSERT OR REPLACE INTO sentinel_settings '
               '(user_id, alerts_on, min_pct, quiet_from, quiet_to, daily_cap, enrich_on, '
-              'cooldown_min, kinds, parts) VALUES (?,?,?,?,?,?,?,?,?,?)',
+              'cooldown_min, kinds, parts, venues) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
               (int(uid), int(cur['alerts_on'] or 0), cur['min_pct'], cur['quiet_from'],
                cur['quiet_to'], cur['daily_cap'], int(cur['enrich_on'] or 0),
-               cur['cooldown_min'], cur['kinds'], cur['parts']))
+               cur['cooldown_min'], cur['kinds'], cur['parts'], cur['venues']))
     c.commit()
     return cur
 
@@ -613,6 +615,63 @@ def part_toggle(uid, part):
     cur.discard(part) if part in cur else cur.add(part)
     parts_set(uid, cur)
     return cur
+
+
+def venues_for(uid):
+    """Какие ПЛОЩАДКИ человек хочет слушать. -> set.
+
+    Просьба владельца: «разные площадки бы потестил и включил бы в настройки». Пустая
+    настройка = все живые площадки: человек, ни разу не заходивший в настройки, не должен
+    молча остаться без половины рынка.
+    """
+    from . import venues as _v
+    raw = settings(uid).get('venues')
+    if raw is None:
+        return set(_v.live())
+    return {x.strip() for x in str(raw).split(',') if x.strip()}
+
+
+def venues_set(uid, vs):
+    return settings_set(uid, venues=','.join(sorted(set(vs))))
+
+
+def venue_toggle(uid, venue):
+    cur = venues_for(uid)
+    cur.discard(venue) if venue in cur else cur.add(venue)
+    venues_set(uid, cur)
+    return cur
+
+
+#: ПРЕСЕТЫ ЧУВСТВИТЕЛЬНОСТИ. Отвечают на живой вопрос владельца дословно: «какие
+#: рекомендуешь настройки выставить, чтобы побольше алертов словить и потестировать».
+#: Пресет трогает ТОЛЬКО личные настройки (порог, пауза, потолок, набор видов) - общие
+#: пороги детектора остаются как есть, потому что они одни на всех подписчиков.
+PRESETS = {
+    'test': {'min_pct': None, 'cooldown_min': 10, 'daily_cap': 120,
+             'kinds': 'move_up,move_down,oi_surge,vol_surge,ignition',
+             'why': 'поток для проверки: все виды кроме спреда и фандинга, пауза 10 минут, '
+                    'потолок 120 в сутки'},
+    'normal': {'min_pct': None, 'cooldown_min': None, 'daily_cap': None,
+               'kinds': 'move_up,move_down,oi_surge,vol_surge,ignition',
+               'why': 'рабочий режим: пауза час, потолок 25 в сутки'},
+    'quiet': {'min_pct': 3.0, 'cooldown_min': 180, 'daily_cap': 10,
+              'kinds': 'move_up,move_down,ignition',
+              'why': 'только крупное: движения от 3%, зажигание, пауза три часа'},
+}
+
+
+def preset_apply(uid, name):
+    """Применить пресет. -> (имя, описание) | (None, причина).
+
+    ВОЗВРАЩАЕТ ОПИСАНИЕ СЛОВАМИ, а не «готово»: пресет меняет четыре настройки сразу, и
+    человек обязан увидеть, что именно с ним произошло, не сверяя экран по памяти.
+    """
+    p = PRESETS.get(name)
+    if not p:
+        return None, 'такого пресета нет: %s' % name
+    settings_set(uid, min_pct=p['min_pct'], cooldown_min=p['cooldown_min'],
+                 daily_cap=p['daily_cap'], kinds=p['kinds'], alerts_on=1)
+    return name, p['why']
 
 
 def cap_for(uid):

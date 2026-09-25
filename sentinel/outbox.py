@@ -115,6 +115,12 @@ def plan(ev):
         if kind not in store.kinds_for(uid):
             reasons.append('uid=%s: вид %s выключен в настройках' % (uid, kind))
             continue
+        # ПЛОЩАДКА - ТОЖЕ ЛИЧНЫЙ ВЫБОР. Тот, кто торгует только на одной, не должен получать
+        # алерты второй: цена и спред там другие, и зайти по такому алерту он не может.
+        _venue = (ev.get('payload') or {}).get('venue') or 'variational'
+        if _venue not in store.venues_for(uid):
+            reasons.append('uid=%s: площадка %s выключена' % (uid, _venue))
+            continue
         mp = s.get('min_pct')
         mv = (ev.get('payload') or {}).get('move_pct')
         if mp is not None and mv is not None and abs(float(mv)) < float(mp):
@@ -260,13 +266,17 @@ def status_line(lang='ru'):
     seen = len(store.tickers_seen(now - 3600))
     evs = len(store.events_since(now - 86400, limit=9999))
     owner, until = store.lease_owner()
+    # ИМЯ СЕРВЕРА В ЧАТ НЕ ОТДАЁМ. В строке состояния стояло полное `host:pid` боевой машины -
+    # человеку оно не говорит ничего, а наружу это раскладка инфраструктуры. Нужен ответ на
+    # «опрашивает ли КТО-ТО и не умер ли он», и для него достаточно «да/нет + срок аренды».
+    owner = ('есть' if lang != 'en' else 'yes') if owner else None
     if lang == 'en':
-        return ('sentinel: instruments in the last hour %d · events in 24h %d · polled by %s '
+        return ('sentinel: instruments in the last hour %d · events in 24h %d · poller %s '
                 '(lease %s) · %s'
-                % (seen, evs, owner or 'nobody',
+                % (seen, evs, owner or 'none',
                    ('%ds left' % (until - now)) if until > now else 'expired',
                    store.spend_line('en')))
-    return ('дозор: инструментов за час %d · события за сутки %d · опрос у %s (аренда %s) · %s'
-            % (seen, evs, owner or 'никого',
+    return ('дозор: инструментов за час %d · события за сутки %d · опрос %s (аренда %s) · %s'
+            % (seen, evs, owner or 'никто не ведёт',
                ('ещё %dс' % (until - now)) if until > now else 'истекла',
                store.spend_line()))
