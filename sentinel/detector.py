@@ -9,7 +9,9 @@
 
 ЧЕТЫРЕ ВИДА СОБЫТИЙ, И У КАЖДОГО СВОЯ ПРИЧИНА СУЩЕСТВОВАТЬ
   move_up/move_down — цена ушла И ушла НЕОБЫЧНО ДЛЯ СЕБЯ (процент + сигма);
-  oi_surge          — открытый интерес прыгнул: в позицию заходят, даже если цена стоит;
+  oi_surge          — открытый интерес прыгнул: в позицию заходят, даже если цена стоит
+                      (стоит - карточка говорит «поглощение» строкой; вернулся за 3 ч -
+                      обратная нога, пишется с round_trip=1 и не звонит);
   funding_extreme   — ставка ушла в свой же хвост: за движение платят, и дорого;
   spread_shock      — котировка разъехалась: заходить руками стало дорого, это ПРЕДОСТЕРЕЖЕНИЕ,
                       а не приглашение, и в карточке оно так и названо.
@@ -46,8 +48,15 @@ W15, W60 = 900, 3600
 #: объявляется НЕДОСТУПНЫМ (а не «0%»): отсутствие замера не равно отсутствию движения.
 TOL = 180
 
+#: `absorption` ОТСЮДА УБРАН (ТЗ 2.4): такие события больше не рождаются, это строка карточки
+#: `oi_surge`. Реестр видов - то, из чего человек выбирает, и мёртвый пункт в нём был бы
+#: тумблером, который ничего не включает. Старые события вида рисует `cards`.
 KINDS = ('move_up', 'move_down', 'oi_surge', 'vol_surge', 'funding_extreme',
-         'spread_shock', 'ignition', 'venue_gap', 'crowded', 'absorption')
+         'spread_shock', 'ignition', 'venue_gap', 'crowded',
+         #: СМАРТ-ПЕРП приходит НЕ ИЗ ЭТОГО МОДУЛЯ (его считает `ignition.scan_perp`
+         #: по ленте Nansen), но в реестре видов он обязан быть: по этому списку
+         #: строятся наборы человека и проверки доставки.
+         'sm_perp')
 
 
 # ── ЭЛЕМЕНТАРНАЯ АРИФМЕТИКА, ВЫНЕСЕННАЯ РАДИ ОДНОГО: ДЕЛЕНИЯ НА НОЛЬ ──────────────────────
@@ -116,6 +125,55 @@ def sigma_pct(rows, step=W15):
     mean = sum(rets) / n
     var = sum((x - mean) ** 2 for x in rets) / (n - 1)
     return math.sqrt(var), n
+
+
+def hourly_changes(rows, idx, step=W60):
+    """|Изменение| поля `idx` между СОСЕДНИМИ часами ряда. -> [float].
+
+    Для медианы «обычного часа» у оборота (ТЗ 2.4). Точка часа - последнее значение в нём
+    (кольцо холодное, 15-минутное). Через дыру в опросе разницу не берём: «изменение за три
+    часа» в выборке часовых сделало бы медиану больше настоящей и заглушило бы событие.
+    МОДУЛЬ, А НЕ ЗНАК. Оборот 24ч - скользящее окно: за час в него входит новый час и выходит
+    час суточной давности, поэтому знаковая медиана у спокойного рынка около нуля, и «три
+    медианы» были бы нулём. Мерка обычного часа - его размах, а не направление.
+    """
+    by = {}
+    for r in rows:
+        v = r[idx] if len(r) > idx else None
+        if v is None:
+            continue
+        by[int(r[0]) // step] = float(v)
+    bs = sorted(by.items())
+    return [abs(bs[i][1] - bs[i - 1][1]) for i in range(1, len(bs))
+            if bs[i][0] - bs[i - 1][0] == 1]
+
+
+def oi_round_trip(ring, now, oi_now, oi_then, then_ts):
+    """Текущий скачок интереса - ОБРАТНАЯ НОГА прошлого? -> (ts, oi) точки старта | None.
+
+    ТЗ 2.4. Интерес был X, прыгнул к Y и вернулся к X - это одна позиция, открытая и закрытая,
+    а не два события. Признак считается по КОЛЬЦУ, а не по памяти процесса: после рестарта
+    память пустая, а кольцо в базе то же, и ответ обязан быть тем же.
+    ПРАВИЛО: в окне `oi_return_hours` ДО начала текущего часа была точка, где интерес уже стоял
+    на нынешнем уровне с допуском `oi_return_pct` ОТ ВЕЛИЧИНЫ СКАЧКА. Тогда час назад (Y) - это
+    вершина прошлой ноги, а сейчас интерес вернулся к её старту.
+    Первую ногу это не трогает: до неё интерес стоял на СТАРОМ уровне, а не на новом.
+    """
+    jump = abs(float(oi_then) - float(oi_now))
+    if not jump:
+        return None
+    tol = jump * config.oi_return_pct() / 100.0
+    lo = int(now) - int(config.oi_return_hours() * 3600)
+    hi = int(then_ts) - W15
+    best = None
+    for r in ring:
+        ts = int(r[0])
+        v = r[8] if len(r) > 8 else None
+        if v is None or ts < lo or ts > hi:
+            continue
+        if abs(float(v) - float(oi_now)) <= tol:
+            best = (ts, float(v))
+    return best
 
 
 def tail_share(values, x):
@@ -259,29 +317,58 @@ def _window(ts):
     return int(ts) // max(300, int(config.cooldown_sec()))
 
 
-def cross_venue(listings, now=None):
-    """Один актив на РАЗНЫХ площадках -> события расхождения цены. ЧИСТАЯ функция.
+#: СОСТОЯНИЕ ПАР ПЛОЩАДОК МЕЖДУ ТИКАМИ: сколько тиков подряд держится расхождение и какие пары
+#: признаны РАЗНЫМИ ИНСТРУМЕНТАМИ. В памяти процесса, и это осознанно: серия «3 тика подряд»
+#: - это полторы минуты, и после рестарта её честнее набрать заново, чем восстановить по базе.
+_GAP_STATE = {}
+
+
+def _gap_pair(tick, va, vb):
+    return '%s:%s|%s' % (tick, *sorted((va, vb)))
+
+
+def cross_venue(listings, now=None, median_fn=None, state=None):
+    """Один актив на РАЗНЫХ площадках -> события расхождения цены.
 
     ЗАЧЕМ ЭТО ЗДЕСЬ, А НЕ В ОБЩЕМ `detect`. `detect` смотрит на ОДИН инструмент и его
-    историю; расхождение живёт МЕЖДУ инструментами и требует всего среза сразу. Впихнуть
-    его в `detect` значило бы передавать туда весь рынок ради одной проверки - и все
-    остальные виды начали бы зависеть от того, что происходит с чужими тикерами.
+    историю; расхождение живёт МЕЖДУ инструментами и требует всего среза сразу.
 
-    ТИКЕРЫ СРАВНИВАЕМ ТОЛЬКО ОДИНАКОВЫЕ И ТОЛЬКО ЖИВЫЕ. «BTC» и «BTC» - один актив на двух
-    площадках; «US» на Variational это токен Talus, и никакого «US» на Hyperliquid с тем же
-    смыслом может не быть - поэтому пары строятся по точному совпадению тикера, а не по
-    похожести, и обе стороны обязаны иметь оборот (расхождение с мёртвым рынком - это
-    отсутствие рынка, а не возможность).
+    ТИКЕРЫ СРАВНИВАЕМ ТОЛЬКО ОДИНАКОВЫЕ И ТОЛЬКО ЖИВЫЕ: пары строятся по точному совпадению
+    тикера, и обе стороны обязаны иметь оборот.
+
+    ═══ ПОЧЕМУ ПЯТЬ ФИЛЬТРОВ ВМЕСТО ОДНОГО ПОРОГА (ТЗ 2.3, ЗАМЕР F7) ═══
+    Замер прода: 613 событий расхождения за сутки - половина всех событий дозора. Двадцать тиков
+    по 30 секунд, 56 общих тикеров: расхождение от 40 б.п. у 8 тикеров, у 7 из них оно держалось
+    3+ тика, у 5 - весь замер. Живучие: US500 90 221 б.п. (РАЗНЫЕ инструменты под одним тикером),
+    AERO 73, ZRO 74, NIL 64, JUP 43, LDO 43, XPL 40. То есть расхождение было ЛИБО разовым (лаг
+    котировки, ушло к следующему тику), ЛИБО структурным (держится часами и никем не выкупается -
+    значит не исполняется). Ни то ни другое не алерт. Живая карточка JUP 26.09 была вторым
+    случаем: Variational дешевле Hyperliquid часами.
+    Отсюда правила, каждое - против одного из этих случаев:
+      1. >= `gap_bps` (150 б.п.) - меньшие расхождения съедает вход на двух сторонах;
+      2. держится >= `gap_ticks` тиков подряд - против разового лага котировки;
+      3. обе котировки моложе `gap_quote_age` секунд - устаревшая котировка и есть «расхождение»;
+      4. чистая кромка (расхождение минус вход) >= `gap_net_bps` - иначе заходить не во что;
+      5. МЕДИАНА РАСХОЖДЕНИЯ ЭТОЙ ПАРЫ ЗА СУТКИ < `gap_basis_bps` - иначе это структурный базис
+         площадок, а не событие. Медиана считается по холодным кольцам обеих площадок
+         (`median_fn`), и БЕЗ ИЗМЕРЕННОЙ МЕДИАНЫ СОБЫТИЯ НЕТ (закон 41).
+    И отдельно: расхождение больше `gap_diff_bps` (2000 б.п.) - это РАЗНЫЕ инструменты с одним
+    тикером; пара запоминается и в сверку больше не входит.
+
+    `median_fn(tick, venue_a, venue_b) -> (медиана б.п. | None, точек)` - подменяется в тесте.
+    `state` - словарь пар; по умолчанию модульный `_GAP_STATE`.
     """
     import time as _t
     now = int(now if now is not None else _t.time())
     from . import config as _c
+    st = _GAP_STATE if state is None else state
     by = {}
     for x in listings or ():
         if not x.mark or (x.volume_24h or 0) < _c.gap_min_usd():
             continue
         by.setdefault(str(x.ticker).upper(), []).append(x)
     out = []
+    seen_pairs = set()
     for tick, group in by.items():
         if len(group) < 2:
             continue
@@ -289,35 +376,171 @@ def cross_venue(listings, now=None):
         lo, hi = group[0], group[-1]
         if lo.venue == hi.venue or not lo.mark:
             continue
+        pk = _gap_pair(tick, lo.venue, hi.venue)
+        seen_pairs.add(pk)
+        rec = st.setdefault(pk, {'streak': 0, 'last_ts': 0, 'different': False})
         gap = (hi.mark - lo.mark) / lo.mark * 10000.0
-        if gap < _c.gap_bps():
+        # ── РАЗНЫЕ ИНСТРУМЕНТЫ ПОД ОДНИМ ТИКЕРОМ: запомнить и больше не сравнивать ──
+        if rec['different'] or gap > _c.gap_diff_bps():
+            if not rec['different']:
+                rec['different'] = True
+                print('[sentinel] %s: расхождение %.0f б.п. между %s и %s - это разные '
+                      'инструменты с одним тикером, из сверки исключаю' % (tick, gap, lo.venue,
+                                                                         hi.venue))
             continue
-        pen = []
-        # ЧЕСТНАЯ ОГОВОРКА: часть расхождения съедает спред на обеих сторонах. Не сказать
-        # этого значит показать «возможность», которой после издержек может не быть.
+        if gap < _c.gap_bps():
+            rec['streak'] = 0
+            continue
+        # ── СВЕЖЕСТЬ: у площадки без метки времени котировки (Hyperliquid, Lighter) цена
+        #    читается этим же опросом, то есть её возраст - ноль по построению. Неизмеренный
+        #    возраст здесь не «неизвестен», а известен: мы только что её получили.
+        _stale = [z for z in (lo, hi)
+                  if (z.quote_age(now) or 0) > _c.gap_quote_age()]
+        if _stale:
+            rec['streak'] = 0
+            continue
+        # ── СЕРИЯ ТИКОВ ПОДРЯД: пропуск опроса больше двух периодов рвёт серию ──
+        if rec['last_ts'] and now - rec['last_ts'] > 2 * _c.poll_sec() + 5:
+            rec['streak'] = 0
+        rec['streak'] += 1
+        rec['last_ts'] = now
+        if rec['streak'] < _c.gap_ticks():
+            continue
         cost = (lo.depth_bps("size_100k") or lo.spread_bps or 0) + \
                (hi.depth_bps("size_100k") or hi.spread_bps or 0)
-        if cost >= gap:
-            pen.append(('вход на обеих сторонах стоит %.0f б.п. - больше самого расхождения'
-                        % cost, 40))
-        elif cost > 0:
-            pen.append(('вход на обеих сторонах стоит %.0f б.п.' % cost, 10))
-        for z in (lo, hi):
-            age = z.quote_age(now)
-            if age is not None and age > _c.quote_warn_sec():
-                pen.append(('котировка %s старше %ds' % (z.venue, int(age)), 15))
-        conf, notes = confidence(90, pen)
+        net = gap - cost
+        if net < _c.gap_net_bps():
+            continue
+        med, mpts = (median_fn(tick, lo.venue, hi.venue) if median_fn else (None, 0))
+        if med is None or mpts < _c.sigma_min_points():
+            # НЕТ ИЗМЕРЕННОЙ БАЗЫ ДЛЯ СРАВНЕНИЯ - НЕТ СОБЫТИЯ. «Необычное ли это расхождение для
+            # этой пары» без суточной истории пары невычислимо, а без этого ответа JUP снова
+            # звонил бы каждые полчаса своим обычным базисом.
+            continue
+        if med >= _c.gap_basis_bps():
+            continue
+        # УВЕРЕННОСТЬ - ФУНКЦИЯ ОТ ЧИСТОЙ КРОМКИ И ЧИСЛА ТИКОВ (ТЗ 2.3), а не постоянные 80:
+        # прежняя формула давала 90-10=80 любому расхождению, то есть не различала ничего.
+        # ШКАЛА: +1 пункт за каждые 10 б.п. кромки сверх минимума, до +30 (то есть насыщение
+        # на 350 б.п. кромки), и +5 за каждый тик сверх трёх, до +15. Первая редакция делила на
+        # 5 и насыщалась на 200 б.п. - кромки 210 и 590 получали одинаковые 85, то есть шкала
+        # снова переставала различать.
+        conf = int(min(100, 55 + min(30, (net - _c.gap_net_bps()) / 10.0)
+                       + min(15, (rec['streak'] - _c.gap_ticks()) * 5)))
+        notes = ['чистая кромка %.0f б.п. после входа на обеих сторонах' % net,
+                 'держится %d тиков подряд' % rec['streak'],
+                 'обычное расхождение этой пары за сутки %.0f б.п. (%d точек)' % (med, mpts)]
         step = _step(gap, _c.gap_bps())
         out.append({'kind': 'venue_gap', 'ticker': tick, 'ts': now,
-                    'key': key('venue_gap', tick, _window(now), step),
+                    'key': key('venue_gap', pk, _window(now), step),
                     'severity': conf,
                     'payload': {'ticker': tick, 'venue': hi.venue, 'mark': hi.mark,
                                 'gap_bps': gap, 'cheap_venue': lo.venue,
                                 'cheap_mark': lo.mark, 'rich_venue': hi.venue,
-                                'rich_mark': hi.mark, 'cost_bps': cost,
+                                'rich_mark': hi.mark, 'cost_bps': cost, 'net_bps': net,
+                                'ticks': rec['streak'], 'median_24h_bps': med,
+                                'median_points': mpts,
                                 'volume_24h': min(lo.volume_24h or 0, hi.volume_24h or 0),
                                 'step': step, 'penalties': notes}})
+    # ПАРЫ, КОТОРЫХ В ЭТОМ ТИКЕ НЕ БЫЛО (оборот упал, инструмент пропал), серию теряют.
+    for pk, rec in st.items():
+        if pk not in seen_pairs and not rec.get('different'):
+            rec['streak'] = 0
+    # СЕССИЯ NYSE (ТЗ 2.5) И ДЛЯ РАСХОЖДЕНИЯ: класс знает только площадка с именами
+    # (Variational), поэтому берётся та сторона пары, у которой он доказан.
+    for ev in out:
+        for x in by.get(str(ev.get('ticker') or '').upper(), ()):
+            _before = (ev.get('payload') or {}).get('digest_only')
+            _session_gate([ev], x, now)
+            if (ev.get('payload') or {}).get('digest_only') != _before:
+                break
     return out
+
+
+#: КОГДА В ПОСЛЕДНИЙ РАЗ ЖАЛОВАЛИСЬ НА НЕСОГЛАСОВАННЫЙ ИНТЕРЕС, по (площадка, тикер).
+#: Лог раз в час на инструмент: при 553 инструментах и опросе раз в 30 секунд честная печать
+#: «на каждый случай» дала бы десятки тысяч строк в сутки, и в этом шуме потерялось бы всё
+#: остальное - то есть сторож сломал бы лог, который сам же и должен был сделать читаемым.
+_OI_COMPLAINED = {}
+_OI_COMPLAIN_EVERY = 3600
+#: ЗАПАС К ОБОРОТУ. Прирост интереса физически не может превысить наторгованный объём; двойка -
+#: запас на то, что окна замера у прироста (час) и у оборота (сутки) разные.
+_OI_VS_VOLUME = 2.0
+
+
+#: КОГДА В ПОСЛЕДНИЙ РАЗ ОБЪЯСНЯЛИ МОЛЧАНИЕ ПО ЭТОМУ ИНСТРУМЕНТУ.
+_SIGMA_SAID = {}
+_SIGMA_SAY_EVERY = 3600
+
+
+def _sigma_silence(listing, p15, p60, sig, npts, sig60, npts60, z, z60, now):
+    """Назвать причину, по которой порог пройден, а события нет. -> None (пишет в лог).
+
+    ЗАЧЕМ ЭТО ВООБЩЕ ЕСТЬ. После правила «нет сигмы - нет события» дозорный стал молчать там, где
+    раньше говорил, и это ПРАВИЛЬНО. Но молчание без причины неотличимо от поломки: первым делом
+    человек пойдёт крутить порог движения, хотя порог тут не участвует вовсе.
+    РАЗ В ЧАС НА ИНСТРУМЕНТ: при 553 инструментах и опросе раз в 30 секунд честная печать на
+    каждый случай залила бы лог десятками тысяч строк, то есть сломала бы главный инструмент
+    диагностики ради диагностики.
+    """
+    k = '%s:%s' % (getattr(listing, 'venue', '?'), listing.ticker)
+    if int(now) - int(_SIGMA_SAID.get(k) or 0) < _SIGMA_SAY_EVERY:
+        return
+    _SIGMA_SAID[k] = int(now)
+    if p15 is not None and abs(p15) >= config.move_pct_15m():
+        _win, _p, _s, _n, _z = '15м', p15, sig, npts, z
+    else:
+        _win, _p, _s, _n, _z = '60м', p60, sig60, npts60, z60
+    if not _s or _s <= 0:
+        why = ('сигма измерена нулём на %d точках - ряд не двигался' % (_n or 0))
+    elif (_n or 0) < config.sigma_min_points():
+        why = ('сигма по %d точкам, нужно %d' % (_n or 0, config.sigma_min_points()))
+    elif _z is not None:
+        why = ('движение внутри обычного разброса: z=%.1f, нужно %.1f' % (abs(_z), config.z_min()))
+    else:
+        why = 'необычность не вычислена'
+    print('[sentinel] %s: ход %s %+.2f%% порог прошёл, но события нет - %s'
+          % (k, _win, _p or 0.0, why))
+
+
+#: КОГДА В ПОСЛЕДНИЙ РАЗ ОБЪЯСНЯЛИ МОЛЧАНИЕ ОБОРОТА (нет медианы часа), по (площадка, тикер).
+_SURGE_SAID = {}
+
+
+def _surge_silence(listing, now, why):
+    """Порог в деньгах пройден, базы сравнения нет - назвать это в лог раз в час. -> None.
+
+    Та же причина, что у `_sigma_silence`: после «нет медианы - нет события» оборот первые
+    сутки кольца молчит, и без строки в логе это неотличимо от поломки.
+    """
+    k = '%s:%s' % (getattr(listing, 'venue', '?'), listing.ticker)
+    if int(now) - int(_SURGE_SAID.get(k) or 0) < _SIGMA_SAY_EVERY:
+        return
+    _SURGE_SAID[k] = int(now)
+    print('[sentinel] %s: %s - события нет' % (k, why))
+
+
+def _oi_inconsistent(listing, d_usd, now):
+    """Прирост интереса несовместим с оборотом. -> bool (True = событие не создавать).
+
+    ЗАМЕР 26.09 НА ПРОДЕ: 118 событий `oi_surge` из 139 имели прирост интереса больше двух
+    суточных оборотов - например DELL при обороте 497 тысяч показывал прирост 47.79 млн. Такие
+    числа не бывают «немного неточными»: они означают, что сравниваются разные величины.
+    ПОЧЕМУ МОЛЧАНИЕ, А НЕ ШТРАФ К УВЕРЕННОСТИ. Штраф оставил бы событие живым, и человек всё
+    равно увидел бы невозможное число - только с пометкой «мы не уверены». Отсутствие замера не
+    подменяется замером похуже.
+    """
+    vol = listing.volume_24h
+    if not vol or vol <= 0 or not d_usd:
+        return False
+    if d_usd <= _OI_VS_VOLUME * float(vol):
+        return False
+    k = '%s:%s' % (getattr(listing, 'venue', '?'), listing.ticker)
+    if int(now) - int(_OI_COMPLAINED.get(k) or 0) >= _OI_COMPLAIN_EVERY:
+        _OI_COMPLAINED[k] = int(now)
+        print('[sentinel] %s: прирост интереса $%.0f больше %g x оборота $%.0f - числа '
+              'несогласованы, события по интересу не делаю' % (k, d_usd, _OI_VS_VOLUME, vol))
+    return True
 
 
 def detect(listing, rows, now=None, ring=None):
@@ -344,6 +567,16 @@ def detect(listing, rows, now=None, ring=None):
 
     r15 = at(rows, now - W15)
     r60 = at(rows, now - W60)
+    # ═══ ПОСЛЕ РЕСТАРТА ЧАС БЕРЁТСЯ ИЗ ХОЛОДНОГО КОЛЬЦА (этап 5, ТЗ 5.3) ═══
+    # Горячее кольцо живёт в памяти и после рестарта пустое: первые 60 минут точки часовой
+    # давности в нём нет, и часовые движения, скачки интереса и оборота молчали бы час после
+    # каждого деплоя. Холодное кольцо в базе пережило рестарт, но точки в нём раз в 15 минут -
+    # поэтому допуск окна - 15 минут, и это число едет в карточку пометкой (`p60_src`).
+    p60_src = 'hot'
+    if r60 is None and ring is not rows:
+        r60 = at(ring, now - W60, tol=W15)
+        if r60 is not None:
+            p60_src = 'cold15'
     p15 = pct(listing.mark, r15[1]) if r15 else None
     p60 = pct(listing.mark, r60[1]) if r60 else None
     sig, npts = sigma_pct(ring)
@@ -375,30 +608,71 @@ def detect(listing, rows, now=None, ring=None):
               'depth_1m_bps': listing.depth_bps('size_1m'),
               'quote_age_s': listing.quote_age(now),
               'ret15_pct': p15, 'ret60_pct': p60, 'sigma_pct': sig, 'sigma_points': npts,
-              'z': z, 'missing': list(listing.missing)}
+              'z': z, 'missing': list(listing.missing),
+              # ИНТЕРЕС В ДОЛЛАРАХ И КЛАСС АКТИВА - В КАЖДОМ СОБЫТИИ (этап 3). Карточка печатала
+              # «ОИ 4.27M» суммой сторон без единицы (и у Hyperliquid/Lighter не печатала вовсе),
+              # а класс пересчитывался в другом процессе по имени, которого у HL нет.
+              'oi_usd': listing.oi_usd, 'asset_class': _klass_of(listing),
+              # ОТКУДА ВЗЯТА ТОЧКА ЧАСОВОЙ ДАВНОСТИ: 'hot' (горячее кольцо, точность секунды) или
+              # 'cold15' (холодное после рестарта, точность 15 минут) - карточка помечает второе.
+              'p60_src': p60_src}
 
     # ── ДВИЖЕНИЕ ЦЕНЫ ─────────────────────────────────────────────────────────────────────
+    # ═══ СИГМА ОБЯЗАТЕЛЬНА. БЕЗ ИЗМЕРЕННОЙ БАЗЫ СРАВНЕНИЯ СОБЫТИЯ НЕТ ВОВСЕ (ТЗ 2.1) ═══
+    # ЗАМЕР ПРОДА 26.09: из 167 движений, доставленных владельцу за сутки, у 147 сигма считалась
+    # по МЕНЕЕ ЧЕМ 20 точкам (у большинства - по ОДНОЙ), и они звонили: движения по 1.3-1.8%
+    # приходили как «необычные». Механика была такая: нет измеренной сигмы - публикуем со штрафом
+    # -25, итог 75 при пороге звонка 70. То есть отсутствие замера ПОДМЕНЯЛОСЬ замером похуже, и
+    # порог звонка проходился ровно за счёт этой подмены (закон 41).
+    # ТЕПЕРЬ: нет сигмы - нет события. Это и есть кандидат в законы проекта: «алерт без
+    # измеренной базы для сравнения не звонит».
+    # ЧАСОВОЕ ОКНО ПОЛУЧИЛО СВОЮ СИГМУ. Раньше оно не проверялось в сигмах ВООБЩЕ, а `z`
+    # печатался как «необычность» и для часовых карточек - хотя считался по 15-минутному
+    # разбросу. Часовые доходности разбросаны шире пятнадцатиминутных, поэтому сравнивать ход за
+    # час с сигмой за 15 минут значит завышать необычность в разы.
+    sig60, npts60 = sigma_pct(ring, step=W60)
+    sigma60_source = '60m'
+    # ═══ ОЦЕНКА ЧАСОВОЙ СИГМЫ ПО 15-МИНУТНОЙ, ПОКА ЧАСОВЫХ ТОЧЕК МАЛО (решение владельца 26.09) ═══
+    # Замер: 20 часовых доходностей набираются за 21 ЧАС кольца. Кольцо на проде стартовало около
+    # 09:10 UTC, значит без оценки часовые движения молчали бы до утра следующего дня, то есть
+    # весь день показа.
+    # ПОЧЕМУ ЭТО НЕ ПОДМЕНА СИГНАЛА СОСЕДНИМ (закон 41): ряд тот же самый, меняется только окно, и
+    # пересчёт идёт по названной формуле. При независимых приращениях разброс растёт как корень
+    # из времени, в часе четыре пятнадцатиминутки, отсюда sigma60 = sigma15 * sqrt(4) = sigma15 * 2.
+    # Допущение (независимость приращений) названо вслух, а не спрятано: на трендовом рынке
+    # настоящая часовая сигма больше оценки, поэтому оценка скорее ЗАВЫШАЕТ необычность. Именно
+    # поэтому источник едет в payload, и карточка помечает число как оценку.
+    # УСЛОВИЯ СТРОГИЕ: у 15-минутной сигмы должно быть не меньше `sigma_min_points` точек и
+    # ненулевой разброс. Если нет и её, оценивать нечего, и события нет, как и было.
+    # КАК ТОЛЬКО ЧАСОВЫХ ТОЧЕК НАБРАЛОСЬ, берётся настоящая sigma60 и оценка больше не участвует.
+    if (npts60 < config.sigma_min_points() and sigma_usable
+            and npts >= config.sigma_min_points()):
+        sig60, npts60, sigma60_source = sig * 2.0, npts, '15m*sqrt4'
+    z60 = (p60 / sig60) if (p60 is not None and sig60 and sig60 > 0) else None
+    sigma60_usable = bool(sig60 and sig60 > 0 and npts60 >= config.sigma_min_points())
     mv, thr, why = None, None, None
+    z_used, sig_used, npts_used, src_used = None, None, None, None
     if p15 is not None and abs(p15) >= config.move_pct_15m():
-        # СИГМА ОБЯЗАТЕЛЬНА, НО ТОЛЬКО ЕСЛИ ОНА ИЗМЕРЕНА. Выборки меньше `sigma_min_points`
-        # не хватает даже на порядок величины: её сигма — случайное число, и «z=40» на ней
-        # означает лишь то, что процесс недавно запущен.
-        if sigma_usable:
-            if z is not None and abs(z) >= config.z_min():
-                mv, thr, why = p15, config.move_pct_15m(), '15м'
-        else:
+        if sigma_usable and z is not None and abs(z) >= config.z_min():
             mv, thr, why = p15, config.move_pct_15m(), '15м'
+            z_used, sig_used, npts_used, src_used = z, sig, npts, '15m'
     if mv is None and p60 is not None and abs(p60) >= config.move_pct_60m():
-        mv, thr, why = p60, config.move_pct_60m(), '60м'
+        if sigma60_usable and z60 is not None and abs(z60) >= config.z_min():
+            mv, thr, why = p60, config.move_pct_60m(), '60м'
+            z_used, sig_used, npts_used, src_used = z60, sig60, npts60, sigma60_source
+    # ПОЧЕМУ МОЛЧАНИЕ НАДО ОБЪЯСНЯТЬ. «Порог пройден, а события нет» - это то, в чём через день
+    # не разберётся никто, и первым делом полезут крутить порог. Одна строка на инструмент в час:
+    # чаще - зальём лог (553 инструмента, опрос раз в 30с), реже - потеряем ответ.
+    if mv is None and ((p15 is not None and abs(p15) >= config.move_pct_15m())
+                       or (p60 is not None and abs(p60) >= config.move_pct_60m())):
+        _sigma_silence(listing, p15, p60, sig, npts, sig60, npts60, z, z60, now)
     if mv is not None:
         pen = list(base_pen)
-        if npts < config.sigma_min_points():
-            pen.append(('сигма по %d точкам - мало для порога в сигмах' % npts, 25))
-        elif not sigma_usable:
-            pen.append(('сигма измерена нулём на %d точках - ряд не двигался, порог в сигмах '
-                        'неприменим' % npts, 25))
-        elif z is not None and abs(z) < config.z_min():
-            pen.append(('движение внутри обычного разброса (z=%.1f)' % z, 20))
+        # ШТРАФ -25 УБРАН: он был платой за отсутствие замера, а такого события больше не бывает.
+        # ОСТАЛСЯ -10 НА СРЕДНЕЙ ВЫБОРКЕ: 20-49 точек хватает на порядок величины, но не на
+        # уверенное утверждение - и человек имеет право видеть эту разницу числом.
+        if npts_used is not None and npts_used < 50:
+            pen.append(('сигма по %d точкам - выборка небольшая' % npts_used, 10))
         if (listing.volume_24h or 0) < config.min_volume_usd() * 10:
             pen.append(('оборот за сутки всего $%.0fk' % ((listing.volume_24h or 0) / 1000), 10))
         conf, notes = confidence(100, pen)
@@ -407,32 +681,75 @@ def detect(listing, rows, now=None, ring=None):
         out.append({'kind': kind, 'ticker': listing.ticker, 'ts': now,
                     'key': key(kind, '%s:%s' % (_venue, listing.ticker), _window(now), step),
                     'severity': conf,
+                    # `z`, `sigma_pct` И `sigma_points` ПЕРЕЗАПИСЫВАЮТСЯ ПОД СРАБОТАВШЕЕ ОКНО.
+                    # В `common` они лежат от 15-минутного разброса, и для часового события это
+                    # было бы чужое число: карточка печатает «необычность 7.1σ», а посчитана она
+                    # по другому окну. Числу в карточке положено иметь ОДИН источник.
                     'payload': dict(common, window=why, move_pct=mv, threshold_pct=thr,
-                                    step=step, penalties=notes)})
+                                    step=step, penalties=notes,
+                                    z=z_used, sigma_pct=sig_used, sigma_points=npts_used,
+                                    sigma_window=why,
+                                    # ОТКУДА ВЗЯТА СИГМА: '15m', '60m' или '15m*sqrt4' (оценка
+                                    # часовой по 15-минутной). Карточка по этому полю помечает
+                                    # число как оценку, отчёт может разделить события по нему.
+                                    sigma_source=src_used)})
 
     # ── ОТКРЫТЫЙ ИНТЕРЕС ──────────────────────────────────────────────────────────────────
-    oi_now = listing.oi_total
+    # ВСЁ СЧИТАЕТСЯ В ДОЛЛАРАХ, И ПЕРЕВОД ЗДЕСЬ НЕ ДЕЛАЕТСЯ ВОВСЕ. Единицу знает слой площадки
+    # (`venues` -> `Listing.oi_usd`), потому что у трёх площадок она РАЗНАЯ. Прежний код умножал
+    # на марк-цену одинаково для всех, и это давало 118 невозможных событий из 139 за сутки:
+    # интерес Variational, приходящий в долларах, домножался на цену.
+    oi_now = listing.oi_usd
     if oi_now and r60 is not None:
-        oi_then = (r60[3] or 0) + (r60[4] or 0)
+        oi_then = r60[8] if len(r60) > 8 else None
         d_oi = pct(oi_now, oi_then if oi_then else None)
-        # СКАЧОК В ДЕНЬГАХ, А НЕ ТОЛЬКО В ПРОЦЕНТАХ. +20% к интересу, которого было на $30k, -
-        # это $6k: арифметика та же, смысла нет. Интерес площадка отдаёт В КОНТРАКТАХ, поэтому
-        # переводим марк-ценой; без цены проверку не выдумываем, а пропускаем событие (иначе
-        # «денег много» решалось бы догадкой).
-        d_usd = abs(oi_now - oi_then) * (listing.mark or 0)
+        d_usd = abs(oi_now - (oi_then or 0.0))
+        # ═══ СТОРОЖ СОГЛАСОВАННОСТИ: ПРИРОСТ ИНТЕРЕСА НЕ БЫВАЕТ БОЛЬШЕ ДВУХ ОБОРОТОВ ═══
+        # Чтобы интерес вырос на сумму X, кто-то обязан был на эту сумму наторговать, поэтому
+        # прирост заведомо меньше оборота; двойной запас оставлен на разные окна замера. Больше
+        # двух оборотов означает, что мы сравниваем НЕСОГЛАСОВАННЫЕ числа (единицы разъехались,
+        # площадка сменила смысл поля, в кольце чужая строка). Событие не создаётся: алерт с
+        # невозможным числом не осторожнее, а вреднее молчания - человек по нему заходит.
+        if _oi_inconsistent(listing, d_usd, now):
+            d_oi = None
+        # ═══ ПОРОГ В ДЕНЬГАХ - БОЛЬШИЙ ИЗ ДВУХ (ТЗ 2.4): max($250k, 3% оборота 24ч) ═══
+        # $250k прироста у инструмента с оборотом $2 млрд - шум его обычного часа. Какой из
+        # порогов сработал, едет в payload: «почему это событие» отвечается числом, а не верой.
+        _oi_abs = config.oi_min_usd()
+        _oi_share = float(listing.volume_24h or 0) * config.oi_vol_share_pct() / 100.0
+        thr_oi_usd, thr_oi_src = ((_oi_share, '%.0f%% оборота 24ч' % config.oi_vol_share_pct())
+                                  if _oi_share > _oi_abs else (_oi_abs, 'нижняя граница'))
         if (d_oi is not None and abs(d_oi) >= config.oi_pct()
-                and d_usd >= config.oi_min_usd()):
+                and d_usd >= thr_oi_usd):
             pen = list(base_pen)
-            if oi_then and oi_then * (listing.mark or 0) < config.min_volume_usd():
+            if oi_then and oi_then < config.min_volume_usd():
                 pen.append(('час назад интереса почти не было - процент считается от малого',
                             20))
             conf, notes = confidence(90, pen)
             step = _step(d_oi, config.oi_pct())
+            # ═══ ОБРАТНАЯ НОГА (ТЗ 2.4): пишется с round_trip=1 и НЕ звонит ═══
+            # Событие создаётся, а не выбрасывается: оно понадобится отчёту («сколько скачков
+            # интереса вернулись за три часа» - это свойство площадки, и его стоит знать). Звонок
+            # гасит `outbox.mute_reason` по этому полю, с причиной словами.
+            _rt = oi_round_trip(ring, now, oi_now, oi_then, r60[0])
+            # ═══ ПОГЛОЩЕНИЕ - СТРОКА ЭТОЙ КАРТОЧКИ, А НЕ ВТОРОЕ СОБЫТИЕ (ТЗ 2.4) ═══
+            # Скачок интереса при стоящей цене давал ДВЕ карточки на один замер: `oi_surge` и
+            # `absorption`. Это один факт про рынок; второе сообщение не добавляло числа, а
+            # только будило второй раз. Признак прежний: цена за тот же час в пределах
+            # `absorb_ret_pct`; интерес - ВЫРОС (падение интереса при стоящей цене - закрытие,
+            # а не набор против потока).
+            _absorb = bool(p60 is not None and abs(p60) <= config.absorb_ret_pct()
+                           and d_oi > 0)
             out.append({'kind': 'oi_surge', 'ticker': listing.ticker, 'ts': now,
                         'key': key('oi_surge', '%s:%s' % (_venue, listing.ticker), _window(now), step),
                         'severity': conf,
                         'payload': dict(common, oi_change_pct=d_oi, oi_then=oi_then,
                                         oi_now=oi_now, oi_change_usd=d_usd, step=step,
+                                        oi_threshold_usd=thr_oi_usd, oi_threshold_src=thr_oi_src,
+                                        absorption=_absorb,
+                                        round_trip=(1 if _rt else 0),
+                                        round_trip_from_ts=(_rt[0] if _rt else None),
+                                        round_trip_from_oi=(_rt[1] if _rt else None),
                                         penalties=notes)})
 
     # ── ОБОРОТ: ДЕНЬГИ ПРИХОДЯТ РАНЬШЕ, ЧЕМ ДВИГАЕТСЯ ЦЕНА ────────────────────────────────
@@ -440,22 +757,45 @@ def detect(listing, rows, now=None, ring=None):
     # (за три минуты ни один из 553 инструментов её не изменил), а оборот растёт непрерывно.
     # То есть по цене мы узнаём о приходе денег ПОЗЖЕ, чем по объёму. Просьба владельца -
     # «или просто алерты по объёму» - совпала с тем, что показывает рынок.
+    # ═══ ПОРОГ: max($500k, 3 x МЕДИАНА СВОИХ ЧАСОВЫХ ПРИРОСТОВ, 5% ОБОРОТА 24ч) (ТЗ 2.4) ═══
+    # Прежний порог (+25% к суточному обороту за час) был одинаково строг к BTC и к хвосту
+    # списка. Теперь инструмент мерится своим обычным часом. Медианы нет (часов в кольце меньше
+    # `sigma_min_points`) - события нет: база сравнения не измерена, и подменять её нечем.
     if listing.volume_24h and r60 is not None:
         v_then = r60[2]
         d_vol = pct(listing.volume_24h, v_then if v_then else None)
         d_vusd = (listing.volume_24h - (v_then or 0))
-        if (d_vol is not None and d_vol >= config.vol_pct()
-                and d_vusd >= config.vol_min_usd()):
-            pen = list(base_pen)
-            if p60 is None:
-                pen.append(('движение цены за тот же час не измерено', 10))
-            conf, notes = confidence(85, pen)
-            step = _step(d_vol, config.vol_pct())
-            out.append({'kind': 'vol_surge', 'ticker': listing.ticker, 'ts': now,
-                        'key': key('vol_surge', '%s:%s' % (_venue, listing.ticker), _window(now), step),
-                        'severity': conf,
-                        'payload': dict(common, vol_change_pct=d_vol, vol_then=v_then,
-                                        vol_change_usd=d_vusd, step=step, penalties=notes)})
+        if d_vol is not None and d_vusd >= config.vol_min_usd():
+            _chg = hourly_changes(ring, 2)
+            _med_v = median(_chg) if len(_chg) >= config.sigma_min_points() else None
+            if _med_v is None:
+                _surge_silence(listing, now, 'оборот +$%.0f за час, но медианы часовых '
+                               'приростов нет: %d часов в кольце, нужно %d'
+                               % (d_vusd, len(_chg), config.sigma_min_points()))
+            else:
+                _cands = [(config.vol_min_usd(), 'нижняя граница'),
+                          (_med_v * config.vol_median_mult(),
+                           '%g x медиана часа' % config.vol_median_mult()),
+                          (float(listing.volume_24h) * config.vol_share_pct() / 100.0,
+                           '%g%% оборота 24ч' % config.vol_share_pct())]
+                thr_v, thr_v_src = max(_cands, key=lambda c: c[0])
+                if d_vusd >= thr_v:
+                    pen = list(base_pen)
+                    if p60 is None:
+                        pen.append(('движение цены за тот же час не измерено', 10))
+                    conf, notes = confidence(85, pen)
+                    step = _step(d_vusd, thr_v)
+                    out.append({'kind': 'vol_surge', 'ticker': listing.ticker, 'ts': now,
+                                'key': key('vol_surge', '%s:%s' % (_venue, listing.ticker),
+                                           _window(now), step),
+                                'severity': conf,
+                                'payload': dict(common, vol_change_pct=d_vol, vol_then=v_then,
+                                                vol_change_usd=d_vusd, step=step,
+                                                vol_threshold_usd=thr_v,
+                                                vol_threshold_src=thr_v_src,
+                                                vol_median_usd=_med_v,
+                                                vol_median_points=len(_chg),
+                                                penalties=notes)})
 
     # ── ФАНДИНГ: ХВОСТ СВОЕГО ЖЕ РАСПРЕДЕЛЕНИЯ ────────────────────────────────────────────
     if listing.funding_raw is not None and len(ring) >= config.sigma_min_points():
@@ -532,28 +872,10 @@ def detect(listing, rows, now=None, ring=None):
                                         crowd_pct=side * 100.0, funding_rank=pays,
                                         step=1, penalties=notes)})
 
-    # ── ПОГЛОЩЕНИЕ: ИНТЕРЕС РАСТЁТ, ЦЕНА СТОИТ ────────────────────────────────────────────
-    # Роудмап, шаг 2, пункт 3. Единственный наш сигнал, который срабатывает на ОТСУТСТВИИ
-    # хода цены: кто-то набирает против потока, и его пока хватает. Видно ДО движения - в
-    # этом вся ценность, и в этом же слабость: подтверждения направления здесь нет, и
-    # карточка обязана сказать это прямо, а не намекать на рост.
-    if oi_now and r60 is not None and p60 is not None:
-        oi_then_a = (r60[3] or 0) + (r60[4] or 0) or (r60[3] if r60[3] else None)
-        d_oi_a = pct(oi_now, oi_then_a if oi_then_a else None)
-        d_usd_a = abs(oi_now - (oi_then_a or 0)) * (listing.mark or 0)
-        if (d_oi_a is not None and d_oi_a >= config.absorb_oi_pct()
-                and abs(p60) <= config.absorb_ret_pct()
-                and d_usd_a >= config.oi_min_usd()):
-            pen = list(base_pen)
-            conf, notes = confidence(80, pen)
-            step = _step(d_oi_a, config.absorb_oi_pct())
-            out.append({'kind': 'absorption', 'ticker': listing.ticker, 'ts': now,
-                        'key': key('absorption', '%s:%s' % (_venue, listing.ticker),
-                                   _window(now), step),
-                        'severity': conf,
-                        'payload': dict(common, oi_change_pct=d_oi_a,
-                                        oi_change_usd=d_usd_a, step=step,
-                                        penalties=notes)})
+    # ── ПОГЛОЩЕНИЕ БОЛЬШЕ НЕ ОТДЕЛЬНОЕ СОБЫТИЕ (ТЗ 2.4) ──────────────────────────────────
+    # Интерес растёт, цена стоит - это теперь признак `absorption` в payload скачка интереса
+    # выше. Своя ветка здесь давала вторую карточку на тот же замер. Старые события вида
+    # `absorption` в базе остаются, и карточка их по-прежнему рисует (`cards`).
 
     # ── СПРЕД: ЭТО ПРЕДОСТЕРЕЖЕНИЕ ────────────────────────────────────────────────────────
     if listing.spread_bps is not None and listing.spread_bps >= config.spread_min_bps():
@@ -572,4 +894,35 @@ def detect(listing, rows, now=None, ring=None):
                         'payload': dict(common, spread_median_bps=med,
                                         spread_mult=listing.spread_bps / med,
                                         step=step, penalties=notes)})
+    _session_gate(out, listing, now)
     return out
+
+
+def _klass_of(listing):
+    """Класс актива одной дверью. -> str. Сбой справочника не роняет детектор."""
+    try:
+        from .variational_feed import asset_class
+        return asset_class(listing)
+    except Exception:                                      # noqa: BLE001
+        return 'unknown'
+
+
+def _session_gate(events, listing, now):
+    """Акция/фонд вне сессии NYSE -> все события инструмента только в сводку (ТЗ 2.5). -> None.
+
+    ПОМЕТКА, А НЕ ВЫБРОС: событие пишется в базу и уходит в сводку с причиной словами
+    («биржа закрыта, перп на тонкой книге»), как зажигание без капитализации. Звонок гасит
+    `outbox.mute_reason` по `digest_only` - одна дверь на все причины «не будить».
+    """
+    if not events:
+        return
+    from .assets import session_note
+    # ТИКЕР ИДЁТ В ПРОВЕРКУ: у SKHY родная биржа KRX, а не NYSE (реестр `assets.SESSION_BY_TICKER`).
+    _why = session_note(_klass_of(listing), now, ticker=listing.ticker)
+    if not _why:
+        return
+    for ev in events:
+        p = ev.setdefault('payload', {})
+        p['session'] = 'closed'
+        if not p.get('digest_only'):
+            p['digest_only'] = _why

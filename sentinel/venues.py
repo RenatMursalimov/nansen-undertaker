@@ -56,6 +56,9 @@ async def var_fetch():
     rows, meta = await asyncio.to_thread(_var_fetch)
     for r in rows:
         r.venue = 'variational'
+    # `oi_usd` СТАВИТ РАЗБОР ОТВЕТА (`variational_feed.parse`), а не эта обёртка: единица - свойство
+    # ответа площадки, и считать её здесь значило бы иметь два пути к одним данным, из которых
+    # только один знает про доллары.
     meta['venue'] = 'variational'
     return rows, meta
 
@@ -98,6 +101,10 @@ async def hl_fetch():
         # сторон, и положить весь интерес в `oi_long` значило бы соврать про перекос. Кладём в
         # отдельное поле и говорим об этом в `missing` выше.
         out[-1].oi_total_raw = d.get('oi_base')
+        # В ДОЛЛАРЫ ПЕРЕВОДИМ ЗДЕСЬ, ОДИН РАЗ: интерес приходит в БАЗОВОМ активе (замер 26.09:
+        # BTC 37 639 при цене 84k = 3.16 млрд). Детектор больше не умножает ничего.
+        _ob = d.get('oi_base')
+        out[-1].oi_usd = (float(_ob) * float(mark)) if _ob else None
     if not out:
         raise FeedError('shape', 'hyperliquid: ни одной строки с ценой')
     return out, {'venue': 'hyperliquid', 'num_markets': len(out), 'fetched_at': None}
@@ -224,6 +231,11 @@ async def lg_fetch():
                                          ('funding_rate', fund.get(t))) if not v))
         lst.venue = 'lighter'
         lst.oi_total_raw = (_oi * mark) if _oi else None
+        # ОДНО УМНОЖЕНИЕ НА ВСЮ ДОРОГУ. Раньше их было ДВА: здесь (в `oi_total_raw`) и ещё раз
+        # в детекторе - на выходе получалось 13.7 триллиона по BTC. `oi_usd` считаем от сырого
+        # числа, а не от `oi_total_raw`, чтобы вторая величина не зависела от первой: свяжи их,
+        # и правка одной молча поедет в другую.
+        lst.oi_usd = (_oi * mark) if _oi else None
         out.append(lst)
     if not out:
         raise FeedError('shape', 'lighter: ни одной активной строки с ценой')
@@ -371,6 +383,43 @@ def funding_apr_pct(venue, funding_raw, interval_s):
     return None
 
 
+#: ═══ БАЗОВЫЕ СТАВКИ ФАНДИНГА ПЛОЩАДОК, % ГОДОВЫХ. ЗАМЕР ВСЕХ ИНСТРУМЕНТОВ 26.09 ═══
+#: Базовая ставка - это то, что площадка берёт, когда перекоса нет вовсе. Карточка JUP показывала
+#: её как событие («фандинг 10.95% годовых»), и модель читала её как «интерес к активу». Замер
+#: одним опросом каждой площадки, самые частые значения:
+#:   * Hyperliquid: 10.95% у 117 из 234 перпов (0.00125% в час), ещё 56 - ноль;
+#:   * Variational: 10.95% у 359 из 553 (годовая доля 0.1095), ещё 115 - ноль;
+#:   * Lighter: ДВЕ базы по классу актива - 10.51% у 83 крипто-рынков (0.0096% за 8 ч) и 3.50%
+#:     у 77 рынков акций и сырья (0.0032% за 8 ч); 13 рынков (валюты, облигации) - ноль.
+#: Таблица замеренная, а не взятая из документации: у Lighter второй базы в доке мы не видели, и
+#: без замера все акции на Lighter выглядели бы «с пониженным фандингом».
+BASE_FUNDING_APR = {
+    'hyperliquid': (10.95,),
+    'variational': (10.95,),
+    'lighter': (10.51, 3.50),
+}
+#: ДОПУСК СОВПАДЕНИЯ С БАЗОЙ, процентных пунктов годовых. Округление площадок даёт сотые доли.
+_BASE_TOL = 0.1
+
+
+def funding_state(venue, apr):
+    """Фандинг относительно базы площадки. -> 'base' | 'zero' | 'above' | 'below' | None.
+
+    None - единица не измерена, и сравнивать нечего. 'zero' отдельно от 'base': нулевая ставка у
+    валют и облигаций Lighter - устройство рынка, а не «нет перекоса у крипты».
+    """
+    if apr is None:
+        return None
+    if abs(apr) < 0.005:
+        return 'zero'
+    bases = BASE_FUNDING_APR.get(venue) or ()
+    if any(abs(apr - b) <= _BASE_TOL for b in bases):
+        return 'base'
+    if not bases:
+        return None
+    return 'above' if apr > max(bases) else 'below'
+
+
 def funding_unit_note(venue, lang='ru'):
     """Откуда мы знаем единицу этой площадки. -> str | ''. Для карточки и справки."""
     src = (FUNDING_UNIT.get(venue) or (None, None))[1]
@@ -436,21 +485,33 @@ def url(venue):
     return (VENUES.get(venue) or {}).get('url') or ''
 
 
+#: ПОТОЛОК НА ОДНУ ПЛОЩАДКУ ЗА ТИК, секунды. Больше двух запросов по 20 с не бывает.
+VENUE_TIMEOUT_S = int(os.getenv('SENTINEL_VENUE_TIMEOUT_SEC') or 45)
+
+
 async def fetch_all(venues=None):
     """Опрос всех включённых площадок. -> (list[Listing], {venue: meta|FeedError}).
 
     ОДНА ПЛОЩАДКА НЕ РОНЯЕТ ОСТАЛЬНЫЕ. Отказ каждой сохраняется ПОИМЁННО: «Hyperliquid молчит»
     и «дозорный сломался» - разные новости, и первую человек должен увидеть отдельной строкой.
     """
+    import asyncio as _aio
     out, notes = [], {}
     for v in (venues or live()):
         fn = (VENUES.get(v) or {}).get('fetch')
         if not fn:
             continue
         try:
-            rows, meta = await fn()
+            # ═══ ОБЩИЙ ТАЙМАУТ НА ПЛОЩАДКУ (этап 5, ТЗ 5.1) ═══
+            # У каждого запроса внутри свой таймаут (urllib 20 с, httpx 15 с), но площадка - это
+            # до двух запросов подряд плюс разбор, и зависание одного из них держало бы весь тик.
+            # Сторож процесса лечит зависание рестартом, но рестарт - это полторы минуты дырки в
+            # кольце; таймаут здесь отдаёт отказ одной площадки и не трогает остальные.
+            rows, meta = await _aio.wait_for(fn(), timeout=VENUE_TIMEOUT_S)
             out += rows
             notes[v] = meta
+        except _aio.TimeoutError:
+            notes[v] = FeedError('timeout', 'площадка не ответила за %d с' % VENUE_TIMEOUT_S)
         except FeedError as e:
             notes[v] = e
         except Exception as e:                    # noqa: BLE001

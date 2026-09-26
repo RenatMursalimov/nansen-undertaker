@@ -49,8 +49,15 @@ _TICK_BUSY = False   # свой замок поверх max_instances: тик н
 
 
 def _row(x, ts):
+    """Точка кольца. -> кортеж, форма которого зафиксирована в `store.history`.
+
+    `oi_usd` ПОСЛЕДНИМ ПОЛЕМ, А НЕ РЯДОМ С `oi_long`: детектор читает `r[3]`..`r[6]` по индексу,
+    и вставка в середину сдвинула бы фандинг со спредом - числа остались бы на местах, а смысл
+    поехал. Такой дефект не роняет тест, он врёт человеку.
+    """
     return (int(ts), x.mark, x.volume_24h, x.oi_long, x.oi_short, x.funding_raw,
-            x.spread_bps, int(x.quote_ts) if x.quote_ts else None)
+            x.spread_bps, int(x.quote_ts) if x.quote_ts else None,
+            getattr(x, 'oi_usd', None))
 
 
 def _rk(x):
@@ -92,21 +99,28 @@ def _hot_put(x, ts):
     return arr
 
 
-def _cold(ticker):
-    """Холодное кольцо инструмента. Из базы — ОДИН раз за процесс, дальше дописываем в памяти.
+def _cold(rkey):
+    """Холодное кольцо инструмента по ключу «площадка:тикер». Из базы — ОДИН раз за процесс,
+    дальше дописываем в памяти.
 
     Запрос в базу на каждый инструмент каждый тик — это 553 запроса раз в 15 секунд; при таком
     темпе дозорный стал бы главной нагрузкой на базу бота. Кэш здесь не оптимизация, а условие
     существования.
+
+    КЛЮЧ РАЗБИРАЕТСЯ НА ПАРУ, А НЕ ПЕРЕДАЁТСЯ В БАЗУ ЦЕЛИКОМ. Раньше здесь стоял
+    `store.history(rkey)`, то есть в колонку `ticker` уезжала строка «hyperliquid:SAGA», которой
+    там нет и быть не может. Запрос возвращал НОЛЬ строк всегда, ошибки при этом не было: кольцо
+    для детектора было пустым при 48 тысячах строк в таблице.
     """
-    if ticker not in _COLD:
+    if rkey not in _COLD:
         try:
-            _COLD[ticker] = store.history(ticker, since_ts=int(time.time())
-                                          - config.ring_days() * 86400)
+            _v, _t = venues.split(rkey)
+            _COLD[rkey] = store.history(_v, _t, since_ts=int(time.time())
+                                        - config.ring_days() * 86400)
         except Exception as e:
-            print('[sentinel] холодное кольцо %s не прочитано: %s' % (ticker, str(e)[:110]))
-            _COLD[ticker] = []
-    return _COLD[ticker]
+            print('[sentinel] холодное кольцо %s не прочитано: %s' % (rkey, str(e)[:110]))
+            _COLD[rkey] = []
+    return _COLD[rkey]
 
 
 def _cold_due(x, ts):
@@ -136,6 +150,90 @@ def _interesting(watched):
     return lambda t: t in watched
 
 
+#: ПУЛЬС ОПРОСА ЭТОГО ПРОЦЕССА (этап 5). `fetch_ok` - когда последний раз прочитана хотя бы одна
+#: площадка; `elsewhere` - когда последний раз аренда оказалась у ДРУГОГО живого процесса (тогда
+#: молчание этого процесса - норма, а не зависание). Читает сторож `sentinel.main`.
+HEARTBEAT = {'fetch_ok': 0.0, 'elsewhere': 0.0}
+#: Имена в `sentinel_cursor`: общий пульс опроса (пишет любой опрашивающий) и открытый инцидент.
+POLL_OK_CURSOR, INCIDENT_CURSOR = 'poll_ok', 'poll_incident'
+
+
+def watchdog_verdict(now, started, hb=None, poll_sec=None):
+    """Пора ли процессу умереть. -> причина словами | None. ЧИСТАЯ ФУНКЦИЯ (её проверяет тест).
+
+    ТЗ 5.1: снимок не записан дольше 3 x poll_sec - процесс завершается с ненулевым кодом, и
+    `Restart=always` поднимает его заново. Прецедент: юнит 7 часов был `active` с пустым кольцом.
+    ИСКЛЮЧЕНИЕ ОДНО: аренду держит другой живой процесс - тогда этот не опрашивает по праву, и
+    рестарт ничего бы не вылечил, а только гонял бы юнит по кругу.
+    """
+    hb = hb if hb is not None else HEARTBEAT
+    lim = 3 * int(poll_sec or config.poll_sec())
+    if now - float(hb.get('elsewhere') or 0) <= lim:
+        return None
+    last = max(float(started), float(hb.get('fetch_ok') or 0))
+    if now - last > lim:
+        return ('снимка нет %d с при пороге %d (3 x опрос %d с)'
+                % (int(now - last), lim, lim // 3))
+    return None
+
+
+async def poll_watch(now=None):
+    """ОДНО сообщение владельцу на инцидент потери опроса и одно - при восстановлении (ТЗ 5.2).
+
+    -> строка итога | ''. Зовут ОБА процесса каждым тиком; кто первым переключит инцидент в базе
+    (`store.cursor_cas`), тот и пишет, поэтому двух одинаковых сообщений не бывает.
+    Пульс - `poll_ok` в `sentinel_cursor`, его пишет опрашивающий после каждого удачного опроса.
+    Холодное кольцо для этого не годится: оно пишется раз в 15 минут, и «снимка нет 14 минут» там
+    норма. Порог сообщения - `config.poll_alert_min` (5 мин), а не 3 x poll_sec: сторож лечит
+    рестартом за полторы минуты, и писать на каждый рестарт значило бы шуметь.
+    """
+    now = int(now if now is not None else time.time())
+    try:
+        raw = store.cursor_get(POLL_OK_CURSOR)
+        if not raw:
+            return ''                    # опрос ещё ни разу не отчитывался: не с чем сравнить
+        last = int(float(raw))
+        inc = store.cursor_get(INCIDENT_CURSOR) or ''
+        gap = now - last
+        if gap >= config.poll_alert_min() * 60 and not inc:
+            if not store.cursor_cas(INCIDENT_CURSOR, '', str(last)):
+                return ''
+            owner, until = store.lease_owner('variational')
+            text = ('⚠️ <b>Дозорный: опрос площадок остановился.</b>\n'
+                    'Последний снимок %d мин назад; аренда %s. Сторож юнита перезапускает опрос '
+                    'сам, бот подхватывает его через три срока аренды. Если тишина держится - '
+                    'кнопка «Починить опрос» на экране дозорного. Следующее сообщение придёт, '
+                    'когда опрос вернётся.'
+                    % (gap // 60, ('жива ещё %d с' % (until - now)) if until > now
+                       else 'истекла'))
+            await _say_owners(text, 'sentinel:poll_lost')
+            return 'инцидент открыт: снимка нет %d мин' % (gap // 60)
+        if inc and gap < config.poll_alert_min() * 60:
+            if not store.cursor_cas(INCIDENT_CURSOR, inc, ''):
+                return ''
+            _empty = max(0, last - int(float(inc)))
+            await _say_owners('✅ <b>Дозорный: опрос вернулся</b>, кольцо было пустым %d мин.'
+                              % max(1, _empty // 60), 'sentinel:poll_back')
+            return 'инцидент закрыт: пусто было %d мин' % (_empty // 60)
+    except Exception as e:                                 # noqa: BLE001
+        print('[sentinel] сторож опроса упал: %s: %s' % (type(e).__name__, str(e)[:120]))
+    return ''
+
+
+async def _say_owners(text, label):
+    """Сообщение владельцам (`ADMIN_IDS`). Нет токена бота - только лог."""
+    import re as _re
+    ids = [int(x) for x in _re.findall(r'-?\d+', os.getenv('ADMIN_IDS') or '')]
+    if not ids or outbox._bot() is None:
+        print('[sentinel] %s: владельцу не отправлено (нет токена или ADMIN_IDS): %s'
+              % (label, _re.sub(r'<[^>]+>', '', text)[:160]))
+        return
+    for uid in ids:
+        res = await outbox._send(uid, text, label=label)
+        if res and not isinstance(res, tuple):
+            store.sent_log(uid, 'service', None, getattr(res, 'message_id', None))
+
+
 async def ingest_tick():
     """ОДИН круг: опрос площадки -> кольца -> обнаружение -> очередь доставки. -> строка итога.
 
@@ -143,6 +241,9 @@ async def ingest_tick():
     бота — этот класс отказа в проекте уже стоил четырёх окон и GitHub-радара.
     """
     global _TICK_BUSY
+    _pw = await poll_watch()
+    if _pw:
+        print('[sentinel] сторож опроса: %s' % _pw)
     if _TICK_BUSY:
         return 'тик пропущен: предыдущий ещё идёт'
     _TICK_BUSY = True
@@ -179,7 +280,11 @@ def _poller_dead(now=None):
     """
     now = int(now if now is not None else time.time())
     owner, until = store.lease_owner('variational')
-    grace = _TAKEOVER_AFTER or max(90, config.poll_sec() * 3)
+    # ЛЬГОТА - ТРИ СРОКА АРЕНДЫ (требование владельца 26.09). Один срок и сам по себе равен трём
+    # опросам; подхват после одного означал бы, что доставщик влезает при первом же затянувшемся
+    # круге, и аренда начала бы прыгать между процессами. Три срока - это заведомо «юнита нет», а
+    # не «юнит задумался».
+    grace = _TAKEOVER_AFTER or 3 * store.lease_ttl()
     if owner and until > now:
         return False                       # аренда живая - опрашивает кто-то другой, не лезем
     if until and (now - until) < grace:
@@ -192,20 +297,44 @@ def _poller_dead(now=None):
 async def _ingest():
     import asyncio
     now = int(time.time())
-    # ВЫКЛЮЧАТЕЛЬ ПРОВЕРЯЕМ ДО АРЕНДЫ: если опрос вынесен в отдельный юнит, тик в боте не
-    # должен даже пытаться взять аренду - иначе он отбирал бы её у настоящего опрашивающего на
-    # каждом втором круге, и оба писали бы в лог про чужую аренду.
-    if not config.in_bot() and not _poller_dead(now):
+    # ═══ РОЛЬ РЕШАЕТ, ОПРАШИВАЕМ ЛИ МЫ. ЗАМЕР 26.09 ═══
+    # Раньше здесь читался `config.in_bot()`, и это был ответ на ЧУЖОЙ вопрос: флаг говорит
+    # «опрос вынесен из бота», а тику нужно знать «моя ли это работа». Для бота два вопроса
+    # совпадали, для отдельного юнита - нет: `main.py` ставил себе `SENTINEL_IN_BOT=0`, и юнит
+    # выходил отсюда со словами «опрос у отдельного юнита», будучи этим самым юнитом. На проде
+    # это выглядело так: служба `active`, трейсбеков ноль, в логе юнита ни одной строки
+    # «опрошено», а в логе бота 134 подхвата за сутки. Опрос шёл раз в TTL+90с вместо 30с,
+    # первые точки 15-минутных окон ложились на :01/:16/:31/:46 двумя процессами по очереди,
+    # и сигма не набиралась НИКОГДА - то есть главный порог дозорного был невычислим.
+    # ТЕПЕРЬ: `poller` опрашивает всегда и продлевает аренду каждым тиком; `deliver` не
+    # опрашивает, пока опрашивающий жив, и подхватывает только по смерти аренды.
+    if not config.is_poller() and not config.in_bot() and not _poller_dead(now):
         ok, bad = await outbox.deliver_due()
         return ('опрос у отдельного юнита; из очереди отправлено %d, отказов %d' % (ok, bad)
                 if (ok or bad) else 'опрос у отдельного юнита; очередь пуста')
     if not store.lease('variational'):
         owner, until = store.lease_owner('variational')
+        HEARTBEAT['elsewhere'] = time.time()
         return 'опрос не наш: аренда у %s ещё %dс' % (owner, max(0, until - now))
     # ОПРАШИВАЕМ ВСЕ ВКЛЮЧЁННЫЕ ПЛОЩАДКИ, И ОТКАЗ ОДНОЙ НЕ РОНЯЕТ ОСТАЛЬНЫЕ. Класс отказа
     # называется по каждой отдельно: «Hyperliquid молчит» и «дозорный сломался» - разные
     # новости, и первую человек должен увидеть строкой, а не догадкой.
     rows, notes = await venues.fetch_all()
+    if rows:
+        # ПУЛЬС: свой (сторож процесса) и общий в базе (сообщение владельцу о потере опроса).
+        HEARTBEAT['fetch_ok'] = time.time()
+        try:
+            store.cursor_set(POLL_OK_CURSOR, str(int(time.time())))
+        except Exception as e:                             # noqa: BLE001
+            print('[sentinel] пульс опроса не записан: %s' % str(e)[:100])
+    # СПРАВОЧНИК КЛАССОВ ДЛЯ ПЛОЩАДОК БЕЗ ИМЁН - ИЗ ЭТОГО ЖЕ ОПРОСА (этап 3, решение владельца):
+    # класс Hyperliquid/Lighter берётся у Variational по тикеру. До детектора, чтобы события этого
+    # же тика уже несли класс.
+    try:
+        from . import assets as _as
+        _as.book_update(rows)
+    except Exception as e:                                 # noqa: BLE001
+        print('[sentinel] справочник классов не обновлён: %s' % str(e)[:100])
     _bad = ['%s [%s] %s' % (venues.title(v), n.kind, n.detail)
             for v, n in notes.items() if isinstance(n, feed.FeedError)]
     if not rows:
@@ -243,7 +372,8 @@ async def _ingest():
     # рынками, и считать его в цикле по тикерам значило бы сравнить каждую пару дважды.
     if len(set(getattr(x, 'venue', '') for x in rows)) > 1:
         try:
-            events += detector.cross_venue([x for x in rows if keep(x.ticker)], now=now)
+            events += detector.cross_venue([x for x in rows if keep(x.ticker)], now=now,
+                                           median_fn=lambda t, a, b: _pair_median(t, a, b, now))
         except Exception as e:
             print('[sentinel] сравнение площадок упало: %s: %s'
                   % (type(e).__name__, str(e)[:110]))
@@ -305,9 +435,24 @@ async def ignition_tick():
         return 'зажигание пропущено: %s' % _stop
     try:
         import asyncio
-        evs, note = await asyncio.to_thread(ignition.scan)
+        # ТАЙМАУТ НА КРУГ ЗАЖИГАНИЯ (этап 5): лента Nansen - до четырёх страниц по 60 с.
+        evs, note = await asyncio.wait_for(asyncio.to_thread(ignition.scan),
+                                           timeout=ENRICH_TIMEOUT_S)
     except Exception as e:
         return 'зажигание упало: %s: %s' % (type(e).__name__, str(e)[:150])
+    # ═══ СМАРТ-ПЕРП РЯДОМ С ЗАЖИГАНИЕМ, В ТОМ ЖЕ ТИКЕ (ТЗ 1.7) ═══
+    # Одна периодичность и один бюджетный гейт на две ленты: обе стоят кредиты, обе отвечают на
+    # вопрос «что делают умные деньги прямо сейчас», и разводить их по разным тикам значило бы
+    # два места, где надо помнить про кап.
+    # ОТКАЗ ОДНОЙ ЛЕНТЫ НЕ ГАСИТ ДРУГУЮ: это разные ручки провайдера, и «перпы молчат» не равно
+    # «зажигания нет».
+    try:
+        import asyncio as _aio
+        pevs, pnote = await _aio.to_thread(ignition.scan_perp)
+    except Exception as e:                                  # noqa: BLE001
+        pevs, pnote = [], 'смарт-перп упал: %s: %s' % (type(e).__name__, str(e)[:120])
+    evs = list(evs) + list(pevs)
+    note = '%s; перпы: %s' % (note, pnote)
     planned, skipped, fresh, clustered = 0, [], 0, 0
     for ev in evs:
         # ═══ ПРОВЕРКА СВЯЗЕЙ - ДО ЗАПИСИ И ДО ОЧЕРЕДИ, А НЕ В ОБОГАЩЕНИИ ═══
@@ -408,12 +553,59 @@ async def digest_tick():
     return 'сводок отправлено %d (событий в них %d)' % (people, rows)
 
 
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# КОД НА ДИСКЕ НОВЕЕ ПРОЦЕССА (этап 3, п.3): «ВЫВОД МОДЕЛИ» ПОСЛЕ ДЕПЛОЯ
+#
+# После выкладки #940 в живых карточках остались «Вывод модели», «Чего не собрали: предсказательный
+# рынок» и строка расхода - а новый код их не печатает вовсе. Значит карточки собрал процесс со
+# СТАРЫМ кодом: сводки собирают ДВА процесса (джоба бота и отдельный юнит), и `git pull` не
+# перезагружает ни один. Юнит перезапустили, бот - нет (или карточки успели до рестарта). Модули
+# импортируются лениво, при первом тике, и дальше живут в памяти той версии, с какой стартовали.
+# Проверка простая и измеримая: время изменения файлов пакета на диске против момента импорта.
+# Диск новее - процесс работает на старом коде, и он говорит об этом в лог раз в час и на экране
+# дозорного владельцу. Лечение одно - рестарт службы.
+# ══════════════════════════════════════════════════════════════════════════════════════════
+from . import IMPORTED_AT as _IMPORTED_AT  # noqa: E402
+_STALE_SAID = {'ts': 0}
+
+
+def code_stale():
+    """Файлы пакета на диске новее этого процесса? -> [имена файлов] (пусто - код свежий)."""
+    d = os.path.dirname(os.path.abspath(__file__))
+    out = []
+    try:
+        for f in sorted(os.listdir(d)):
+            if f.endswith('.py') and os.path.getmtime(os.path.join(d, f)) > _IMPORTED_AT + 1:
+                out.append(f)
+    except OSError:
+        return []
+    return out
+
+
+def stale_say():
+    """Раз в час - строка в лог, если код на диске новее процесса. -> строка | ''."""
+    got = code_stale()
+    if not got:
+        return ''
+    line = ('[sentinel] КОД НА ДИСКЕ НОВЕЕ ПРОЦЕССА (%s): pid %d работает на версии до правки - '
+            'нужен рестарт службы' % (', '.join(got[:5]), os.getpid()))
+    if time.time() - _STALE_SAID['ts'] >= 3600:
+        _STALE_SAID['ts'] = time.time()
+        print(line)
+    return line
+
+
+#: ПОТОЛОК НА ОДНУ СВОДКУ, секунды (этап 5).
+ENRICH_TIMEOUT_S = int(os.getenv('SENTINEL_ENRICH_TIMEOUT_SEC') or 150)
+
+
 async def enrich_tick(limit=3):
     """Сводки к уже доставленным алертам. -> строка итога.
 
     ПОТОЛОК ЗА ТИК СТОИТ НАРОЧНО МАЛЕНЬКИЙ: сводка это кредиты и вызов модели, и волатильная
     минута с двадцатью событиями не должна превращаться в двадцать одновременных запросов.
     """
+    stale_say()
     if not config.enrich_on():
         return 'обогащение выключено рубильником'
     done = 0
@@ -431,11 +623,29 @@ async def enrich_tick(limit=3):
             # Nansen тому, кто ончейн выключил. Событие у нескольких подписчиков - сводка идёт
             # по максимуму их наборов, поэтому берём первого доставленного как основу.
             _who = (store.delivered_users(key) or [None])[0]
-            brief = await enrichment.build(ev, uid=_who, bot_un=await outbox.bot_un())
+            # ОБЩИЙ ТАЙМАУТ СВОДКИ (этап 5): внутри до шести сетевых вызовов (Nansen, X,
+            # Polymarket) со своими таймаутами по 20-60 с; сумма не должна держать тик.
+            import asyncio as _aio
+            brief = await _aio.wait_for(
+                enrichment.build(ev, uid=_who, bot_un=await outbox.bot_un()),
+                timeout=ENRICH_TIMEOUT_S)
+            # КОНТРАКТ, НАЙДЕННЫЙ СВОДКОЙ, - В КЭШ НА СУТКИ (ТЗ 3.2): следующая ПЕРВАЯ карточка по
+            # этому тикеру уйдёт уже со ссылкой на паспорт, а не после правки обогащением.
+            _plc = ev.get('payload') or {}
+            if brief.get('address'):
+                store.contract_put(_plc.get('venue') or 'variational',
+                                   ev.get('ticker') or _plc.get('symbol'),
+                                   brief.get('chain'), brief['address'])
             sent = await outbox.deliver_enrichment(key, brief)
+            # ПЛОЩАДКУ И ТИКЕР ЗАПИСЫВАЕМ ВМЕСТЕ С ТЕЛОМ: по ним работает бюджет «одно
+            # обогащение на инструмент в час» (`store.enrich_recent`). Не записать их значит
+            # оставить бюджет без данных - он молча разрешал бы всё.
+            _pl = ev.get('payload') or {}
             store.enrich_done(key, cards.enrich_card(ev, brief),
                               credits=brief.get('credits') or 0,
-                              err=(None if sent else 'никому не ушло'))
+                              err=(None if sent else 'никому не ушло'),
+                              venue=(_pl.get('venue') or 'variational'),
+                              ticker=(ev.get('ticker') or _pl.get('symbol')))
             done += 1
         except Exception as e:
             # ПРОВАЛ СВОДКИ НЕ ТРОГАЕТ ПЕРВОЕ СООБЩЕНИЕ. Он записывается строкой с причиной и
@@ -465,8 +675,21 @@ async def outcome_tick():
             ev = store.event(key)
             if ev is None:
                 continue
-            then = (ev.get('payload') or {}).get('mark')
-            after = _mark_at(ticker, ts + h * 60)
+            _pl = ev.get('payload') or {}
+            then = _pl.get('mark')
+            # ПЛОЩАДКУ БЕРЁМ ИЗ СОБЫТИЯ: она там есть с круга 5 (`detector.common`), и это
+            # единственный способ узнать, чьё именно кольцо спрашивать.
+            after = _mark_at(_pl.get('venue') or 'variational', ticker, ts + h * 60)
+            # ═══ ИСХОД РАСХОЖДЕНИЯ - «ЗАКРЫЛАСЬ ЛИ КРОМКА», А НЕ ХОД ЦЕНЫ (долг владельца) ═══
+            # Расхождение обещает не «вверх», а «сойдётся». Поэтому в исход пишется РАСХОЖДЕНИЕ,
+            # б.п.: `price_then` - расхождение в момент события, `price_after` - через горизонт
+            # по ценам ТЕХ ЖЕ двух площадок из холодных колец. Отчёт считает «закрылась», если
+            # расхождение упало вдвое и больше (`_rate_text`).
+            if (ev.get('kind') or '') == 'venue_gap':
+                _lo = _mark_at(_pl.get('cheap_venue') or '', ticker, ts + h * 60)
+                _hi = _mark_at(_pl.get('rich_venue') or '', ticker, ts + h * 60)
+                then = _pl.get('gap_bps')
+                after = ((_hi - _lo) / _lo * 10000.0) if (_lo and _hi) else None
             if then is None or after is None:
                 # СТРОКУ ВСЁ РАВНО ПИШЕМ (с None): иначе события, по которым замер невозможен,
                 # возвращались бы в очередь вечно, и «исход не записан» означало бы «мы ещё
@@ -478,10 +701,40 @@ async def outcome_tick():
     return 'исходов замерено %d' % n
 
 
-def _mark_at(ticker, ts):
+def _pair_median(tick, va, vb, now=None, hours=24):
+    """Медиана расхождения цены ПАРЫ площадок за сутки, б.п. -> (медиана | None, точек).
+
+    ПО ХОЛОДНЫМ КОЛЬЦАМ ОБЕИХ ПЛОЩАДОК, выровненным по 15-минутным окнам: точка идёт в расчёт,
+    только если в этом окне есть цена ОБЕИХ сторон. Разбор, зачем это нужно, - в
+    `detector.cross_venue` (правило 5): без медианы пары не отличить событие от структурного
+    базиса, который держится часами (JUP, 26.09).
+    """
+    now = int(now if now is not None else time.time())
+    since = now - int(hours) * 3600
+
+    def _by_bucket(v):
+        out = {}
+        for r in _cold(venues.key(v, tick)):
+            if r[0] >= since and r[1]:
+                out[int(r[0]) // COLD_RES] = float(r[1])
+        return out
+    a, b = _by_bucket(va), _by_bucket(vb)
+    gaps = [abs(a[k] - b[k]) / min(a[k], b[k]) * 10000.0 for k in a if k in b and min(a[k], b[k])]
+    if not gaps:
+        return None, 0
+    return detector.median(gaps), len(gaps)
+
+
+def _mark_at(venue, ticker, ts):
     """Цена инструмента около момента. Берём из ХОЛОДНОГО кольца: горячее не переживает
-    рестарт, а исход мерится часами и сутками позже."""
-    rows = _cold(ticker)
+    рестарт, а исход мерится часами и сутками позже.
+
+    ПЛОЩАДКА ОБЯЗАТЕЛЬНА, И ЭТО ТРЕТИЙ ЭКЗЕМПЛЯР ОДНОГО ДЕФЕКТА. Здесь передавался голый тикер
+    из `sentinel_events`, а кольцо живёт по паре «площадка:тикер»: в памяти такого ключа нет
+    вовсе, в базе он читался как чужой ряд. Замер исхода - то место, где ошибка особенно дорога:
+    по нему считается доля попаданий, то есть цифра, которой человек мерит доверие к дозору.
+    """
+    rows = _cold(venues.key(venue, ticker))
     r = detector.at(rows, ts, tol=COLD_RES)
     return r[1] if r else None
 
@@ -491,7 +744,11 @@ async def prune_tick():
     n = await asyncio.to_thread(store.prune)
     await asyncio.to_thread(store.seen_prune)
     await asyncio.to_thread(store.digest_prune)
-    return 'снимков убрано %s' % ('не сказано СУБД' if n < 0 else n)
+    # ЛЕНТА СМАРТ-СДЕЛОК ТОЖЕ УБИРАЕТСЯ. Она копится каждые три минуты, и без уборки таблица
+    # растёт вечно ради данных, которые нужны нам сутки. Срок - в `store.sm_trades_prune`.
+    _t = await asyncio.to_thread(store.sm_trades_prune)
+    return ('снимков убрано %s; сделок ленты убрано %s'
+            % (('не сказано СУБД' if n < 0 else n), ('не сказано СУБД' if _t < 0 else _t)))
 
 
 def hit_rate(kind=None, horizon_min=60, days=7, min_sample=20):
@@ -506,14 +763,67 @@ def hit_rate(kind=None, horizon_min=60, days=7, min_sample=20):
     if len(rows) < min_sample:
         return ('%s за %dд: событий с замером %d — выборка мала (нужно %d), процент не считаю'
                 % (kind or 'все виды', days, len(rows), min_sample))
-    ups = [r for r in rows if (r[2] or '').endswith('_up') or r[2] in ('ignition', 'oi_surge')]
-    pool = ups or rows
-    good = sum(1 for r in pool if (r[1] or 0) > 0)
-    med = detector.median([r[1] for r in pool])
-    return ('%s за %dд, горизонт %dмин: замеров %d, продолжение движения %d (%.0f%%), '
-            'медианный ход %+.2f%%'
-            % (kind or 'все виды', days, horizon_min, len(pool), good,
-               good * 100.0 / len(pool), med or 0.0))
+    return _rate_text(rows, kind, days, horizon_min)
+
+
+#: У КАКИХ ВИДОВ ЕСТЬ НАПРАВЛЕНИЕ, И КАКОЕ. «Продолжение движения» имеет смысл только там, где
+#: событие УТВЕРЖДАЛО направление. Прежний код считал продолжением рост для `move_up`, `ignition`
+#: и `oi_surge` - то есть `move_down` не оценивался ВООБЩЕ (его строки попадали в общий пул только
+#: когда направленных не было), а скачок открытого интереса считался лонговым, хотя интерес растёт
+#: и на входе в шорт. Это не мелкая неточность: по этой цифре человек решает, верить ли дозору.
+_DIR_UP = ('move_up', 'ignition')
+_DIR_DOWN = ('move_down',)
+#: ВИДЫ БЕЗ НАПРАВЛЕНИЯ. У них «попадание» не определено, и вместо процента честно печатается
+#: величина хода: насколько вообще двигался инструмент после такого события.
+#: `absorption` остаётся в списке ради СТАРЫХ событий этого вида в базе: их исход уже записан,
+#: и отчёт за неделю обязан их посчитать, а не уронить в «прочее».
+_NO_DIR = ('oi_surge', 'vol_surge', 'absorption', 'crowded', 'spread_shock', 'funding_extreme')
+
+
+def _rate_text(rows, kind, days, horizon_min):
+    """Строки исходов -> текст отчёта. -> str. ЧИСТАЯ ФУНКЦИЯ (её и проверяет тест).
+
+    ТРИ РАЗНЫХ ОТВЕТА ДЛЯ ТРЁХ РАЗНЫХ КЛАССОВ ВИДОВ (ТЗ 1.9), потому что вопрос «сработало ли»
+    у них разный:
+      * направленные (`move_up`/`move_down`/`ignition`/`sm_perp`) - доля ходов В СВОЮ СТОРОНУ;
+      * без направления (интерес, оборот, поглощение, толпа) - медиана АБСОЛЮТНОГО хода и доля
+        ходов больше процента: событие обещало «здесь станет интересно», а не «пойдёт вверх»;
+      * расхождение площадок - «закрылось ли»: gap через час меньше половины исходного.
+    """
+    # СТОРОНУ СМАРТ-ПЕРПА БЕРЁМ ИЗ ВИДА СОБЫТИЯ: `sm_perp` бывает и лонговым, и шортовым, и
+    # считать его всегда лонгом значило бы повторить ровно ту ошибку, что была у `oi_surge`.
+    dir_rows = [r for r in rows if (r[2] or '') in (_DIR_UP + _DIR_DOWN)]
+    nodir_rows = [r for r in rows if (r[2] or '') in _NO_DIR]
+    gap_rows = [r for r in rows if (r[2] or '') == 'venue_gap']
+    perp_rows = [r for r in rows if (r[2] or '') == 'sm_perp']
+    head = '%s за %dд, горизонт %dмин' % (kind or 'все виды', days, horizon_min)
+    if dir_rows or perp_rows:
+        pool = dir_rows + perp_rows
+        good = 0
+        for r in pool:
+            ret = r[1] or 0.0
+            k = r[2] or ''
+            # ДЛЯ `sm_perp` НАПРАВЛЕНИЕ НЕ ЗАПИСАНО В ВИД, поэтому считаем его как «движение в
+            # сторону, которую взяли умные деньги» только при явном знаке в строке; иначе он
+            # попадает в общий счёт как направленный вверх лонг - и это named-допущение, а не
+            # молчаливое: шортовые события смарт-перпа отдельной строкой ниже.
+            good += 1 if ((ret > 0 and k not in _DIR_DOWN) or (ret < 0 and k in _DIR_DOWN)) else 0
+        med = detector.median([abs(r[1] or 0.0) for r in pool])
+        return ('%s: замеров %d, движение в сторону события %d (%.0f%%), медиана |хода| %.2f%%'
+                % (head, len(pool), good, good * 100.0 / len(pool), med or 0.0))
+    if gap_rows:
+        # ИСХОД РАСХОЖДЕНИЯ - ЭТО «ЗАКРЫЛОСЬ ЛИ», А НЕ «ВЫРОСЛО ЛИ». С финального захода исход
+        # пишет само РАСХОЖДЕНИЕ (`outcome_tick`), и `ret` - его изменение в процентах: -50 и
+        # ниже значит, что кромка сошлась вдвое. Процент - только от 20 замеров (`hit_rate`).
+        closed = sum(1 for r in gap_rows if (r[1] or 0.0) <= -50.0)
+        return ('%s: замеров %d, кромка сошлась вдвое и больше у %d (%.0f%%)'
+                % (head, len(gap_rows), closed, closed * 100.0 / len(gap_rows)))
+    pool = nodir_rows or rows
+    med = detector.median([abs(r[1] or 0.0) for r in pool])
+    big = sum(1 for r in pool if abs(r[1] or 0.0) > 1.0)
+    return ('%s: замеров %d, направление НЕ утверждалось; медиана |хода| %.2f%%, '
+            'ходов больше 1%%: %d (%.0f%%)'
+            % (head, len(pool), med or 0.0, big, big * 100.0 / len(pool)))
 
 
 
@@ -536,7 +846,17 @@ def market_now(limit=5, now=None):
     """
     now = int(now if now is not None else time.time())
     moves, vols = [], []
-    for rkey, rows in _HOT.items():
+    # БЕЗ ГОРЯЧЕГО КОЛЬЦА (бот, опрос в отдельном юните) - ХОЛОДНОЕ ИЗ БАЗЫ (этап 3). Точки там
+    # раз в 15 минут, поэтому допуск окна - на его разрешение, а не на секунды горячего кольца.
+    ring, tol15 = _HOT, detector.W15 // 2
+    if not ring:
+        try:
+            ring = store.ring_since(now - detector.W60 - 2 * COLD_RES)
+            tol15 = COLD_RES
+        except Exception as e:                             # noqa: BLE001
+            print('[sentinel] срез из базы не прочитан: %s' % str(e)[:100])
+            ring = {}
+    for rkey, rows in ring.items():
         _v, ticker = venues.split(rkey)
         if len(rows) < 2:
             continue
@@ -544,7 +864,7 @@ def market_now(limit=5, now=None):
         if (cur[2] or 0) < config.min_volume_usd():
             continue
         r60 = detector.at(rows, now - detector.W60, tol=detector.W60)
-        r15 = detector.at(rows, now - detector.W15, tol=detector.W15 // 2)
+        r15 = detector.at(rows, now - detector.W15, tol=tol15)
         p15 = detector.pct(cur[1], r15[1]) if r15 else None
         p60 = detector.pct(cur[1], r60[1]) if r60 else None
         best = p15 if p15 is not None else p60
@@ -561,10 +881,13 @@ def market_now(limit=5, now=None):
     # числа «сильнейшее движение 0.00%» читается как поломка нашего счётчика, а с ним - как
     # факт про площадку.
     stirred = sum(1 for m in moves if m[0] > 0.0001)
-    return {'tickers': len(_HOT), 'points': max((len(v) for v in _HOT.values()), default=0),
+    return {'tickers': len(ring), 'points': max((len(v) for v in ring.values()), default=0),
             'moves': moves[:limit], 'vols': vols[:limit], 'stirred': stirred,
             'measured': len(moves),
-            'thr15': config.move_pct_15m(), 'thr_vol': config.vol_pct(),
+            # `thr_vol` (процент оборота) УБРАН вместе с `config.vol_pct` (ТЗ 2.4): порог оборота
+            # теперь в деньгах и у каждого инструмента свой (медиана его часа), одним числом
+            # на экран среза его не выразить. Формулу печатает `ui.surge_thresholds`.
+            'thr15': config.move_pct_15m(),
             'best': (moves[0][0] if moves else None)}
 
 
@@ -593,15 +916,41 @@ def last_mark(ticker, venue=None):
     Берём из кольца, а не запросом: цена уже опрошена секунду назад, и второй поход к
     площадке ради того же числа - это чужой лимит за наши деньги.
     """
+    got = last_rows(ticker, venue)
+    return got[2][-1][1] if got else None
+
+
+#: НАСКОЛЬКО СТАРУЮ ТОЧКУ ХОЛОДНОГО КОЛЬЦА ЕЩЁ СЧИТАЕМ «ЦЕНОЙ СЕЙЧАС». Холодное кольцо пишется
+#: раз в 15 минут, значит свежайшая точка там бывает до 15 минут от роду; час - запас на сбой.
+LAST_ROW_MAX_AGE_S = 3600
+
+
+def last_rows(ticker, venue=None, now=None):
+    """Ряд инструмента для карточки. -> (площадка, тикер, [строки кольца]) | None.
+
+    ═══ ГОРЯЧЕЕ КОЛЬЦО, А ЕСЛИ ЕГО НЕТ - БАЗА (этап 3) ═══
+    Горячее кольцо живёт в памяти ОПРАШИВАЮЩЕГО процесса. Кнопки и ссылки на карточку обслуживает
+    бот, а опрос с 26.09 идёт в отдельном юните - то есть у бота кольцо пустое, и карточка по тапу
+    отвечала бы «цены нет в кольце» на любой тикер. Холодное кольцо лежит в базе, и его видят оба.
+    """
+    import time as _t
+    now = int(now if now is not None else _t.time())
     t = str(ticker or "").upper()
-    best = None
     for rkey, rows in _HOT.items():
         v, tk = venues.split(rkey)
         if tk != t or (venue and v != venue):
             continue
         if rows and rows[-1][1]:
-            best = rows[-1][1] if best is None else best
-    return best
+            return v, tk, list(rows)
+    for v in ((venue,) if venue else venues.enabled()):
+        try:
+            rows = store.history(v, t, since_ts=now - 2 * 3600)
+        except Exception as e:                             # noqa: BLE001
+            print('[sentinel] кольцо %s:%s из базы не прочитано: %s' % (v, t, str(e)[:90]))
+            continue
+        if rows and rows[-1][1] and now - int(rows[-1][0]) <= LAST_ROW_MAX_AGE_S:
+            return v, t, list(rows)
+    return None
 
 
 async def resolve_ticker(ticker, venue=None):

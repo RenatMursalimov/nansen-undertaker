@@ -50,7 +50,26 @@ CREDITS_PER_CALL = max(0, int(os.getenv('SENTINEL_CLUSTER_CREDITS') or 1))
 
 
 def _norm(a):
+    """Адрес для СРАВНЕНИЯ. -> str. В запрос к Nansen он НЕ идёт (см. `_orig`).
+
+    ═══ ЖИВОЙ ДЕФЕКТ 26.09: «связи адресов не проверены: badreq (-10)» у STONK ═══
+    Здесь стоял `.lower()`, и приведённый адрес уезжал в `profiler/address/related-wallets`. Для
+    EVM это безопасно (hex без регистра), для SOLANA - нет: base58 чувствителен к регистру, и
+    адрес в нижнем регистре это ДРУГАЯ строка. Проба одного и того же кошелька:
+      `3uox8K7U…` как есть     -> 200, 10 связей;
+      `3uox8k7u…` в нижнем     -> 200, 0 строк, или 422 invalid_address_format
+                                  («appears to be a near address format but the chain is set to
+                                  solana»).
+    То есть тело запроса было верным, неверным было ЗНАЧЕНИЕ адреса, и проверка связей по Solana
+    не работала никогда. Для сравнения нижний регистр по-прежнему нужен: один EVM-адрес приходит
+    то в checksum-виде, то нет.
+    """
     return str(a or '').strip().lower()
+
+
+def _orig(a):
+    """Адрес для ЗАПРОСА - как пришёл, без смены регистра. -> str."""
+    return str(a or '').strip()
 
 
 def link_map(rows_by_addr):
@@ -148,7 +167,12 @@ async def check(addresses, chain, max_calls=None, spend=True):
     которое уже честно посчитано по порогам. Отказ едет полем `refused` и превращается в
     маленький штраф со словами.
     """
-    addrs = [_norm(a) for a in (addresses or ()) if _norm(a)]
+    # ИСХОДНЫЙ РЕГИСТР СОХРАНЯЕМ ДЛЯ ЗАПРОСА, дубликаты снимаем по нормализованному виду.
+    addrs, _seen = [], set()
+    for a in (addresses or ()):
+        if _norm(a) and _norm(a) not in _seen:
+            _seen.add(_norm(a))
+            addrs.append(_orig(a))
     if len(addrs) < 2:
         # ОДИН АДРЕС НЕ С ЧЕМ СВЯЗЫВАТЬ, и это не отказ, а отсутствие вопроса.
         return verdict({}, len(addrs), 0)
@@ -171,7 +195,9 @@ async def check(addresses, chain, max_calls=None, spend=True):
             for a in todo:
                 rows = await asyncio.to_thread(_n.profiler_related_wallets, a, chain, 10)
                 got += 1
-                rows_by_addr[a] = rows or []
+                # КЛЮЧ ГРАФА - НОРМАЛИЗОВАННЫЙ, как и адреса в строках ответа (`link_map`):
+                # иначе ребро «A -> B» не нашло бы вершину B, пришедшую в другом регистре.
+                rows_by_addr[_norm(a)] = rows or []
             if spend and got:
                 store.spend_add(credits=got * CREDITS_PER_CALL)
             if not any(rows_by_addr.values()):

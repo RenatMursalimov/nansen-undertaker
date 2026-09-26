@@ -807,8 +807,28 @@ def _nc(chain):
     return _NANSEN_CHAIN.get((chain or "").lower(), (chain or "").lower())
 
 
-def _date_range(days=7):
+def _date_range(days=7, hours=None):
+    """Окно для запросов Nansen. -> {"from": ..., "to": ...}.
+
+    ПО ДНЯМ (как было) окно РАСТЯНУТО НАМЕРЕННО: провайдер отдаёт суточные агрегаты, и
+    обрезать «сегодня» по текущему часу значило бы терять последние сделки. Для дайджеста и
+    экранов это правильное поведение, и оно не меняется.
+
+    ═══ ПОЧЕМУ ПОЯВИЛИСЬ ЧАСЫ (ЗАМЕР 26.09) ═══
+    У живого наблюдателя окно другое. `days=1` давал `from` = вчера 00:00:00 и `to` = сегодня
+    23:59:59, то есть ТРИДЦАТЬ С ЛИШНИМ ЧАСОВ, включая будущее, а подпись в карточке говорила
+    «за сутки». На пятнадцатиминутном движении WLD это выглядело так: контекст «смарт-мани
+    продали на $75k» относился к суткам, тогда как за последние три часа реальный след был
+    $2.1k, $912 и $880. Число верное, ответ не на тот вопрос.
+    ЖИВАЯ ПРОБА ПОДТВЕРДИЛА, ЧТО РУЧКА ПРИНИМАЕТ ЧАСЫ: окно в три часа вернуло строки.
+    ЧАСЫ И ДНИ НЕ СМЕШИВАЮТСЯ: задан `hours` - окно ровно от «сейчас минус N часов» до «сейчас»,
+    без округления до суток. Округли его - и вернётся ровно та ошибка, ради которой всё это.
+    """
     to = _dt.datetime.utcnow()
+    if hours:
+        frm = to - _dt.timedelta(hours=float(hours))
+        return {"from": frm.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "to": to.strftime("%Y-%m-%dT%H:%M:%SZ")}
     frm = to - _dt.timedelta(days=days)
     return {"from": frm.strftime("%Y-%m-%dT00:00:00Z"),
             "to": to.strftime("%Y-%m-%dT23:59:59Z")}
@@ -1479,15 +1499,27 @@ def tgm_pnl_leaderboard(chain, token_address, per_page=10, days=30, premium_labe
                        ckey=f"tgmpnl:{chain}:{token_address}:{per_page}:{days}"))
 
 
-def tgm_who_bought_sold(chain, token_address, buy_or_sell="BUY", per_page=10, days=1):
-    """Кто нетто покупал/продавал токен за период (адрес, метка, объёмы $). -> [dict]. ~1 кр."""
+def tgm_who_bought_sold(chain, token_address, buy_or_sell="BUY", per_page=10, days=1,
+                        hours=None, ttl=None):
+    """Кто нетто покупал/продавал токен за период (адрес, метка, объёмы $). -> [dict]. ~1 кр.
+
+    `hours` - ОКНО В ЧАСАХ вместо суток, для живого наблюдателя (`sentinel/`): контекст
+    пятнадцатиминутного движения обязан быть про последние часы, а не про тридцать с лишним
+    часов, как давало `days=1` (разбор в `_date_range`). Экраны и дайджест по-прежнему ходят
+    днями, их поведение не меняется.
+    `ttl` - свой срок жизни кэша: общий кэш 30 минут превратил бы «сейчас» в «раз в полчаса».
+    КЛЮЧ КЭША РАЗЛИЧАЕТ ОКНА: без часов в ключе трёхчасовой ответ подменялся бы суточным из
+    кэша, и мы бы показывали ровно то число, от которого уходим.
+    """
     body = {"chain": _nc(chain), "token_address": token_address,
-            "buy_or_sell": buy_or_sell, "date": _date_range(days),
+            "buy_or_sell": buy_or_sell, "date": _date_range(days, hours=hours),
             "pagination": {"page": 1, "per_page": per_page},
             "order_by": [{"field": "%s_volume_usd" % ("bought" if buy_or_sell == "BUY" else "sold"),
                           "direction": "DESC"}]}
+    _win = ('h%s' % hours) if hours else ('d%s' % days)
     return _rows(_post("tgm/who-bought-sold", body,
-                       ckey=f"tgmwbs:{chain}:{token_address}:{buy_or_sell}:{per_page}:{days}"))
+                       ckey=f"tgmwbs:{chain}:{token_address}:{buy_or_sell}:{per_page}:{_win}",
+                       ttl=ttl))
 
 
 def tgm_token_information(chain, token_address, timeframe="1d"):
@@ -1994,10 +2026,39 @@ def schema_gap_note(row, what, lang='ru'):
             % (what, ks))
 
 
+#: ТЕХНИЧЕСКИЕ МЕТКИ NANSEN: они описывают происхождение адреса, а не то, КТО это.
+#: Замер ленты 26.09 (500 сделок, dex + perp): «Uses "ZXY" HL Referral Code» - какой реферальный
+#: код вписан в аккаунт Hyperliquid; «wallet.poor», «malk.sol», «sh4dow.eth*» - доменные имена
+#: кошелька; «Funded @X On Friendtech» - кто пополнил. Ни одно не отвечает на вопрос, ради
+#: которого метку и читают: это кит, смарт-трейдер, фонд? Смысловые при этом есть и частые:
+#: «HL Perps Whale» (97), «High Activity» (59), «High Balance» (44), «STONK Whale» (17),
+#: «<токен> Token Deployer».
+#: ПОЧЕМУ ЗАКРЫТЫЙ СПИСОК ОБРАЗЦОВ, А НЕ «ДЛИННЫЕ МЕТКИ ПРОЧЬ». Длина ничего не говорит о смысле:
+#: «MILKSHAKE Token Deployer» длинная и полезная, «wallet.poor» короткая и пустая.
+_TECH_LABEL_RE = re.compile(
+    r'^(?:uses\s+".*"\s+hl\s+referral\s+code'
+    r'|funded\s+@\S+.*'
+    r'|[\w\-]+(?:\.[\w\-]+)+\*?)$', re.I)
+
+
+def meaningful_label(lbl):
+    """Метка, которую стоит показать человеку. -> str | ''.
+
+    Техническую метку (реферальный код, домен кошелька, «кто пополнил») превращаем в пустую:
+    тогда вызывающий покажет короткий адрес, а переход по нему откроет карточку счёта. Метка-
+    пустышка хуже адреса: она выглядит как ответ на «кто это», не отвечая на него.
+    """
+    s = str(lbl or '').strip()
+    if not s or _TECH_LABEL_RE.match(s):
+        return ''
+    return s
+
+
 def _who(row):
-    """Кто это: метка, иначе укороченный адрес, иначе '?'."""
-    lbl = _first(row, ("address_label", "trader_address_label", "counterparty_label",
-                       "label", "entity", "entity_name"))
+    """Кто это: смысловая метка, иначе укороченный адрес, иначе '?'."""
+    lbl = meaningful_label(_first(row, ("address_label", "trader_address_label",
+                                        "counterparty_label", "label", "entity",
+                                        "entity_name")))
     addr = _first(row, ("address", "trader_address", "wallet_address", "counterparty_address",
                         "counterparty", "to_address"), "")
     if lbl:
@@ -2088,17 +2149,19 @@ def positioning_route(symbol='', lang='ru'):
     ТИКЕР. То есть «плеча по контракту нет» и «плеча нет вообще» - разные утверждения, и первое
     без второго оставляет человека с ощущением, что бот не умеет. Умеет, но другой дверью.
     """
+    # ТЕКСТ ПЕРЕПИСАН 26.09 ВМЕСТЕ С КЛЮЧОМ. Раньше здесь стояло «эта ручка спрашивает по
+    # КОНТРАКТУ» - и это было описанием дефекта, а не устройства: по контракту ручка отвечает
+    # нулями на любой токен. Теперь спрашиваем по тикеру, и нули по тикеру означают ровно то, что
+    # написано: перп-рынок есть, крупного плеча на нём нет, - либо перп-рынка с таким тикером нет.
     en = (lang == 'en')
     _s = str(symbol or '').strip()[:12] or ('TICKER' if en else 'ТИКЕР')
     if en:
-        return ('\n<i>This endpoint asks by CONTRACT. Leverage on a listed asset lives on the perp '
-                'market, where the key is the TICKER: «perp positions %s» or the 💥 Liq. button on '
-                'the exchange card. And if this contract is not the token you meant, send the '
-                'address yourself: «positioning &lt;address&gt;».</i>' % _s)
-    return ('\n<i>Эта ручка спрашивает по КОНТРАКТУ. У листингованного актива плечо живёт на '
-            'перп-рынке, где ключ - ТИКЕР: «перп позиции %s» или кнопка 💥 Ликвид. на биржевой '
-            'карточке. А если этот контракт - не тот токен, что ты имел в виду, пришли адрес '
-            'сам: «чьё плечо &lt;адрес&gt;».</i>' % _s)
+        return ('\n<i>Positioning is read from the Hyperliquid perp market %s. Zeros mean either no '
+                'large leverage there, or no perp market with that ticker. Individual positions '
+                'and liquidation prices: «perp positions %s».</i>' % (_s, _s))
+    return ('\n<i>Плечо читается с перп-рынка %s на Hyperliquid. Нули значат одно из двух: '
+            'крупного плеча там нет, или перп-рынка с таким тикером нет. Позиции по кошелькам и '
+            'цены ликвидации: «перп позиции %s».</i>' % (_s, _s))
 
 
 def tap_hint(lang='ru', what='wallet'):
@@ -3493,9 +3556,20 @@ def perp_positioning(token_address):
     smart_trader_longs_usd, smart_trader_shorts_usd, smart_trader_total_usd,
     public_figure_longs_usd, public_figure_shorts_usd, public_figure_total_usd.
 
-    ТЕЛО - ОДИН АДРЕС КОНТРАКТА, И ЭТО ВАЖНО ДЛЯ ВХОДА: адрес есть у карточки токена, значит
-    экран открывается кнопкой с карточки, а не вводом руками (тот же закон, по которому мы
-    убрали ручной ввод market_id).
+    ═══ КЛЮЧ - ТИКЕР ПЕРП-РЫНКА, А НЕ АДРЕС КОНТРАКТА (ЖИВАЯ ПРОБА 26.09) ═══
+    Поле называется `token_address`, но данные за ним - ПЕРП-ПОЗИЦИИ Hyperliquid, а ключ перп-
+    рынка - символ. Замер одной сессии, по кредиту на вызов:
+      * `0xC02a…` (WETH) -> 200, одна строка, ВСЕ ДЕВЯТЬ ЧИСЕЛ НОЛЬ;
+      * `0x1f98…` (UNI)  -> 200, одна строка, все нули;
+      * `ETH`  -> смарт-трейдеры лонг $75.2M / шорт $25.0M, киты лонг $1.26B / шорт $1.09B;
+      * `HYPE` -> смарт-трейдеры лонг $46.3M / шорт $9.8M.
+    То есть по контракту ручка отвечает «плеча нет» на ЛЮБОЙ токен, и экран честно печатал это
+    как ответ. Так выглядит закон «признак наличия не равен признаку пользы»: 200 и строка на
+    месте, а смысла в ней нет. Схема 24.09 была снята верно (одно поле), неверным было значение:
+    проба шла контрактом и получила 200, а нули в ней приняли за рынок без плеча.
+    ПОЭТОМУ АРГУМЕНТ ПРИНИМАЕТ И ТИКЕР, И АДРЕС, а какой ключ передать, решает вызывающий через
+    `positioning_key`: он знает, что за токен перед ним. Имя параметра не меняем - на нём
+    держатся вызовы и сторож «тело из ровно одного поля».
     """
     rows = _rows(_post("tgm/position-intelligence",
                        {"token_address": str(token_address)},
@@ -3507,6 +3581,34 @@ def perp_positioning(token_address):
         return None
     _shape('position-intelligence', r)
     return r
+
+
+_ADDR_RE = re.compile(r'^(0x[0-9a-fA-F]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$')
+
+
+def positioning_key(token, market=None):
+    """Каким ключом спрашивать позиционирование. -> (ключ | None, как выбран).
+
+    Правило из живой пробы 26.09 (разбор в `perp_positioning`): по адресу контракта ручка
+    отвечает нулями на любой токен, по тикеру перп-рынка отвечает числами.
+      * пришёл тикер (`HYPE`, `eth`) -> он и есть ключ;
+      * пришёл адрес, и рынок токена опознан (`market['symbol']`) -> ключ = его символ;
+      * пришёл адрес, рынок не опознан -> None: спрашивать нечем. Отправить адрес значило бы
+        купить гарантированные нули и показать их как ответ.
+    СПОСОБ ВЫБОРА ВОЗВРАЩАЕТСЯ ВМЕСТЕ С КЛЮЧОМ. Символ по адресу берётся у DEX Screener, а у
+    однофамильцев символ совпадает (солановский LIT против Lighter - случай 27.09), поэтому
+    экран обязан показать, ПО КАКОМУ перп-рынку он спрашивал. Иначе однофамилец снова выдал бы
+    чужие данные, только теперь незаметно.
+    """
+    t = str(token or '').strip()
+    if not t:
+        return None, 'пусто'
+    if not _ADDR_RE.match(t):
+        return t.upper()[:20], 'тикер'
+    sym = str((market or {}).get('symbol') or '').strip().upper()
+    if sym and re.match(r'^[A-Z0-9]{1,20}$', sym):
+        return sym, 'символ контракта'
+    return None, 'адрес без опознанного рынка'
 
 
 #: СЕГМЕНТЫ ОТВЕТА: ключ в ответе -> (RU, EN). Порядок задаёт порядок строк экрана и выбран по
@@ -3578,7 +3680,7 @@ def perp_positioning_block(r, token='', lang='ru', market=None):
                   'public figures. That is an answer, not a failure.' if en else
                   'Nansen не видит здесь плеча ни у китов, ни у смарт-трейдеров, ни у публичных '
                   'фигур. Это ответ, а не сбой.'))
-        L.append(positioning_route((market or {}).get('symbol') or '', lang))
+        L.append(positioning_route((market or {}).get('symbol') or token or '', lang))
         return with_source('\n'.join(L), lang)
     L.append('')
     for s in d['segments']:

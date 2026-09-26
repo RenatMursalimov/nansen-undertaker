@@ -36,8 +36,13 @@ DB_KEY = 'onchain'
 
 
 def _ensure(conn):
-    # ── КОЛЬЦО СНИМКОВ. Первичный ключ (тикер, секунда) - защита от двойного тика: два
-    #    процесса в момент переезда запишут ОДИН снимок, а не два с разными числами.
+    # ── КОЛЬЦО СНИМКОВ, СТАРОЕ. ОСТАЁТСЯ LEGACY И БОЛЬШЕ НЕ ЗАПОЛНЯЕТСЯ.
+    #    Ключ (тикер, секунда) не различал площадки, и на проде это дало ровно то, что должно
+    #    было: 48 740 строк, в которых снимки трёх площадок по одному тикеру ПЕРЕТЁРЛИ друг
+    #    друга через INSERT OR REPLACE. Чья именно цена осталась в строке - неизвестно, поэтому
+    #    в сигму эти строки не идут: смесь цен Variational и Hyperliquid дала бы «движения»,
+    #    которых на рынке не было. Таблица не удаляется (стоп-правило живой базы) и убирается
+    #    только по сроку в `prune`.
     conn.execute('''CREATE TABLE IF NOT EXISTS sentinel_snapshots (
         ticker TEXT NOT NULL,
         ts INTEGER NOT NULL,
@@ -50,6 +55,123 @@ def _ensure(conn):
         quote_ts INTEGER,
         PRIMARY KEY (ticker, ts))''')
     conn.execute('CREATE INDEX IF NOT EXISTS ix_sent_snap_ts ON sentinel_snapshots(ts)')
+    # ── КОЛЬЦО СНИМКОВ, РАБОЧЕЕ: КЛЮЧ (ПЛОЩАДКА, ТИКЕР, СЕКУНДА) ────────────────────────────
+    #    ПОЧЕМУ НОВАЯ ТАБЛИЦА, А НЕ ALTER СТАРОЙ (решение владельца 26.09). На sqlite сменить
+    #    первичный ключ без пересоздания таблицы нельзя, а дополнительный UNIQUE-индекс старый
+    #    ключ не отменяет: `INSERT OR REPLACE` продолжал бы перетирать две площадки, пришедшие
+    #    в одну секунду. То есть на одной из двух наших баз тест «две площадки в одну секунду -
+    #    обе строки в базе» не проходил бы ПРИНЦИПИАЛЬНО. Новая таблица даёт ОДИН путь на обеих
+    #    базах и не трогает живые 48 тысяч строк.
+    #    `oi_usd` ЛЕЖИТ ЗДЕСЬ С ПЕРВОГО ДНЯ. Открытый интерес площадки отдают в разных единицах
+    #    (Variational - в долларах, Hyperliquid и Lighter - в базовом активе), и единицу знает
+    #    только слой площадки. Складывать в кольцо «сырое» число значило бы хранить величину, у
+    #    которой нет единицы измерения; кроме того, `oi_long`/`oi_short` у Hyperliquid и Lighter
+    #    равны None вовсе, и скачок интереса по двум площадкам из трёх был невычислим.
+    conn.execute('''CREATE TABLE IF NOT EXISTS sentinel_ring (
+        venue TEXT NOT NULL,
+        ticker TEXT NOT NULL,
+        ts INTEGER NOT NULL,
+        mark REAL,
+        vol24 REAL,
+        oi_long REAL,
+        oi_short REAL,
+        funding REAL,
+        spread_bps REAL,
+        quote_ts INTEGER,
+        oi_usd REAL,
+        PRIMARY KEY (venue, ticker, ts))''')
+    conn.execute('CREATE INDEX IF NOT EXISTS ix_sent_ring_ts ON sentinel_ring(ts)')
+    # ── ЛЕНТА СДЕЛОК СМАРТ-МАНИ. ХРАНИМ, ПОТОМУ ЧТО ОКНО СОБЫТИЯ ДЛИННЕЕ ЛЕНТЫ ──────────────
+    #    ЗАМЕР ВЛАДЕЛЬЦА 26.09, ОДИН ВЫЗОВ `smart-money/dex-trades` (100 сделок):
+    #    лента покрывает 44 МИНУТЫ, а окно зажигания - 180. То есть «3 разных адреса в одном
+    #    токене за 3 часа» проверялось по данным за три четверти часа, и порог был недостижим
+    #    ПРИ ЛЮБОМ ЧИСЛЕ: истории между опросами не было вовсе, курсор помнил только «эту сделку
+    #    я уже видел». Из 35 токенов ленты два адреса собрали пять токенов, три - ни один.
+    #    ТЕПЕРЬ ОКНО СОБИРАЕТСЯ ИЗ БАЗЫ: опрос раз в 3 минуты при ленте 44 минуты даёт
+    #    многократное перекрытие, поэтому догонять страницами ничего не нужно.
+    #    ОДНА ТАБЛИЦА НА ДВЕ ЛЕНТЫ (`feed`: 'dex' | 'perp'). У обеих ответов есть
+    #    `transaction_hash` и одинаковый смысл строки «кто, что, на сколько, когда»; две таблицы
+    #    означали бы две копии уборки и два места для одной и той же ошибки. Поля, которых у DEX
+    #    нет (сторона сделки, цена входа), остаются пустыми - это честнее, чем ноль.
+    conn.execute('''CREATE TABLE IF NOT EXISTS sentinel_sm_trades (
+        tx_hash TEXT NOT NULL,
+        feed TEXT NOT NULL,
+        chain TEXT,
+        token_address TEXT,
+        symbol TEXT,
+        trader TEXT,
+        trader_label TEXT,
+        usd REAL,
+        mcap REAL,
+        age_days REAL,
+        side TEXT,
+        price_usd REAL,
+        block_ts INTEGER,
+        seen_at INTEGER,
+        is_new INTEGER DEFAULT 0,
+        action TEXT,
+        PRIMARY KEY (tx_hash, feed))''')
+    # ЛЕНИВЫЙ ALTER: таблица уже живёт на проде с этапа 1b, а `action` появился позже (разбор
+    # у `ignition.scan_perp`: четверть перп-сделок ленты - сокращения, а не входы).
+    try:
+        conn.execute('ALTER TABLE sentinel_sm_trades ADD COLUMN action TEXT')
+    except Exception as _ae:
+        if not _dup_column(_ae):
+            raise
+    # `is_new` ХРАНИТСЯ, А НЕ ВЫВОДИТСЯ ЗАНОВО. Nansen присылает метку нового токена ВНУТРИ
+    # символа («🌱 P(DOOM)»), а в ключах символ обязан быть чистым - иначе один токен живёт под
+    # двумя именами и порог по адресам не собирается никогда. После нормализации признак взять
+    # негде: не сохрани его здесь, и карточка перестанет говорить «новый токен» ровно там, где
+    # это главное, что об активе известно. Пояснение стоит в Python, а не SQL-комментарием:
+    # DDL проходит через транслятор в PostgreSQL, и лишний текст внутри запроса - лишний риск.
+    conn.execute('CREATE INDEX IF NOT EXISTS ix_sent_smt_ts ON sentinel_sm_trades(block_ts)')
+    # ── НИТИ: ОДНО ДВИЖЕНИЕ = ОДНА ПЕРЕПИСКА, А НЕ ДВЕНАДЦАТЬ СООБЩЕНИЙ ────────────────────
+    #    ЗАМЕР ПРОДА 26.09: по SAGA пришло 12 алертов за 70 минут. Механика была не в пороге, а в
+    #    КЛЮЧЕ события: в него входит ступень силы (|ход| // порог), и при часовом пороге 2.5%
+    #    ход +15% давал ступень 6, +18% - ступень 7, +21% - ступень 8; откат давал новую ступень,
+    #    «вверх» и «вниз» были разными видами, а пауза по инструменту тоже включала ступень - то
+    #    есть каждая новая ступень законно открывала себе окно заново.
+    #    НИТЬ ЖИВЁТ ПО (ПЛОЩАДКА, ТИКЕР) И ПОМНИТ ДВЕ ВЕЛИЧИНЫ: максимальную взятую ступень и
+    #    пик хода. Первое событие - полная карточка; дальше только «усилилось» и «откат», и
+    #    только ОТВЕТОМ на первую. `first_msg_id` хранится ПО ПОЛЬЗОВАТЕЛЮ, потому что
+    #    message_id у каждого свой: одно и то же событие ушло десяти людям десятью сообщениями.
+    conn.execute('''CREATE TABLE IF NOT EXISTS sentinel_threads (
+        venue TEXT NOT NULL,
+        ticker TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
+        first_event_key TEXT,
+        first_msg_id INTEGER,
+        max_step INTEGER DEFAULT 0,
+        peak_pct REAL,
+        dir INTEGER DEFAULT 0,
+        replies INTEGER DEFAULT 0,
+        opened_at INTEGER,
+        last_at INTEGER,
+        closed_at INTEGER,
+        PRIMARY KEY (venue, ticker, user_id))''')
+    # ЧТО УЖЕ СКАЗАНО В НИТИ ПО ВИДАМ (этап 3): {семейство вида: взятая ступень}. Нить была только у
+    # движений, и два всплеска оборота ACE за две минуты пришли двумя полными карточками. Теперь
+    # нить - одна на инструмент, и каждый вид в ней помнит свою ступень.
+    try:
+        conn.execute('ALTER TABLE sentinel_threads ADD COLUMN kinds TEXT')
+    except Exception as _ae:
+        if not _dup_column(_ae):
+            raise
+    # ── ОБЩИЙ ЖУРНАЛ ОТПРАВЛЕННОГО. ПРЕДОХРАНИТЕЛЬ СЧИТАЕТ ВСЁ, А НЕ ТОЛЬКО АЛЕРТЫ ─────────
+    #    ЗАМЕР ПРОДА 26.09: владельцу ушло 586 сообщений за сутки - 280 алертов, 279 обогащений и
+    #    27 сводок. Предохранитель считал ТОЛЬКО алерты, то есть видел меньше половины того, что
+    #    приходило на телефон, и «3 сообщения за 10 минут» на практике означало семь.
+    #    ПОЧЕМУ ОТДЕЛЬНАЯ ТАБЛИЦА, А НЕ ПОЛЕ В `sentinel_deliveries`: там строка привязана к
+    #    (событие, человек) и несёт состояние доставки. Ответ по нити, сводка и обогащение - это
+    #    другие сущности с другой жизнью, и втискивать их туда значило бы менять смысл
+    #    существующего журнала, по которому считается суточный потолок алертов.
+    conn.execute('''CREATE TABLE IF NOT EXISTS sentinel_sent (
+        user_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        event_key TEXT,
+        message_id INTEGER,
+        ts INTEGER NOT NULL)''')
+    conn.execute('CREATE INDEX IF NOT EXISTS ix_sent_sent_uid ON sentinel_sent(user_id, ts)')
     # ── СОБЫТИЯ. `event_key` - НАШ детерминированный ключ (см. detector.key), а не автоинкремент:
     #    один и тот же выброс, увиденный дважды (перезапуск, наложение тиков), обязан дать ОДНУ
     #    строку. Автоинкремент дал бы две и два алерта.
@@ -81,7 +203,8 @@ def _ensure(conn):
         venues TEXT,
         burst_max INTEGER,
         burst_win_min INTEGER,
-        min_sev INTEGER)''')
+        min_sev INTEGER,
+        kinds_seen TEXT)''')
     # ЛЕНИВЫЙ ALTER ДЛЯ УЖЕ СОЗДАННОЙ ТАБЛИЦЫ. `CREATE TABLE IF NOT EXISTS` на существующей
     # таблице НЕ добавляет колонку и НЕ жалуется - то есть у того, кто поставил дозорного
     # раньше (прод Ren, 25.09), новой колонки не появилось бы, а SELECT по ней падал бы
@@ -96,7 +219,13 @@ def _ensure(conn):
     # человеку, ни разу не крутившему кнопку.
     for _col, _type in (('cooldown_min', 'INTEGER'), ('kinds', 'TEXT'), ('parts', 'TEXT'),
                         ('venues', 'TEXT'), ('burst_max', 'INTEGER'),
-                        ('burst_win_min', 'INTEGER'), ('min_sev', 'INTEGER')):
+                        ('burst_win_min', 'INTEGER'), ('min_sev', 'INTEGER'),
+                        # КАКИЕ ВИДЫ СУЩЕСТВОВАЛИ, КОГДА ЧЕЛОВЕК В ПОСЛЕДНИЙ РАЗ ТРОГАЛ НАБОР.
+                        # Разбор - у `kinds_for`: без этого новый вид не отличить от выключенного.
+                        ('kinds_seen', 'TEXT'),
+                        # ЛИЧНЫЙ ПЕРИОД СВОДКИ, МИНУТЫ (этап 4): задаёт пресет. Пусто - общий
+                        # `config.digest_sec()`.
+                        ('digest_min', 'INTEGER')):
         try:
             conn.execute('ALTER TABLE sentinel_settings ADD COLUMN %s %s' % (_col, _type))
         except Exception as _ae:
@@ -136,7 +265,18 @@ def _ensure(conn):
         body TEXT,
         credits INTEGER DEFAULT 0,
         err TEXT,
-        ts INTEGER)''')
+        ts INTEGER,
+        venue TEXT,
+        ticker TEXT)''')
+    # ЛЕНИВЫЙ ALTER: площадка и тикер понадобились для БЮДЖЕТА обогащения (одно на инструмент в
+    # час, ТЗ 1.6). Без них «этот инструмент уже обогащали» пришлось бы выяснять разбором JSON в
+    # payload события, то есть запросом по всей таблице событий на каждую доставку.
+    for _col, _type in (('venue', 'TEXT'), ('ticker', 'TEXT')):
+        try:
+            conn.execute('ALTER TABLE sentinel_enrich ADD COLUMN %s %s' % (_col, _type))
+        except Exception as _ae:
+            if not _dup_column(_ae):
+                raise
     # ── ИСХОД. Отчёт попаданий строится ТОЛЬКО по этой таблице: цена в момент алерта и цена
     #    через горизонт, снятые ОДНИМ И ТЕМ ЖЕ фидом. Считать «сработало ли» по памяти
     #    человека или по скриншоту нельзя - это и есть «выборка мала», только без честного
@@ -174,6 +314,16 @@ def _ensure(conn):
         until INTEGER)''')
     # ── РАСХОД КРЕДИТОВ ДОЗОРНЫМ, ОТДЕЛЬНО ОТ ОБЩЕГО. Автономная трата обязана иметь свою
     #    границу: человек, не просивший дозорного, не должен получить отказ на своём экране.
+    # ── КЭШ «ТИКЕР -> КОНТРАКТ» (ТЗ 3.2). Сопоставление по цене стоит двух платных запросов и
+    #    делается при обогащении; чтобы ссылка на паспорт токена была уже в ПЕРВОЙ карточке,
+    #    найденный контракт хранится сутки и переиспользуется доставкой.
+    conn.execute('''CREATE TABLE IF NOT EXISTS sentinel_contracts (
+        venue TEXT NOT NULL,
+        ticker TEXT NOT NULL,
+        chain TEXT,
+        address TEXT,
+        resolved_at INTEGER,
+        PRIMARY KEY (venue, ticker))''')
     conn.execute('''CREATE TABLE IF NOT EXISTS sentinel_spend (
         day TEXT PRIMARY KEY,
         credits INTEGER DEFAULT 0,
@@ -360,27 +510,37 @@ def _today():
 # КОЛЬЦО СНИМКОВ
 # ══════════════════════════════════════════════════════════════════════════════════════════
 def snapshot_put(listings, ts=None):
-    """Записать снимок площадки. -> сколько строк легло.
+    """Записать снимок площадок в кольцо. -> сколько строк легло.
 
     ПИШЕМ ВСЁ, ЧТО ОПРОСИЛИ, А НЕ ТОЛЬКО ПОДПИСАННОЕ. Сигма и медиана спреда считаются по
     истории инструмента; если писать только то, на что кто-то подписан, то первый же новый
     подписчик получил бы инструмент без истории — то есть без порога — и увидел бы либо
     молчание, либо мусор. История рынка дешевле, чем объяснение этого поведения.
+
+    ПЛОЩАДКА В КЛЮЧЕ. До 26.09 строка писалась по (тикер, секунда), и снимки трёх площадок по
+    одному тикеру перетирали друг друга; кольцо при этом выглядело полным (48 740 строк), а
+    детектор читал его по ключу «площадка:тикер» и не находил НИ ОДНОЙ строки. Оба дефекта
+    молчали: тик печатал «опрошено 553 инстр.», сигма не набиралась никогда.
+    `oi_usd` ПИШЕТСЯ ОТДЕЛЬНОЙ ВЕЛИЧИНОЙ, потому что единицу открытого интереса знает только
+    слой площадки (см. `venues`): `oi_long`/`oi_short` есть лишь у Variational и уже в
+    долларах, у Hyperliquid и Lighter интерес приходит одним числом в базовом активе.
     """
     ts = int(ts if ts is not None else time.time())
     c = conn()
     n = 0
     for x in listings:
+        _v = str(getattr(x, 'venue', '') or 'variational')
         try:
-            c.execute('INSERT OR REPLACE INTO sentinel_snapshots '
-                      '(ticker, ts, mark, vol24, oi_long, oi_short, funding, spread_bps, quote_ts)'
-                      ' VALUES (?,?,?,?,?,?,?,?,?)',
-                      (x.ticker, ts, x.mark, x.volume_24h, x.oi_long, x.oi_short,
+            c.execute('INSERT OR REPLACE INTO sentinel_ring '
+                      '(venue, ticker, ts, mark, vol24, oi_long, oi_short, funding, spread_bps,'
+                      ' quote_ts, oi_usd) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                      (_v, x.ticker, ts, x.mark, x.volume_24h, x.oi_long, x.oi_short,
                        x.funding_raw, x.spread_bps,
-                       int(x.quote_ts) if x.quote_ts else None))
+                       int(x.quote_ts) if x.quote_ts else None,
+                       getattr(x, 'oi_usd', None)))
             n += 1
         except Exception as e:
-            _say_fail('снимок %s не записан' % x.ticker, e)
+            _say_fail('снимок %s:%s не записан' % (_v, x.ticker), e)
     try:
         c.commit()
     except Exception:
@@ -388,45 +548,199 @@ def snapshot_put(listings, ts=None):
     return n
 
 
-def history(ticker, since_ts=None, limit=4000):
+def history(venue, ticker, since_ts=None, limit=4000):
     """Снимки инструмента по возрастанию времени. -> [(ts, mark, vol24, oi_long, oi_short,
-    funding, spread_bps, quote_ts)].
+    funding, spread_bps, quote_ts, oi_usd)].
 
     ЧИТАЕМ ПО ИНДЕКСУ, А НЕ ПО ИМЕНИ КОЛОНКИ: на PostgreSQL строка курсора не даёт доступа по
     имени так, как `sqlite3.Row`, и код «r['mark']» падал бы ровно на проде (наш случай уже
     был). Порядок полей зафиксирован в докстринге — это и есть контракт.
+
+    `oi_usd` ДОБАВЛЕН В КОНЕЦ КОРТЕЖА, А НЕ РЯДОМ С `oi_long`. Детектор читает `r[3]`..`r[6]`
+    по индексу, и вставка в середину сдвинула бы фандинг со спредом - то есть числа остались бы
+    на месте, а смысл поехал: в карточке появился бы «спред», равный ставке фандинга. Такой
+    дефект не роняет тест, он врёт человеку.
+    ПЛОЩАДКА ОБЯЗАТЕЛЬНЫМ ПЕРВЫМ АРГУМЕНТОМ (не `venue=None`): вызов без площадки - это вопрос
+    «история BTC» без ответа «на какой бирже», и молчаливый дефолт вернул бы чужой ряд.
     """
     since = int(since_ts if since_ts is not None else 0)
-    rows = _all('SELECT ts, mark, vol24, oi_long, oi_short, funding, spread_bps, quote_ts '
-                'FROM sentinel_snapshots WHERE ticker=? AND ts>=? ORDER BY ts ASC LIMIT ?',
-                (ticker, since, int(limit)))
-    return [tuple(r[i] for i in range(8)) for r in rows]
+    rows = _all('SELECT ts, mark, vol24, oi_long, oi_short, funding, spread_bps, quote_ts, '
+                'oi_usd FROM sentinel_ring WHERE venue=? AND ticker=? AND ts>=? '
+                'ORDER BY ts ASC LIMIT ?',
+                (str(venue or 'variational'), ticker, since, int(limit)))
+    return [tuple(r[i] for i in range(9)) for r in rows]
 
 
 def prune(days=None):
-    """Убрать снимки старше окна. -> сколько удалено (или -1, если СУБД не сказала)."""
+    """Убрать снимки старше окна из ОБОИХ колец. -> сколько удалено (или -1, если СУБД молчит).
+
+    LEGACY-ТАБЛИЦУ ТОЖЕ ЧИСТИМ. Она больше не наполняется, но 48 тысяч строк на проде сами не
+    исчезнут, а держать вечно данные, которыми мы сознательно не пользуемся, значит платить
+    местом за то, чего не читаем. Удаление только по сроку и только с WHERE - стоп-правило
+    живой базы: ни DROP, ни TRUNCATE, ни DELETE без условия.
+    """
     from . import config
     keep = int(days if days is not None else config.ring_days())
     cut = _now() - keep * 86400
     c = conn()
-    cur = c.execute('DELETE FROM sentinel_snapshots WHERE ts < ?', (cut,))
+    total = 0
+    unknown = False
+    for _tab in ('sentinel_ring', 'sentinel_snapshots'):
+        cur = None
+        try:
+            cur = c.execute('DELETE FROM %s WHERE ts < ?' % _tab, (cut,))
+            try:
+                total += int(cur.rowcount)
+            except Exception:
+                unknown = True
+        except Exception as e:
+            _say_fail('уборка кольца %s' % _tab, e)
+        finally:
+            if cur is not None:
+                _shut(cur)
     try:
         c.commit()
     except Exception:
         pass
+    return -1 if (unknown and not total) else total
+
+
+#: ПОРЯДОК ПОЛЕЙ ЛЕНТЫ - КОНТРАКТ, как и у кольца. Читается по индексу: на PostgreSQL строка
+#: курсора не даёт доступа по имени так, как `sqlite3.Row`.
+SMT_FIELDS = ('tx_hash', 'feed', 'chain', 'token_address', 'symbol', 'trader', 'trader_label',
+              'usd', 'mcap', 'age_days', 'side', 'price_usd', 'block_ts', 'is_new', 'action')
+
+
+def sm_trades_put(rows, feed='dex', now=None):
+    """Сложить сделки ленты в базу. -> сколько строк принято (новых и обновлённых).
+
+    ЗАЧЕМ ВООБЩЕ ХРАНИТЬ ЧУЖУЮ ЛЕНТУ. Окно события (3 часа у зажигания, 30 минут у перпов)
+    ДЛИННЕЕ, чем окно, которое покрывает один ответ провайдера: замер 26.09 дал 44 минуты на
+    100 сделок. Пока истории не было, агрегат собирался по последнему ответу, и порог «три
+    разных адреса в одном токене за три часа» проверялся по данным за 44 минуты - то есть не
+    мог сработать ни при каком числе. Курсор этого не лечил: он помнит «видел ли я сделку», а
+    не саму сделку.
+    ДЕДУПЛИКАЦИЯ КЛЮЧОМ, А НЕ ПРОВЕРКОЙ ПЕРЕД ВСТАВКОЙ: одна и та же сделка приезжает в
+    десятке последовательных опросов (перекрытие ленты), и `INSERT OR REPLACE` по
+    (tx_hash, feed) делает повтор бесплатным.
+    """
+    now = int(now if now is not None else time.time())
+    c = conn()
+    n = 0
+    for r in (rows or ()):
+        if not isinstance(r, dict) or not r.get('tx_hash'):
+            continue
+        try:
+            c.execute('INSERT OR REPLACE INTO sentinel_sm_trades '
+                      '(tx_hash, feed, chain, token_address, symbol, trader, trader_label, usd, '
+                      ' mcap, age_days, side, price_usd, block_ts, seen_at, is_new, action) '
+                      'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                      (str(r.get('tx_hash')), str(feed), r.get('chain'), r.get('token_address'),
+                       r.get('symbol'), r.get('trader'), r.get('trader_label'), r.get('usd'),
+                       r.get('mcap'), r.get('age_days'), r.get('side'), r.get('price_usd'),
+                       int(r.get('block_ts') or 0) or None, now,
+                       (1 if r.get('is_new') else 0), r.get('action')))
+            n += 1
+        except Exception as e:
+            _say_fail('сделка ленты %s не записана' % str(r.get('tx_hash'))[:18], e)
     try:
-        return int(cur.rowcount)
+        c.commit()
     except Exception:
+        pass
+    return n
+
+
+def sm_trades_window(since_ts, feed='dex', limit=20000):
+    """Сделки ленты за окно. -> [dict] в порядке полей `SMT_FIELDS`.
+
+    ОТДАЁМ СЛОВАРИ, А НЕ КОРТЕЖИ: дальше их группирует `ignition.group`, и там читаемость имён
+    важнее экономии - а контракт формы всё равно зафиксирован в `SMT_FIELDS`.
+    СТРОКИ БЕЗ ВРЕМЕНИ НЕ ОТДАЁМ ВОВСЕ: сделка без `block_ts` не может быть отнесена к окну, а
+    «посчитаем её как свежую» превратило бы вчерашний бэклог в событие «прямо сейчас».
+    """
+    since = int(since_ts or 0)
+    rows = _all('SELECT tx_hash, feed, chain, token_address, symbol, trader, trader_label, usd, '
+                'mcap, age_days, side, price_usd, block_ts, is_new, action FROM sentinel_sm_trades '
+                'WHERE feed=? AND block_ts IS NOT NULL AND block_ts>=? '
+                'ORDER BY block_ts ASC LIMIT ?',
+                (str(feed), since, int(limit)))
+    return [dict(zip(SMT_FIELDS, tuple(r[i] for i in range(len(SMT_FIELDS))))) for r in rows]
+
+
+def sm_trades_prune(hours=24, now=None):
+    """Убрать сделки старше окна хранения. -> сколько удалено (или -1, если СУБД молчит).
+
+    СУТКИ, А НЕ ТРИ ЧАСА: окно события три часа, но по этой же таблице снимается РАСПРЕДЕЛЕНИЕ
+    (сколько разных адресов на токен бывает за 180 минут), по которому потом выбирается порог.
+    На трёхчасовом хвосте такого распределения не построить. Удаление только по сроку и только
+    с WHERE - стоп-правило живой базы.
+    """
+    now = int(now if now is not None else time.time())
+    cut = now - int(hours) * 3600
+    c = conn()
+    cur = None
+    try:
+        cur = c.execute('DELETE FROM sentinel_sm_trades WHERE block_ts IS NOT NULL '
+                        'AND block_ts < ?', (cut,))
+        try:
+            return int(cur.rowcount)
+        except Exception:
+            return -1
+    except Exception as e:
+        _say_fail('уборка ленты смарт-сделок', e)
         return -1
     finally:
-        _shut(cur)
+        if cur is not None:
+            _shut(cur)
+        try:
+            c.commit()
+        except Exception:
+            pass
+
+
+def sm_trades_span(feed='dex'):
+    """Сколько времени покрывает накопленная лента. -> (секунды, строк). ЗАМЕР ДЛЯ ЧЕЛОВЕКА.
+
+    Нужен ровно затем, чтобы «порог недостижим» больше никогда не выяснялось спустя сутки
+    тишины: пока накоплено меньше окна события, об этом говорит строка в логе и в отчёте, а не
+    наше предположение.
+    """
+    r = _one('SELECT MIN(block_ts), MAX(block_ts), COUNT(*) FROM sentinel_sm_trades '
+             'WHERE feed=? AND block_ts IS NOT NULL', (str(feed),))
+    if not r or r[0] is None:
+        return 0, 0
+    return max(0, int(r[1] or 0) - int(r[0] or 0)), int(r[2] or 0)
 
 
 def tickers_seen(since_ts=None):
-    """Какие инструменты вообще есть в кольце. -> set(тикеров)."""
+    """Какие инструменты вообще есть в РАБОЧЕМ кольце. -> set(тикеров).
+
+    ЧИТАЕМ НОВУЮ ТАБЛИЦУ, И ЭТО НЕ КОСМЕТИКА. На этой двери висят две проверки, которые
+    человек видит глазами: «опрос идёт» в кнопке починки (`ui.fix_polling`) и «есть ли такой
+    инструмент» при подписке (`ui._exists`). Оставь её на legacy-таблице, которая больше не
+    наполняется - и кнопка вечно сообщала бы «снимков нет», а подписка отказывала бы на любом
+    тикере. Оба отказа выглядели бы как поломка опроса, которой нет.
+    """
     since = int(since_ts if since_ts is not None else _now() - 86400)
-    rows = _all('SELECT DISTINCT ticker FROM sentinel_snapshots WHERE ts>=?', (since,))
+    rows = _all('SELECT DISTINCT ticker FROM sentinel_ring WHERE ts>=?', (since,))
     return {r[0] for r in rows}
+
+
+def ring_since(since_ts):
+    """Все точки холодного кольца с момента. -> {'venue:TICKER': [строки как у `history`]}.
+
+    Для экрана «Что сейчас» в процессе БЕЗ своего опроса (бот, с 26.09 опрос в юните): горячее
+    кольцо живёт только у опрашивающего, и у бота экран вечно отвечал «кольцо пустое». Полтора
+    часа холодного кольца - это ~6 точек на инструмент, несколько тысяч строк одним запросом.
+    """
+    rows = _all('SELECT venue, ticker, ts, mark, vol24, oi_long, oi_short, funding, spread_bps, '
+                'quote_ts, oi_usd FROM sentinel_ring WHERE ts>=? ORDER BY ts ASC',
+                (int(since_ts),))
+    out = {}
+    for r in rows:
+        out.setdefault('%s:%s' % (r[0], str(r[1]).upper()), []).append(
+            tuple(r[i] for i in range(2, 11)))
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
@@ -440,6 +754,13 @@ def event_new(ev):
     повтор всех событий последнего часа. Проверка «SELECT, потом INSERT» тоже не годится —
     два тика успеют пройти между ними.
     """
+    # ВЕРСИЯ ПРАВИЛ - ШТАМПОМ В КАЖДОМ СОБЫТИИ (этап 3, п.6). Сводка владельца после деплоя
+    # несла расхождения 43-95 б.п., хотя с ТЗ 2.3 порог 150: это события по ПРЕЖНИМ правилам,
+    # записанные до рестарта (или процессом, который не перезапустили). Дверь доставки сверяет
+    # штамп с текущей версией (`outbox.rules_reason`) и старое человеку не отдаёт.
+    from . import config as _cfg
+    if isinstance(ev.get('payload'), dict):
+        ev['payload'].setdefault('rules', _cfg.RULES_VERSION)
     c = conn()
     try:
         c.execute('INSERT INTO sentinel_events '
@@ -563,10 +884,17 @@ def sub_add(uid, ticker):
         return False, 'уже в дозоре'
     if t != ALL and len([x for x in cur if x != ALL]) >= config.max_tickers():
         return False, 'больше %d инструментов не держим' % config.max_tickers()
+    # ═══ ПЕРВАЯ ПОДПИСКА - ПРЕСЕТ «НОВИЧОК» (этап 4, ТЗ 4.1) ═══
+    # Только тому, у кого нет НИ одной подписки И ни разу не сохранённых настроек: у владельца и у
+    # всех, кто что-то крутил, строка настроек есть, и их набор не трогается (решение владельца).
+    _fresh = not cur and not settings_exists(uid)
     c = conn()
     c.execute('INSERT INTO sentinel_subs (user_id, ticker, created_at) VALUES (?,?,?)',
               (int(uid), t, _now()))
     c.commit()
+    if _fresh:
+        preset_apply(uid, DEFAULT_PRESET)
+        return True, 'в дозоре; настройки - пресет «%s»' % PRESETS[DEFAULT_PRESET]['title']
     return True, 'в дозоре'
 
 
@@ -603,20 +931,31 @@ def watched():
 _DEF_SETTINGS = {'alerts_on': 1, 'min_pct': None, 'quiet_from': None, 'quiet_to': None,
                  'daily_cap': None, 'enrich_on': 1, 'cooldown_min': None, 'kinds': None,
                  'parts': None, 'venues': None, 'burst_max': None, 'burst_win_min': None,
-                 'min_sev': None}
+                 'min_sev': None, 'kinds_seen': None, 'digest_min': None}
 
 
 def settings(uid):
     r = _one('SELECT alerts_on, min_pct, quiet_from, quiet_to, daily_cap, enrich_on, '
-             'cooldown_min, kinds, parts, venues, burst_max, burst_win_min, min_sev '
-             'FROM sentinel_settings WHERE user_id=?', (int(uid),))
+             'cooldown_min, kinds, parts, venues, burst_max, burst_win_min, min_sev, kinds_seen, '
+             'digest_min FROM sentinel_settings WHERE user_id=?', (int(uid),))
     if not r:
         return dict(_DEF_SETTINGS)
     return {'alerts_on': int(r[0] or 0), 'min_pct': r[1], 'quiet_from': r[2],
             'quiet_to': r[3], 'daily_cap': r[4],
             'enrich_on': 1 if r[5] is None else int(r[5]),
             'cooldown_min': r[6], 'kinds': r[7], 'parts': r[8], 'venues': r[9],
-            'burst_max': r[10], 'burst_win_min': r[11], 'min_sev': r[12]}
+            'burst_max': r[10], 'burst_win_min': r[11], 'min_sev': r[12],
+            'kinds_seen': r[13], 'digest_min': r[14]}
+
+
+def settings_exists(uid):
+    """Трогал ли человек настройки хоть раз (есть ли строка в базе). -> bool.
+
+    Нужен ОДНОМУ решению: дефолтный пресет «Новичок» ставится при первой подписке ТОЛЬКО тому,
+    у кого строки нет. У владельца и у всех, кто уже что-то крутил, строка есть - и их набор
+    видов не трогается, пока они сами не нажмут пресет (решение владельца 26.09).
+    """
+    return _one('SELECT 1 FROM sentinel_settings WHERE user_id=?', (int(uid),)) is not None
 
 
 def settings_set(uid, **kw):
@@ -627,15 +966,21 @@ def settings_set(uid, **kw):
             print('[sentinel] настройка %r неизвестна - пропущена' % k)
             continue
         cur[k] = v
+    # НАБОР ВИДОВ ЗАПИСАН - ЗАПИСАНО И ТО, ИЗ ЧЕГО ОН ВЫБИРАЛСЯ. С этого момента каждый
+    # существующий вид считается «увиденным», и его отсутствие в наборе - решение человека.
+    if 'kinds' in kw:
+        from .detector import KINDS as _ALL
+        cur['kinds_seen'] = ','.join(sorted(_ALL))
     c = conn()
     c.execute('INSERT OR REPLACE INTO sentinel_settings '
               '(user_id, alerts_on, min_pct, quiet_from, quiet_to, daily_cap, enrich_on, '
-              'cooldown_min, kinds, parts, venues, burst_max, burst_win_min, min_sev) '
-              'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+              'cooldown_min, kinds, parts, venues, burst_max, burst_win_min, min_sev, '
+              'kinds_seen, digest_min) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
               (int(uid), int(cur['alerts_on'] or 0), cur['min_pct'], cur['quiet_from'],
                cur['quiet_to'], cur['daily_cap'], int(cur['enrich_on'] or 0),
                cur['cooldown_min'], cur['kinds'], cur['parts'], cur['venues'],
-               cur['burst_max'], cur['burst_win_min'], cur['min_sev']))
+               cur['burst_max'], cur['burst_win_min'], cur['min_sev'], cur.get('kinds_seen'),
+               cur.get('digest_min')))
     c.commit()
     return cur
 
@@ -750,6 +1095,18 @@ def sent_today(uid, now=None):
     return int((r or [0])[0] or 0)
 
 
+#: ВИДЫ, ПОЯВИВШИЕСЯ ПОСЛЕ ТОГО, КАК У ЛЮДЕЙ УЖЕ БЫЛИ СОХРАНЁННЫЕ НАБОРЫ. Для таких строк базы
+#: (без `kinds_seen`) эти виды считаются НЕ увиденными и включаются по дефолту. Добавил новый вид
+#: в дефолт - допиши его сюда, иначе у старых подписчиков он будет стоять выключенным молча.
+KINDS_ADDED_LATER = ('sm_perp',)
+
+#: ВИДЫ, КОТОРЫЕ БОЛЬШЕ НЕ РОЖДАЮТСЯ. `absorption` стал строкой карточки `oi_surge` (ТЗ 2.4). В
+#: сохранённых наборах он остаётся строкой базы, и читать его как «включено» значило бы держать в
+#: наборе пункт, которого нет ни в меню, ни в детекторе: выключить его человек уже не может (закон
+#: 55 - у переключателя обязан быть обратный путь). Поэтому он вычитается при чтении.
+KINDS_RETIRED = ('absorption',)
+
+
 def kinds_for(uid):
     """Какие ВИДЫ событий человек хочет получать. -> set.
 
@@ -758,10 +1115,23 @@ def kinds_for(uid):
     ПУСТАЯ СТРОКА (он выключил всё руками) - полноправное «ничего», и мы её уважаем.
     """
     from . import config
-    raw = settings(uid).get('kinds')
+    s = settings(uid)
+    raw = s.get('kinds')
     if raw is None:
         return set(config.DEFAULT_KINDS)
-    return {k.strip() for k in str(raw).split(',') if k.strip()}
+    got = {k.strip() for k in str(raw).split(',') if k.strip()} - set(KINDS_RETIRED)
+    # ═══ НОВЫЙ ВИД НЕ РАВЕН ВЫКЛЮЧЕННОМУ (живой дефект 26.09) ═══
+    # Смарт-перп появился в 1b, а набор у владельца был сохранён раньше - и вид стоял «✗», хотя он
+    # его не выключал: он его просто ещё не видел. Отсутствие в сохранённом наборе означало два
+    # разных утверждения («выключил» и «не существовало»), и код читал оба как первое.
+    # ТЕПЕРЬ ОТЛИЧАЕМ ИХ: `kinds_seen` помнит, какие виды существовали в момент последней записи
+    # набора. Вид из дефолта, которого человек не видел, добавляется; увиденный и выключенный
+    # остаётся выключенным. Для строк, записанных до этой колонки, «увиденными» считаются все
+    # виды, кроме появившихся позже (`KINDS_ADDED_LATER`).
+    seen = s.get('kinds_seen')
+    seen = ({k for k in str(seen).split(',') if k} if seen
+            else set(config.DEFAULT_KINDS) - set(KINDS_ADDED_LATER))
+    return got | {k for k in config.DEFAULT_KINDS if k not in seen}
 
 
 def kinds_set(uid, kinds):
@@ -833,38 +1203,172 @@ def venue_toggle(uid, venue):
     return cur
 
 
-#: ПРЕСЕТЫ ЧУВСТВИТЕЛЬНОСТИ. Отвечают на живой вопрос владельца дословно: «какие
-#: рекомендуешь настройки выставить, чтобы побольше алертов словить и потестировать».
-#: Пресет трогает ТОЛЬКО личные настройки (порог, пауза, потолок, набор видов) - общие
-#: пороги детектора остаются как есть, потому что они одни на всех подписчиков.
+#: ═══ ПРЕСЕТЫ (этап 4, ТЗ 4.1). ЧИСЛА - ИЗ ТЗ, И КАЖДОЕ ПЕРЕД ПРИМЕНЕНИЕМ ПОКАЗЫВАЕТСЯ ═══
+#: Пресет трогает ТОЛЬКО личные настройки - общие пороги детектора одни на всех подписчиков.
+#: Поле со значением None пресет НЕ трогает (у «Тихого» ТЗ не называет предохранитель, у «Потока»
+#: - порог движения и паузу: они остаются как были, и экран предпросмотра так и говорит).
+#: Расхождение площадок, спред и фандинг - только в «Потоке» (ТЗ 2.3): это инструменты разбора,
+#: а не повод звонить.
+#: `flow` - «Поток», только владельцу и тестировщикам (`config.flow_uids`): остальным кнопка не
+#: рисуется, а применение словами или старой кнопкой отказывает с причиной.
+_ALL_KINDS = ('move_up,move_down,oi_surge,vol_surge,ignition,sm_perp,crowded,venue_gap,'
+              'spread_shock,funding_extreme')
 PRESETS = {
-    'test': {'min_pct': None, 'cooldown_min': 10, 'daily_cap': 120,
-             'kinds': 'move_up,move_down,oi_surge,vol_surge,ignition,venue_gap,'
-                      'crowded,absorption',
-             'why': 'поток для проверки: все виды кроме спреда и фандинга, пауза 10 минут, '
-                    'потолок 120 в сутки'},
-    'normal': {'min_pct': None, 'cooldown_min': None, 'daily_cap': None,
-               'kinds': 'move_up,move_down,oi_surge,vol_surge,ignition,venue_gap,'
-                        'crowded,absorption',
-               'why': 'рабочий режим: пауза час, потолок 25 в сутки'},
-    'quiet': {'min_pct': 3.0, 'cooldown_min': 180, 'daily_cap': 10,
-              'kinds': 'move_up,move_down,ignition',
-              'why': 'только крупное: движения от 3%, зажигание, пауза три часа'},
+    'newbie': {'title': 'Новичок', 'title_en': 'Beginner',
+               'kinds': 'move_up,move_down,ignition,sm_perp', 'min_pct': 3.0,
+               'burst_max': 2, 'burst_win_min': 10, 'daily_cap': 12, 'cooldown_min': 120,
+               'digest_min': 30, 'parts': 'card,nansen,news'},
+    'trader': {'title': 'Трейдер', 'title_en': 'Trader',
+               'kinds': 'move_up,move_down,ignition,sm_perp,oi_surge,vol_surge,crowded',
+               'min_pct': 2.0, 'burst_max': 3, 'burst_win_min': 10, 'daily_cap': 25,
+               'cooldown_min': 60, 'digest_min': 10, 'parts': None},
+    'quiet': {'title': 'Тихий', 'title_en': 'Quiet',
+              'kinds': 'move_up,move_down,ignition,sm_perp', 'min_pct': 5.0,
+              'burst_max': None, 'burst_win_min': None, 'daily_cap': 6, 'cooldown_min': 180,
+              'digest_min': 60, 'parts': None},
+    'flow': {'title': 'Поток', 'title_en': 'Firehose', 'kinds': _ALL_KINDS,
+             # ПАУЗА 10 МИН - как у прежнего тестового пресета: ТЗ её не называет, а «Поток» -
+             # инструмент проверки, и час паузы по инструменту прятал бы от проверки повторы.
+             'min_pct': None, 'burst_max': 5, 'burst_win_min': 10, 'daily_cap': 120,
+             'cooldown_min': 10, 'digest_min': 10, 'parts': None, 'restricted': True},
 }
+#: Пресет первой подписки.
+DEFAULT_PRESET = 'newbie'
+#: СТАРЫЕ ИМЕНА (кнопки в уже отправленных сообщениях): «рабочий» стал «Трейдером», «поток» -
+#: «Потоком». Кнопка из вчерашнего сообщения обязана вести туда же, куда вела.
+PRESET_ALIASES = {'normal': 'trader', 'test': 'flow'}
+#: Порядок полей в предпросмотре и подписи к ним.
+_PRESET_FIELDS = (('kinds', 'виды', 'kinds'), ('min_pct', 'порог движения, %', 'move threshold, %'),
+                  ('burst_max', 'предохранитель, сообщений', 'fuse, messages'),
+                  ('burst_win_min', 'окно предохранителя, мин', 'fuse window, min'),
+                  ('daily_cap', 'потолок в сутки', 'daily cap'),
+                  ('cooldown_min', 'пауза по инструменту, мин', 'cooldown, min'),
+                  ('digest_min', 'период сводки, мин', 'digest period, min'),
+                  ('parts', 'состав алерта', 'alert contents'))
+
+
+def preset_name(name):
+    """Имя пресета с учётом старых имён. -> ключ | None."""
+    n = PRESET_ALIASES.get(name, name)
+    return n if n in PRESETS else None
+
+
+def preset_allowed(uid, name):
+    """Можно ли этому человеку этот пресет. -> bool. «Поток» - только владельцу и тестировщикам."""
+    from . import config
+    n = preset_name(name)
+    if not n:
+        return False
+    return not PRESETS[n].get('restricted') or int(uid) in config.flow_uids()
+
+
+def _cur_value(uid, field):
+    """Действующее значение поля у человека (с учётом общих дефолтов). -> значение для показа."""
+    from . import config
+    s = settings(uid)
+    if field == 'kinds':
+        return ','.join(sorted(kinds_for(uid)))
+    if field == 'parts':
+        return ','.join(sorted(parts_for(uid)))
+    if field == 'burst_max':
+        return burst_for(uid)[0]
+    if field == 'burst_win_min':
+        return burst_for(uid)[1] // 60
+    if field == 'daily_cap':
+        return cap_for(uid)
+    if field == 'cooldown_min':
+        return int(s.get('cooldown_min') or (config.cooldown_sec() // 60))
+    if field == 'digest_min':
+        return digest_sec_for(uid) // 60
+    return s.get(field)
+
+
+def preset_preview(uid, name):
+    """ЧТО ИЗМЕНИТСЯ, если применить пресет. -> [(поле, подпись_ru, подпись_en, было, станет)].
+
+    Только поля, которые правда поменяются: строка «было 25 -> станет 25» - шум (этап 4, ТЗ 4.1:
+    «кнопка пресета перед применением показывает, что изменится, числами»).
+    """
+    n = preset_name(name)
+    if not n:
+        return []
+    p = PRESETS[n]
+    out = []
+    for f, ru, en in _PRESET_FIELDS:
+        new = p.get(f)
+        if new is None:
+            continue
+        old = _cur_value(uid, f)
+        if f in ('kinds', 'parts'):
+            if set(str(old).split(',')) == set(str(new).split(',')):
+                continue
+        elif old is not None and float(old) == float(new):
+            continue
+        out.append((f, ru, en, old, new))
+    return out
 
 
 def preset_apply(uid, name):
     """Применить пресет. -> (имя, описание) | (None, причина).
 
-    ВОЗВРАЩАЕТ ОПИСАНИЕ СЛОВАМИ, а не «готово»: пресет меняет четыре настройки сразу, и
+    ВОЗВРАЩАЕТ ОПИСАНИЕ СЛОВАМИ, а не «готово»: пресет меняет до восьми настроек сразу, и
     человек обязан увидеть, что именно с ним произошло, не сверяя экран по памяти.
+    ПРАВО НА «ПОТОК» ПРОВЕРЯЕТ `ui` (у двери, где известен человек); здесь - только ключ.
     """
-    p = PRESETS.get(name)
-    if not p:
+    n = preset_name(name)
+    if not n:
         return None, 'такого пресета нет: %s' % name
-    settings_set(uid, min_pct=p['min_pct'], cooldown_min=p['cooldown_min'],
-                 daily_cap=p['daily_cap'], kinds=p['kinds'], alerts_on=1)
-    return name, p['why']
+    p = PRESETS[n]
+    kw = {f: p[f] for f, _r, _e in _PRESET_FIELDS if p.get(f) is not None}
+    # ПОРОГ ДВИЖЕНИЯ «НЕ ТРОГАТЬ» И «СНЯТЬ» - РАЗНОЕ: у «Потока» порога нет вовсе, и это значит
+    # «как общий», поэтому личный сбрасывается явно.
+    if n == 'flow':
+        kw['min_pct'] = None
+    kw['alerts_on'] = 1
+    settings_set(uid, **kw)
+    return n, '%s: %s' % (p['title'], ', '.join('%s %s' % (ru, v) for f, ru, _e in _PRESET_FIELDS
+                                                 for v in (kw.get(f),) if v is not None
+                                                 and f != 'kinds'))
+
+
+def day_totals(uid, now=None):
+    """Сутки человека одной строкой чисел (этап 3.8). -> dict {events, delivered, digested, credits}.
+
+    `events` - событий детектора за 24 ч (все виды, по всем подпискам; это рынок, а не человек);
+    `delivered` - алертов и ответов нити, ушедших ЭТОМУ человеку за 24 ч (`sentinel_sent`);
+    `digested` - строк, уехавших ему в сводках за 24 ч (`sentinel_digest.sent_at`);
+    `credits` - кредитов Nansen дозорного за СЕГОДНЯ (UTC, `sentinel_spend`: день - единица учёта
+    капа). Четыре числа вместо «Движения 949, …»: владелец хотел видеть, сколько ДОШЛО, а не
+    сколько насчитал детектор.
+    """
+    now = int(now if now is not None else time.time())
+    since = now - 86400
+    ev = _one('SELECT COUNT(*) FROM sentinel_events WHERE ts>=?', (since,))
+    dl = _one("SELECT COUNT(*) FROM sentinel_sent WHERE user_id=? AND ts>=? "
+              "AND kind IN ('alert', 'thread')", (int(uid), since))
+    dg = _one('SELECT COUNT(*) FROM sentinel_digest WHERE user_id=? AND sent_at>=?',
+              (int(uid), since))
+    return {'events': int((ev or [0])[0] or 0), 'delivered': int((dl or [0])[0] or 0),
+            'digested': int((dg or [0])[0] or 0), 'credits': spend_today()[0]}
+
+
+def digest_due(now=None):
+    """Кому пора сводка ПО ЕГО ЛИЧНОМУ ПЕРИОДУ (этап 4). -> [uid].
+
+    Самая старая неотправленная строка старше личного периода (`digest_sec_for`). Общий
+    `digest_users(older_than_sec)` остался для прежних вызывающих.
+    """
+    now = int(now if now is not None else time.time())
+    rows = _all('SELECT user_id, MIN(ts) FROM sentinel_digest WHERE sent_at IS NULL '
+                'GROUP BY user_id', ())
+    return [int(r[0]) for r in rows if int(r[1] or 0) <= now - digest_sec_for(int(r[0]))]
+
+
+def digest_sec_for(uid):
+    """Личный период сводки, секунды (этап 4). Пусто - общий `config.digest_sec()`."""
+    from . import config
+    m = settings(uid).get('digest_min')
+    return int(m) * 60 if m else config.digest_sec()
 
 
 def cap_for(uid):
@@ -985,19 +1489,153 @@ def delivery_drop_user(uid, why='выключено человеком'):
     return max(0, n)
 
 
-def sent_in_window(uid, sec, now=None):
-    """Сколько алертов ДОШЛО до человека за последние `sec` секунд. -> int.
+#: ВИДЫ СООБЩЕНИЙ В ОБЩЕМ ЖУРНАЛЕ. Закрытый список: незнакомое имя означает, что кто-то завёл
+#: новый канал разговора с человеком и не сказал об этом предохранителю.
+SENT_KINDS = ('alert', 'thread', 'brief', 'digest')
 
-    СЧИТАЕМ ПО `delivered_at`, А НЕ ПО ПОПЫТКАМ: предохранитель защищает телефон человека, а
-    отправка, которую Telegram не принял, его не тревожила. Тот же закон, что у суточного
-    потолка, - и он здесь не для симметрии: иначе серия сетевых сбоев «съедала» бы окно, и
-    человек не получил бы НИЧЕГО.
+
+def sent_log(uid, kind, event_key=None, msg_id=None, now=None):
+    """Записать ФАКТ отправленного человеку сообщения. -> None.
+
+    ЗОВЁТ ТОЛЬКО ТОТ, КТО ПОЛУЧИЛ ОТВЕТ ТЕЛЕГРАМА - тот же закон, что у `delivery_ok`: запись до
+    подтверждения превращает сетевой сбой в «предохранитель сработал», то есть в тишину по нашей
+    же вине.
+    РЕДАКТИРОВАНИЕ СЮДА НЕ ПИШЕТСЯ НАМЕРЕННО (см. `outbox.deliver_enrichment`): правка уже
+    доставленного сообщения не будит телефон, и считать её сообщением значило бы наказывать
+    человека за то, чего он не слышал.
+    """
+    if kind not in SENT_KINDS:
+        # НЕ МОЛЧА: незнакомый вид это не «ничего», это забытый канал.
+        print('[sentinel] sent_log: неизвестный вид сообщения %r - предохранитель его не '
+              'считает, добавь в SENT_KINDS' % kind)
+    c = conn()
+    c.execute('INSERT INTO sentinel_sent (user_id, kind, event_key, message_id, ts) '
+              'VALUES (?,?,?,?,?)',
+              (int(uid), str(kind), event_key, (int(msg_id) if msg_id else None),
+               int(now if now is not None else time.time())))
+    c.commit()
+
+
+def sent_in_window(uid, sec, now=None):
+    """Сколько ВСЕГО сообщений дошло до человека за последние `sec` секунд. -> int.
+
+    ═══ СЧИТАЕМ ВСЁ, А НЕ ТОЛЬКО АЛЕРТЫ (ТЗ 2.6) ═══
+    ЗАМЕР ПРОДА 26.09: владельцу ушло 586 сообщений за сутки - 280 алертов, 279 обогащений и 27
+    сводок; в час пик 101 алерт и 100 обогащений. Предохранитель считал только алерты, то есть
+    видел меньше половины того, что приходило на телефон: «не больше 3 за 10 минут» на практике
+    означало семь. Ограничитель, который не видит половину потока, не ограничитель.
+    СЧИТАЕМ ПО ФАКТУ ДОСТАВКИ, А НЕ ПО ПОПЫТКАМ: отправка, которую Telegram не принял, человека
+    не тревожила. Иначе серия сетевых сбоев «съедала» бы окно, и он не получил бы НИЧЕГО.
+    СТАРЫЙ ЖУРНАЛ ДОСТАВОК ТОЖЕ УЧИТЫВАЕТСЯ - для строк, записанных до появления этой таблицы:
+    иначе в момент деплоя предохранитель на час забыл бы всё, что уже отправлено.
     """
     now = int(now if now is not None else time.time())
-    r = _one('SELECT COUNT(*) FROM sentinel_deliveries '
-             'WHERE user_id=? AND delivered_at IS NOT NULL AND delivered_at>=?',
-             (int(uid), now - int(sec)))
-    return int((r or [0])[0] or 0)
+    since = now - int(sec)
+    r = _one('SELECT COUNT(*) FROM sentinel_sent WHERE user_id=? AND ts>=?', (int(uid), since))
+    n = int((r or [0])[0] or 0)
+    if n:
+        return n
+    r2 = _one('SELECT COUNT(*) FROM sentinel_deliveries '
+              'WHERE user_id=? AND delivered_at IS NOT NULL AND delivered_at>=?',
+              (int(uid), since))
+    return int((r2 or [0])[0] or 0)
+
+
+def sent_prune(days=3):
+    """Убрать старые строки общего журнала. Он нужен окну предохранителя, а не истории."""
+    c = conn()
+    c.execute('DELETE FROM sentinel_sent WHERE ts < ?', (_now() - int(days) * 86400,))
+    c.commit()
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# НИТИ: ОДНО ДВИЖЕНИЕ = ОДНА ПЕРЕПИСКА
+# ══════════════════════════════════════════════════════════════════════════════════════════
+#: СКОЛЬКО ЖИВЁТ НИТЬ. Шесть часов - решение владельца в ТЗ. Дольше - и утреннее движение
+#: подклеится к вечернему как «усиление»; короче - и обычная волна по одному инструменту
+#: разорвётся на две переписки.
+THREAD_TTL_S = 6 * 3600
+
+
+def thread_get(venue, ticker, uid, now=None):
+    """Живая нить по инструменту для этого человека. -> dict | None."""
+    now = int(now if now is not None else time.time())
+    r = _one('SELECT first_event_key, first_msg_id, max_step, peak_pct, dir, opened_at, last_at, '
+             'replies, kinds FROM sentinel_threads WHERE venue=? AND ticker=? AND user_id=? '
+             'AND closed_at IS NULL AND opened_at>=?',
+             (str(venue or 'variational'), str(ticker or '').upper(), int(uid),
+              now - THREAD_TTL_S))
+    if not r:
+        return None
+    try:
+        _kinds = json.loads(r[8]) if r[8] else {}
+    except (TypeError, ValueError):
+        _kinds = {}
+    return {'first_event_key': r[0], 'first_msg_id': (int(r[1]) if r[1] else None),
+            'max_step': int(r[2] or 0), 'peak_pct': (float(r[3]) if r[3] is not None else None),
+            'dir': int(r[4] or 0), 'opened_at': int(r[5] or 0), 'last_at': int(r[6] or 0),
+            'replies': int(r[7] or 0), 'kinds': _kinds if isinstance(_kinds, dict) else {}}
+
+
+def thread_open(venue, ticker, uid, event_key, msg_id, step, pct_move, now=None, family=None):
+    """Открыть нить первой карточкой. -> None. Перезаписывает истёкшую нить тем же ключом.
+
+    `family` - семейство вида первой карточки ('move', 'vol_surge'...): с него нить помнит, что
+    уже сказано. У движения ступень и пик живут и в прежних колонках (`max_step`, `peak_pct`).
+    """
+    now = int(now if now is not None else time.time())
+    fam = family or 'move'
+    c = conn()
+    c.execute('INSERT OR REPLACE INTO sentinel_threads '
+              '(venue, ticker, user_id, first_event_key, first_msg_id, max_step, peak_pct, dir, '
+              ' replies, opened_at, last_at, closed_at, kinds) '
+              'VALUES (?,?,?,?,?,?,?,?,0,?,?,NULL,?)',
+              (str(venue or 'variational'), str(ticker or '').upper(), int(uid), event_key,
+               (int(msg_id) if msg_id else None), (int(step or 1) if fam == 'move' else 0),
+               (float(pct_move) if (pct_move is not None and fam == 'move') else None),
+               (1 if (pct_move or 0) >= 0 else -1), now, now,
+               json.dumps({fam: [int(step or 1), 0]})))
+    c.commit()
+
+
+def thread_bump(venue, ticker, uid, step, pct_move, now=None, family=None):
+    """Обновить нить после отправленного ответа. -> None.
+
+    ПИК ОБНОВЛЯЕТСЯ ТОЛЬКО ВВЕРХ ПО АБСОЛЮТНОЙ ВЕЛИЧИНЕ: откат не отменяет того, что движение
+    доходило до +42%, и «откат от пика» считается именно от него.
+    """
+    now = int(now if now is not None else time.time())
+    fam = family or 'move'
+    t = thread_get(venue, ticker, uid, now=now) or {}
+    kinds = dict(t.get('kinds') or {})
+    _st, _rp = (kinds.get(fam) or [0, 0])[:2]
+    kinds[fam] = [max(int(step or 1), int(_st or 0)), int(_rp or 0) + 1]
+    peak = t.get('peak_pct')
+    new_peak = peak
+    mstep = int(t.get('max_step') or 0)
+    if fam == 'move':
+        if pct_move is not None and (peak is None or abs(pct_move) > abs(peak)):
+            new_peak = float(pct_move)
+        mstep = max(int(step or 1), mstep)
+    c = conn()
+    c.execute('UPDATE sentinel_threads SET max_step=?, peak_pct=?, last_at=?, replies=replies+1, '
+              'kinds=? WHERE venue=? AND ticker=? AND user_id=? AND closed_at IS NULL',
+              (mstep, (float(new_peak) if new_peak is not None else None), now,
+               json.dumps(kinds),
+               str(venue or 'variational'), str(ticker or '').upper(), int(uid)))
+    c.commit()
+
+
+def delivery_msg_id(event_key, uid):
+    """message_id доставленной карточки. -> int | None.
+
+    НУЖЕН ДВУМ ПУТЯМ: правке карточки при обогащении и ответу по нити. Хранился он и раньше, но
+    наружу не отдавался - и обогащение уезжало отдельным сообщением просто потому, что не знало,
+    что править.
+    """
+    r = _one('SELECT msg_id FROM sentinel_deliveries WHERE event_key=? AND user_id=? '
+             'AND delivered_at IS NOT NULL', (event_key, int(uid)))
+    return int(r[0]) if (r and r[0]) else None
 
 
 def delivery_ok(event_key, uid, msg_id=None):
@@ -1168,13 +1806,36 @@ def enrich_claim(event_key):
         return False
 
 
-def enrich_done(event_key, body, credits=0, err=None):
+def enrich_done(event_key, body, credits=0, err=None, venue=None, ticker=None):
     c = conn()
     c.execute('INSERT OR REPLACE INTO sentinel_enrich '
-              '(event_key, state, body, credits, err, ts) VALUES (?,?,?,?,?,?)',
+              '(event_key, state, body, credits, err, ts, venue, ticker) '
+              'VALUES (?,?,?,?,?,?,?,?)',
               (event_key, ('done' if body else 'fail'), body or '', int(credits or 0),
-               (str(err)[:200] if err else None), _now()))
+               (str(err)[:200] if err else None), _now(),
+               (str(venue) if venue else None), (str(ticker).upper() if ticker else None)))
     c.commit()
+
+
+def enrich_recent(venue, ticker, within_s=3600, now=None):
+    """Когда этот инструмент обогащали в последний раз. -> (минут назад, event_key) | (None, None).
+
+    ═══ БЮДЖЕТ ОБОГАЩЕНИЯ: ОДНО НА ИНСТРУМЕНТ В ЧАС (ТЗ 1.6) ═══
+    Замер прода 26.09: за сутки владельцу ушло 279 обогащений - по одному на КАЖДОЕ событие. При
+    этом события идут сериями по одному инструменту (движение развивается), и ончейн-контекст у
+    них один и тот же: смарт-мани за три часа не меняются между двумя алертами по SAGA с
+    разницей в пять минут. То есть платили кредитами за повтор и слали человеку второе такое же
+    сообщение.
+    СЧИТАЕМ ТОЛЬКО УСПЕШНЫЕ (`state='done'`): отказ провайдера не должен закрывать инструменту
+    час тишины - иначе одна ошибка сети лишила бы человека контекста на весь час.
+    """
+    now = int(now if now is not None else time.time())
+    r = _one('SELECT ts, event_key FROM sentinel_enrich WHERE venue=? AND ticker=? '
+             "AND state='done' AND ts>=? ORDER BY ts DESC LIMIT 1",
+             (str(venue or ''), str(ticker or '').upper(), now - int(within_s)))
+    if not r or not r[0]:
+        return None, None
+    return max(0, (now - int(r[0])) // 60), r[1]
 
 
 def enrich_get(event_key):
@@ -1232,6 +1893,12 @@ def outcomes(kind=None, horizon_min=60, since_ts=None):
     if since_ts:
         sql += ' AND e.ts>=?'
         args.append(int(since_ts))
+    # ОБРАТНАЯ НОГА ИНТЕРЕСА В ОТЧЁТ ПОПАДАНИЙ НЕ ВХОДИТ (ТЗ 2.4). Она никому не звонила, и её
+    # исход не мерит доверие к дозору: отчёт отвечает на вопрос «что было после алерта, который
+    # ты получил». Отбор по тексту payload, потому что поле живёт там; форма записи одна -
+    # `json.dumps` в `event_new` с разделителями по умолчанию.
+    sql += " AND e.payload NOT LIKE ?"
+    args.append('%"round_trip": 1%')
     rows = _all(sql, tuple(args))
     return [(r[0], r[1], r[2], r[3]) for r in rows]
 
@@ -1251,7 +1918,37 @@ def outcome_due(horizon_min, now=None):
 # АРЕНДА ОПРОСА И РАСХОД
 # ══════════════════════════════════════════════════════════════════════════════════════════
 def _me():
-    return '%s:%s' % (socket.gethostname()[:30], os.getpid())
+    """Кто мы для аренды. -> 'роль@хост:pid'.
+
+    РОЛЬ ВНУТРИ ИМЕНИ ВЛАДЕЛЬЦА НАРОЧНО. Аренда - единственное место, где два процесса
+    дозорного встречаются, и вопрос «кто её держит» без роли отвечался числом pid, по которому
+    нельзя решить, законный ли это владелец. С ролью в имени `lease` умеет то, что требует
+    порядок: настоящий опрашивающий забирает аренду у подхватившего её доставщика.
+    """
+    from . import config
+    return '%s@%s:%s' % (config.role(), socket.gethostname()[:30], os.getpid())
+
+
+def lease_role(owner):
+    """Роль из имени владельца аренды. -> str. Старая форма (без '@') считается 'deliver'.
+
+    СТАРУЮ ФОРМУ ЧИТАЕМ ЯВНО: в момент деплоя в базе лежит аренда, взятая прошлой версией кода
+    («хост:pid», без роли). Считать её опрашивающей нельзя - именно из-за неё новый юнит ждал
+    бы истечения TTL, то есть деплой оплачивался бы минутой тишины на каждом рестарте.
+    """
+    s = str(owner or '')
+    return s.split('@', 1)[0].strip().lower() if '@' in s else 'deliver'
+
+
+def lease_ttl():
+    """Срок аренды опроса, секунды. -> int. ОДНА ДВЕРЬ.
+
+    Считалось в двух местах (`lease` и решение бота о подхвате), и это ровно тот случай, когда
+    копия формулы расходится молча: подними темп опроса - и одна половина кода ждёт 90 секунд, а
+    другая 270, после чего «кто опрашивает» становится вопросом удачи.
+    """
+    from . import config
+    return max(30, config.poll_sec() * 3)
 
 
 def lease(name='variational', ttl=None, owner=None, now=None):
@@ -1260,15 +1957,30 @@ def lease(name='variational', ttl=None, owner=None, now=None):
     ПОЧЕМУ АРЕНДА, А НЕ ФЛАГ «Я ГЛАВНЫЙ». Владелец процесса умирает без предупреждения
     (kill, деплой, OOM), и флаг остался бы поднятым навсегда — опрос замолчал бы совсем. У
     аренды есть срок: умерший владелец теряет её сам, живой продлевает каждым тиком.
+
+    ═══ ОПРАШИВАЮЩИЙ ВЫТЕСНЯЕТ ДОСТАВЩИКА СРАЗУ (требование владельца 26.09) ═══
+    Доставщик берёт опрос только как подмену - когда опрашивающего не стало. Значит его аренда
+    это временная мера, и когда настоящий опрашивающий вернулся (рестарт юнита, деплой), ждать
+    истечения её TTL нет причин: это была бы минута дырки в кольце на каждом рестарте, ровно в
+    том месте, где нам нужна непрерывная сетка для сигмы.
+    ОБРАТНОЕ НЕВЕРНО И ЭТО ГЛАВНОЕ: доставщик НЕ вытесняет опрашивающего никогда. Разреши это -
+    и два процесса начали бы отбирать аренду друг у друга на каждом тике, то есть страховка от
+    двойного опроса превратилась бы в его источник.
     """
     from . import config
     now = int(now if now is not None else time.time())
-    ttl = int(ttl or max(30, config.poll_sec() * 3))
+    ttl = int(ttl or lease_ttl())
     who = owner or _me()
     c = conn()
     r = _one('SELECT owner, until FROM sentinel_lease WHERE name=?', (name,))
     if r and r[0] != who and int(r[1] or 0) > now:
-        return False
+        _mine, _theirs = lease_role(who), lease_role(r[0])
+        if not (_mine == config.ROLE_POLLER and _theirs != config.ROLE_POLLER):
+            return False
+        # ВЫТЕСНЕНИЕ ГРОМКОЕ: молча забрать чужую аренду значит спрятать от себя случай, когда
+        # ролей стало две по ошибке конфигурации, и опрос начал бы прыгать между процессами.
+        print('[sentinel] аренда %s: опрашивающий забирает её у %s (осталось %dс)'
+              % (name, r[0], max(0, int(r[1] or 0) - now)))
     c.execute('INSERT INTO sentinel_lease (name, owner, until) VALUES (?,?,?) '
               'ON CONFLICT (name) DO UPDATE SET owner=excluded.owner, until=excluded.until',
               (name, who, now + ttl))
@@ -1419,6 +2131,54 @@ def cursor_set(name, value):
               'ON CONFLICT (name) DO UPDATE SET value=excluded.value, '
               'updated_at=excluded.updated_at', (name, str(value), _now()))
     c.commit()
+
+
+#: Сколько живёт запись кэша контрактов, секунды (ТЗ 3.2: 24 ч).
+CONTRACT_TTL_S = 86400
+
+
+def contract_put(venue, ticker, chain, address, now=None):
+    """Запомнить контракт тикера на сутки. -> None. Пустой адрес не пишется."""
+    if not address or not ticker:
+        return
+    c = conn()
+    c.execute('INSERT INTO sentinel_contracts (venue, ticker, chain, address, resolved_at) '
+              'VALUES (?,?,?,?,?) ON CONFLICT (venue, ticker) DO UPDATE SET '
+              'chain=excluded.chain, address=excluded.address, resolved_at=excluded.resolved_at',
+              (str(venue or 'variational'), str(ticker).upper(), chain, str(address),
+               int(now if now is not None else _now())))
+    c.commit()
+
+
+def contract_get(venue, ticker, now=None):
+    """Контракт тикера из кэша, если ему меньше суток. -> (chain, address) | None."""
+    now = int(now if now is not None else _now())
+    r = _one('SELECT chain, address, resolved_at FROM sentinel_contracts WHERE venue=? AND '
+             'ticker=?', (str(venue or 'variational'), str(ticker or '').upper()))
+    if not r or not r[1] or now - int(r[2] or 0) > CONTRACT_TTL_S:
+        return None
+    return r[0], r[1]
+
+
+def cursor_cas(name, expect, new):
+    """Сравнить-и-записать курсор. -> True, если записали МЫ (значение было `expect`).
+
+    Для «одного сообщения на инцидент» (этап 5): два процесса видят потерю опроса одновременно, и
+    писать владельцу обязан ровно один. Пустая строка и отсутствие строки - одно и то же.
+    """
+    c = conn()
+    c.execute('INSERT INTO sentinel_cursor (name, value, updated_at) VALUES (?,?,?) '
+              'ON CONFLICT (name) DO NOTHING', (name, '', _now()))
+    cur = c.execute('UPDATE sentinel_cursor SET value=?, updated_at=? WHERE name=? AND '
+                    'COALESCE(value, \'\')=?', (str(new), _now(), name, str(expect or '')))
+    c.commit()
+    try:
+        n = int(cur.rowcount)
+        if n >= 0:
+            return n > 0
+    except Exception:                                      # noqa: BLE001
+        pass
+    return (cursor_get(name) or '') == str(new)
 
 
 def seen_tx(hashes, ts=None):

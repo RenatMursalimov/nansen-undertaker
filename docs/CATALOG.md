@@ -57,7 +57,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [💠 The DeFi part of a wallet: assets MINUS debts](#defi) | `defi 0x…` | 🧠 Nansen → 🔎 Wallet and token → 💠 DeFi part | 💬 | price not named in the official list · 1 request |
 | [🧾 Who is in a Polymarket market, and their PnL](#pmpos) | `market positions 654412` | 🎲 Trending markets → the market → 🧾 Who is in it now<br>🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL | 💬 | price not named in the official list · 1 request |
 | [🧊 Jupiter DCA by token (Solana)](#jupdca) | `jup dca <mint>` | 🧠 Nansen → 🧠 Smart money → 🧊 Jupiter DCA by token | 💬 | price not named in the official list · 1 request |
-| [⚖️ Who is positioned on a token: whales, smart traders, public figures](#posintel) | `positioning 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2`<br>`who is positioned <address>` | 🔍 Nansen on a token → the «⚖️ Who is positioned» button<br>🧠 Nansen → ⚔️ Other people’s leverage → ⚖️ Who is positioned | 💬 👥🔘 | price not named in the official list · 1 request |
+| [⚖️ Who is positioned on a token: whales, smart traders, public figures](#posintel) | `positioning ETH`<br>`who is positioned <ticker>` | 🔍 Nansen on a token → the «⚖️ Who is positioned» button<br>🧠 Nansen → ⚔️ Other people’s leverage → ⚖️ Who is positioned | 💬 👥🔘 | price not named in the official list · 1 request |
 | [🎯 Where the money on Polymarket is sharp (market comparison)](#sharpmarkets) | `sharp money` | 🧠 Nansen → 🎲 Polymarket → 🎯 Where money is sharp | 💬 | price not named in the official list · 1 + N + N×H requests (13 by default) |
 | [⚔️ Risk board: whose leverage is closest to the edge](#perprisk) | `risk board` | 🧠 Nansen → ⚔️ Leverage → ⚔️ Perp risk board<br>liquidation map → ⚔️ Compare all four | 💬 👥🔘 | price not named in the official list · one request per token (4) |
 | [🧮 My contest tally](#tally) | `nansen stats` | 🧠 Nansen → 🌐 Chains and tally → 🧮 My contest tally | 💬 | free, reads its own log |
@@ -770,7 +770,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## ⚖️ Who is positioned on a token: whales, smart traders, public figures
 
-**Say to the bot:** `positioning 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` · `who is positioned <address>`
+**Say to the bot:** `positioning ETH` · `who is positioned <ticker>`
 **By button:** 🔍 Nansen on a token → the «⚖️ Who is positioned» button · 🧠 Nansen → ⚔️ Other people’s leverage → ⚖️ Who is positioned
 **Where:** in DM · in a group — by the button on a card the bot itself posted (`hs:posi`)
 

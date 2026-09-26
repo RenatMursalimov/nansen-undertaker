@@ -30,6 +30,10 @@ os.environ.setdefault('DB_BACKEND', 'sqlite')
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
 sys.path.insert(0, os.path.join(BASE, 'onchain'))
+sys.path.insert(0, os.path.join(BASE, 'tests'))
+# ПРОВЕРКИ «ПРИЧИНА ЗАПИСАНА РЯДОМ С КОДОМ» ИДУТ ПО ПРОЗЕ ЯВНО (gt01): иголка живёт в
+# комментарии или докстринге намеренно, и сторож обязан говорить, какую половину он читает.
+import guard_text as _gt  # noqa: E402
 
 import db                                        # noqa: E402
 _TMP = tempfile.mkdtemp(prefix='sentinel_test_')
@@ -179,6 +183,19 @@ _OK, _FAIL, _SKIP = 0, 0, 0
 _FAILED = []
 
 
+def _sub(uid, ticker):
+    """Подписка человека, у которого УЖЕ ЕСТЬ настройки (строка в базе).
+
+    С ЭТАПА 4 первая подписка человека без настроек ставит ему пресет «Новичок» (предохранитель
+    2/10, потолок 12, сводка раз в 30 мин). Тесты ниже написаны про общие дефолты - то есть про
+    человека, который настройки уже трогал; строка настроек создаётся явно, и это читается как
+    утверждение, а не как случайность. Сам дефолтный пресет проверяет `t_presets_stage4`.
+    """
+    if not store.settings_exists(uid):
+        store.settings_set(uid)
+    return store.sub_add(uid, ticker)
+
+
 def check(name, cond, note=''):
     global _OK, _FAIL
     if cond:
@@ -234,15 +251,31 @@ def _db_diag():
 
 
 class FakeBot:
-    def __init__(self, fail=False):
+    """Телеграм-заглушка. Помнит И отправленное, И ПРАВКИ.
+
+    ПРАВКИ ПОЯВИЛИСЬ ВМЕСТЕ С ПУНКТОМ 2.6: обогащение теперь дополняет уже отправленную карточку
+    вместо второго сообщения. Без `edit_message_text` здесь заглушка отвечала бы отказом, тест
+    проходил бы по АВАРИЙНОМУ пути (ответ сообщением) и молча проверял бы не то, что работает.
+    `edit_fail=True` - наоборот, проверка аварийного пути.
+    """
+
+    def __init__(self, fail=False, edit_fail=False):
         self.sent = []
+        self.edits = []
         self.fail = fail
+        self.edit_fail = edit_fail
 
     async def send_message(self, chat_id=None, text=None, **kw):
         if self.fail:
             raise RuntimeError('tg down')
         self.sent.append((chat_id, text))
         return type('M', (), {'message_id': 100 + len(self.sent)})()
+
+    async def edit_message_text(self, chat_id=None, message_id=None, text=None, **kw):
+        if self.edit_fail:
+            raise RuntimeError('message to edit not found')
+        self.edits.append((chat_id, message_id, text))
+        return type('M', (), {'message_id': message_id})()
 
 
 def attach(bot):
@@ -275,10 +308,50 @@ def one(**kw):
     return rows[0]
 
 
-def series(n, start_ts, mark=100.0, step=900, funding=0.05, spread=1.0):
-    """Холодное кольцо: n точек по 15 минут. Форма кортежа — контракт `store.history`."""
-    return [(start_ts + i * step, mark, 8e8, 1000.0, 900.0, funding, spread, start_ts + i * step)
+#: РАЗБРОС ЦЕНЫ В ТЕСТОВОМ КОЛЬЦЕ. ±0.2% на точку, то есть сигма 15-минутных доходностей около
+#: 0.4%. Число выбрано так, чтобы порог в сигмах (`z_min`=2.5) требовал примерно 1% хода: это
+#: чуть ниже порога движения (1.2%), и оба порога остаются проверяемыми по отдельности.
+_WOBBLE = 0.002
+
+
+def series(n, start_ts, mark=100.0, step=900, funding=0.05, spread=1.0, oi_usd=1.9e6,
+           wobble=_WOBBLE):
+    """Холодное кольцо: n точек по 15 минут. Форма кортежа — контракт `store.history`.
+
+    ДЕВЯТОЕ ПОЛЕ - `oi_usd`, ОТКРЫТЫЙ ИНТЕРЕС В ДОЛЛАРАХ, и стоит оно ПОСЛЕДНИМ. Детектор читает
+    фандинг и спред по индексам 5 и 6; вставь новую величину в середину - и числа остались бы на
+    местах, а смысл поехал бы на одну позицию. Здесь это и проверяется тем, что тесты фандинга и
+    спреда продолжают работать без правок.
+
+    ═══ ЦЕНА В КОЛЬЦЕ КОЛЕБЛЕТСЯ, И ЭТО НЕ УКРАШЕНИЕ ТЕСТА (ТЗ 2.1) ═══
+    Прежний хелпер держал цену ИДЕАЛЬНО РОВНОЙ, то есть сигма ряда равнялась нулю. До 26.09 такой
+    ряд всё равно давал событие - со штрафом к уверенности; теперь «нет измеренной сигмы» значит
+    «нет события», и ровный ряд честно перестал их порождать. Значит тест, который проверяет
+    ДВИЖЕНИЕ, обязан подавать инструмент с ИЗМЕРЕННЫМ разбросом - иначе он проверяет не движение,
+    а отсутствие сигмы. Кому нужен именно ровный ряд (проверка нулевой сигмы), передаёт
+    `wobble=0` явно, и это читается как утверждение, а не как случайность.
+    """
+    # ПЕРИОД КОЛЕБАНИЯ НЕ КРАТЕН ЧЕТЫРЁМ, И ЭТО НЕ ПРИДИРКА. Первая редакция чередовала знак
+    # через точку (период 2), а часовая сигма собирается по КАЖДОЙ ЧЕТВЁРТОЙ точке (15 минут в
+    # часовую корзину) - и брала из каждой корзины одно и то же значение, то есть ряд часовых
+    # доходностей оказывался КОНСТАНТОЙ с нулевой сигмой. Тест «часовое движение публикуется»
+    # краснел, хотя код был прав: кольцо действительно не имело измеренного часового разброса.
+    # Период 7 даёт ненулевую сигму на обоих окнах сразу.
+    return [(start_ts + i * step,
+             mark * (1.0 + wobble * (((i * 3) % 7) - 3) / 3.0),
+             8e8, 1000.0, 900.0, funding, spread, start_ts + i * step, oi_usd)
             for i in range(n)]
+
+
+def hot1(ts, mark=100.0, vol=8e8, oi_usd=1.9e6):
+    """Одна точка ГОРЯЧЕГО кольца в той же форме, что пишет `engine._row`.
+
+    Заведён ради веток открытого интереса: они сравнивают `oi_usd` текущего снимка с точкой часовой
+    давности, и точка без девятого поля означает «интерес час назад не измерен» - то есть событие
+    не создаётся вовсе. Это правильное поведение (замера нет - нет и события), но тест обязан
+    подавать измеренную точку, когда проверяет сам скачок.
+    """
+    return (ts, mark, vol, 1000.0, 900.0, 0.05, 1.0, ts, oi_usd)
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════════
@@ -309,8 +382,13 @@ def t_parse_is_real_and_names_what_is_missing():
           feed.asset_class(one(ticker='MRNA', name='Moderna, Inc.')) == 'equity'
           and feed.asset_class(one(ticker='A', name='Vaulta')) == 'unknown',
           'тикер `A` в живом списке - токен Vaulta, а не Agilent')
-    check('PARSE: «не акция» НЕ объявляется криптой',
-          feed.asset_class(one(ticker='XAU', name='Gold')) == 'unknown')
+    # С ТЗ 2.5 «Gold» с тикером XAU - металл по РЕЕСТРУ ИМЁН площадки; то же имя с чужим тикером
+    # по-прежнему не угадывается (у мема «Gold» с тем же правом может быть это имя).
+    check('PARSE: «не акция» НЕ объявляется криптой; металл - только по реестру пары',
+          feed.asset_class(one(ticker='XAU', name='Gold')) == 'metal'
+          and feed.asset_class(one(ticker='GOLDX', name='Gold')) == 'unknown',
+          (feed.asset_class(one(ticker='XAU', name='Gold')),
+           feed.asset_class(one(ticker='GOLDX', name='Gold'))))
     check('PARSE: ёмкость на объём считается от середины',
           abs(one().depth_bps('size_100k') - 20.0) < 0.5, one().depth_bps('size_100k'))
 
@@ -326,7 +404,7 @@ def _raises_shape(p):
 def t_detector_needs_both_percent_and_sigma():
     """ДЕТЕКТОР: процент без сигмы — спам, сигма без процента — шум."""
     now = 1800000000
-    ring = series(60, now - 60 * 900)                       # ровный ряд: сигма нулевая
+    ring = series(60, now - 60 * 900)                       # разброс измерен: сигма около 0.4%
     hot = [(now - 900, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 900)]
     evs = detector.detect(one(mark='104.0', quote_iso=_iso(now)), hot, now=now, ring=ring)
     kinds = {e['kind'] for e in evs}
@@ -336,26 +414,59 @@ def t_detector_needs_both_percent_and_sigma():
     # инструменту, у которого ставка не менялась вовсе.
     check('DETECT: постоянная ставка не объявляется хвостом', 'funding_extreme' not in kinds,
           kinds)
-    check('DETECT: сигма, измеренная нулём, не глушит движение целиком', 'move_up' in kinds,
-          'на идеально ровном ряде порог в сигмах невычислим - событие обязано остаться')
-    check('DETECT: и говорит об этом словами',
-          any('сигма измерена нулём' in p
-              for e in evs if e['kind'] == 'move_up' for p in e['payload']['penalties']),
-          [e['payload']['penalties'] for e in evs if e['kind'] == 'move_up'])
+    # ═══ ПЕРЕПИСАНО 26.09 ПО ПУНКТУ 2.1 ТЗ: НЕТ ИЗМЕРЕННОЙ СИГМЫ - НЕТ СОБЫТИЯ ═══
+    # ЧТО ПРОВЕРЯЛОСЬ РАНЬШЕ И ПОЧЕМУ ЭТО БЫЛО НЕВЕРНО. Три проверки выше требовали, чтобы на
+    # ровном ряде (сигма = 0) и на короткой выборке событие ОСТАВАЛОСЬ со штрафом к уверенности.
+    # Замер прода показал цену такого решения: из 167 движений, доставленных владельцу за сутки,
+    # у 147 сигма считалась по МЕНЕЕ ЧЕМ 20 точкам, у большинства - по ОДНОЙ, и они звонили;
+    # движения по 1.3-1.8% приходили как «необычные». Штраф -25 давал итог 75 при пороге звонка
+    # 70, то есть порог проходился ЗА СЧЁТ подмены отсутствующего замера замером похуже.
+    # Это закон 41, и теперь он соблюдается: событие не создаётся вовсе.
+    flat = series(60, now - 60 * 900, wobble=0)              # ровный ряд: сигма ровно нулевая
+    ev_flat = [e for e in detector.detect(one(mark='104.0', quote_iso=_iso(now)), hot, now=now,
+                                          ring=flat) if e['kind'].startswith('move')]
+    check('DETECT: сигма, измеренная нулём, события НЕ даёт (было: давала со штрафом)',
+          not ev_flat,
+          'нулевая сигма означает, что провайдер повторял одно число, а не что рынок стоял')
     evs2 = detector.detect(one(mark='100.5', quote_iso=_iso(now)), hot, now=now, ring=ring)
     check('DETECT: 0.5% - не событие', not [e for e in evs2 if e['kind'].startswith('move')])
-    # ВЫБОРКА МАЛА -> СОБЫТИЕ ЕСТЬ, НО УВЕРЕННОСТЬ НИЖЕ И ПРИЧИНА НАЗВАНА
     short = series(3, now - 3 * 900)
     ev3 = [e for e in detector.detect(one(mark='104.0', quote_iso=_iso(now)), hot, now=now,
                                       ring=short) if e['kind'] == 'move_up']
-    check('DETECT: на короткой выборке событие остаётся', ev3)
-    check('DETECT: и честно называет, что сигмы ещё нет',
-          ev3 and any('сигма по' in p for p in ev3[0]['payload']['penalties']),
-          ev3[0]['payload']['penalties'] if ev3 else None)
-    check('DETECT: уверенность за это наказана', ev3 and ev3[0]['severity'] < 100,
-          ev3[0]['severity'] if ev3 else None)
+    check('DETECT: на выборке из 3 точек события НЕТ (было: было, со штрафом -25)', not ev3,
+          'сигма по трём точкам - случайное число, и «z=40» на ней означает лишь недавний старт')
+    # А ВОТ НА СРЕДНЕЙ ВЫБОРКЕ СОБЫТИЕ ЕСТЬ, И ОНО ПЛАТИТ ЗА НЕЁ ЧЕСТНЫМ ШТРАФОМ -10.
+    mid = series(25, now - 25 * 900)
+    ev_mid = [e for e in detector.detect(one(mark='104.0', quote_iso=_iso(now)), hot, now=now,
+                                         ring=mid) if e['kind'] == 'move_up']
+    check('DETECT: 20-49 точек - событие есть', ev_mid, mid[:1])
+    check('DETECT: и выборка названа словами, а уверенность ниже сотни',
+          ev_mid and any('выборка небольшая' in p for p in ev_mid[0]['payload']['penalties'])
+          and ev_mid[0]['severity'] < 100,
+          (ev_mid[0]['payload']['penalties'], ev_mid[0]['severity']) if ev_mid else None)
+    # ЧАСОВОЕ ОКНО ТЕПЕРЬ ПРОВЕРЯЕТСЯ СВОЕЙ СИГМОЙ, А НЕ ПЯТНАДЦАТИМИНУТНОЙ.
+    # Раньше ветка 60 минут не проверяла порог в сигмах ВООБЩЕ, а в карточку печатался `z`,
+    # посчитанный по 15-минутному разбросу - то есть «необычность» часового хода завышалась.
+    hot60 = [(now - 3600, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 3600)]
+    # КОЛЬЦО ДЛЯ ЧАСОВОЙ СИГМЫ ОБЯЗАНО БЫТЬ ДЛИННЫМ, И ЭТО ИЗМЕРЕННОЕ СЛЕДСТВИЕ ПРАВИЛА:
+    # 20 часовых доходностей набираются за 21 ЧАС наблюдения. Пятнадцатиминутному окну хватает
+    # пяти часов, часовому - почти суток. Значит после рестарта часовые движения молчат дольше,
+    # и знать это лучше из теста, чем из вопроса «почему час ничего не приходит».
+    ring60 = series(90, now - 90 * 900)
+    ev60 = [e for e in detector.detect(one(mark='103.0', quote_iso=_iso(now)), hot60, now=now,
+                                       ring=ring60) if e['kind'] == 'move_up']
+    check('DETECT: часовое движение публикуется и помечено своим окном',
+          ev60 and ev60[0]['payload'].get('sigma_window') == '60м',
+          ev60[0]['payload'].get('sigma_window') if ev60 else None)
+    check('DETECT: и «необычность» в карточке считается по ТОМУ ЖЕ окну',
+          ev60 and ev60[0]['payload'].get('z') is not None
+          and abs(ev60[0]['payload']['z']) >= config.z_min(),
+          ev60[0]['payload'].get('z') if ev60 else None)
     # ОКНО НЕДОСТУПНО -> МОЛЧАНИЕ, А НЕ «0%»
-    ev4 = detector.detect(one(mark='104.0', quote_iso=_iso(now)), [], now=now, ring=ring)
+    # С ЭТАПА 5 ЧАС БЕРЁТСЯ И ИЗ ХОЛОДНОГО КОЛЬЦА (ТЗ 5.3), поэтому «точки в прошлом нет»
+    # проверяется кольцом, в котором её НЕТ: последние два часа пусты.
+    _ring_old = [r for r in ring if r[0] < now - 2 * 3600]
+    ev4 = detector.detect(one(mark='104.0', quote_iso=_iso(now)), [], now=now, ring=_ring_old)
     check('DETECT: без точки в прошлом движение не объявляется',
           not [e for e in ev4 if e['kind'].startswith('move')],
           'отсутствие замера превратилось бы в утверждение о рынке')
@@ -399,15 +510,28 @@ def t_oi_funding_and_spread_have_their_own_reasons():
     """ТРИ ОСТАЛЬНЫХ ВИДА: интерес, ставка, спред — каждый ловится своим замером."""
     now = 1800000000
     ring = series(60, now - 60 * 900)
-    hot = [(now - 3600, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 3600)]
-    evs = detector.detect(one(mark='100.0', oi_l='5000', oi_s='900', quote_iso=_iso(now)),
+    # ЧИСЛА ИНТЕРЕСА ЗДЕСЬ - В ДОЛЛАРАХ, И ЭТО НЕ КОСМЕТИКА ТЕСТА. Variational отдаёт
+    # `long_open_interest`/`short_open_interest` уже в долларах (замер 26.09), а прежний код
+    # домножал их на цену - отсюда 118 невозможных событий из 139 за сутки. Раньше тест подавал
+    # «5000 контрактов» и проходил ровно потому, что повторял ошибку кода.
+    hot = [hot1(now - 3600)]
+    # ОБОРОТ $50M ЗАДАН ЯВНО (ТЗ 2.4): порог в деньгах теперь max($250k, 3% оборота 24ч), и при
+    # дефолтном обороте фикстуры ($800M) он был бы $24M - скачок на $4M честно не прошёл бы.
+    evs = detector.detect(one(mark='100.0', oi_l='5000000', oi_s='900000', vol='50000000',
+                              quote_iso=_iso(now)),
                           hot, now=now, ring=ring)
     check('OI: скачок интереса при стоящей цене — событие',
           'oi_surge' in {e['kind'] for e in evs}, {e['kind'] for e in evs})
+    _oi = [e for e in evs if e['kind'] == 'oi_surge'][0]['payload']
+    check('OI: прирост назван в ДОЛЛАРАХ и без второго умножения на цену',
+          abs(_oi['oi_change_usd'] - 4.0e6) < 1.0, _oi['oi_change_usd'])
     # АБСОЛЮТНЫЙ ПОРОГ РЯДОМ С ПРОЦЕНТНЫМ: +20% к интересу, которого было на копейки, - это
     # копейки. Без этой проверки процент один решал бы, и алерт приходил бы по пустякам.
-    small = detector.detect(one(mark='100.0', oi_l='1600', oi_s='900', quote_iso=_iso(now)),
-                            hot, now=now, ring=ring)
+    # ПРОЦЕНТ ЗДЕСЬ ПРОХОДИТ (+30%), А ДЕНЬГИ НЕТ ($60k) - значит проверяется именно порог в
+    # деньгах, а не заодно сработавший процентный.
+    hot_small = [hot1(now - 3600, oi_usd=2.0e5)]
+    small = detector.detect(one(mark='100.0', oi_l='130000', oi_s='130000', quote_iso=_iso(now)),
+                            hot_small, now=now, ring=ring)
     check('OI: скачок на $60k событием НЕ считается',
           'oi_surge' not in {e['kind'] for e in small},
           {e['kind'] for e in small})
@@ -469,9 +593,10 @@ def t_card_leads_with_magnitude_and_admits_limits():
           len(txt.split('\n')))
     check('CARD: сказано, во что обойдётся вход на $100k', 'Вход на $100k' in txt)
     check('CARD: возраст котировки числом', 'котировке' in txt)
-    check('CARD: уверенность числом', 'Уверенность <b>' in txt)
-    check('CARD: дисклеймер ОДНОЙ строкой, а не списком из четырёх пунктов',
-          txt.count('•') <= 1 and 'Причину движения дозорный не читает' in txt, txt)
+    # С ЭТАПА 3: уверенность - одним числом в строке заголовка, дисклеймера нет вовсе.
+    check('CARD: уверенность числом в заголовке', '· 100/100' in head, head)
+    check('CARD: дисклеймера «причину не читает» больше нет (строка не меняет решение)',
+          txt.count('•') <= 1 and 'Причину движения дозорный не читает' not in txt, txt)
     check('CARD: служебной строки про эндпоинт больше нет',
           '/metadata/stats' not in txt, 'человеку в момент решения это не нужно')
     # ССЫЛКА ТЕПЕРЬ ВЕДЁТ НА САМ ИНСТРУМЕНТ, А НЕ НА КОРЕНЬ: путь измерен браузером 25.09
@@ -539,7 +664,7 @@ def t_ignition_counts_wallets_not_trades_and_first_poll_is_silent():
 def t_delivery_dedupe_cooldown_cap_and_state():
     """ДОСТАВКА: дедупликация в базе, пауза после успеха, потолок числом, состояние честное."""
     now = int(time.time())
-    store.sub_add(UID, 'BTC')
+    _sub(UID, 'BTC')
     store.settings_set(UID, alerts_on=1, enrich_on=0)
     ring = series(60, now - 60 * 900)
     hot = [(now - 900, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 900)]
@@ -597,7 +722,7 @@ def t_delivery_dedupe_cooldown_cap_and_state():
 def t_two_subscribers_each_get_only_their_own():
     """ДВА ПОДПИСЧИКА: доставка — свойство ЧЕЛОВЕКА, а не события."""
     now = int(time.time())
-    store.sub_add(UID2, 'ETH')
+    _sub(UID2, 'ETH')
     store.settings_set(UID2, alerts_on=1, enrich_on=0)
     ring = series(60, now - 60 * 900)
     hot = [(now - 900, 200.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 900)]
@@ -625,13 +750,26 @@ def t_quiet_hours_cross_midnight():
 
 
 def t_enrichment_never_blocks_the_numbers():
-    """ОБОГАЩЕНИЕ: второе сообщение, только доставленным, провал не трогает первое."""
+    """ОБОГАЩЕНИЕ: ПРАВКА карточки, только доставленным, провал не трогает первое.
+
+    ПЕРЕПИСАН 26.09 ПО ПУНКТУ 2.6 ТЗ. Раньше здесь утверждалось «сводка ушла ВТОРЫМ
+    СООБЩЕНИЕМ» - и это было верное описание кода, который давал замеренный на проде результат:
+    280 алертов и 279 обогащений за сутки, то есть каждый алерт приходил дважды и половина
+    потока была контекстом. Теперь основной путь - правка уже отправленной карточки: она не
+    будит телефон и в окно предохранителя не входит. Второе сообщение осталось АВАРИЙНЫМ путём
+    (сообщение удалено или слишком старое), и оно в окно входит - проверяется ниже отдельно.
+    ТИКЕР У ТЕСТА СВОЙ. С появлением нитей (2.2) общий 'BTC' означал, что событие попадает в
+    нить, открытую предыдущим тестом, и не доставляется вовсе: правильное поведение кода ломало
+    тест, который про обогащение, а не про нити.
+    """
     now = int(time.time())
     store.settings_set(UID, alerts_on=1, enrich_on=1, daily_cap=None)
     key = 'evtest%d' % now
-    store.event_new({'key': key, 'ts': now, 'kind': 'move_up', 'ticker': 'BTC',
+    store.event_new({'key': key, 'ts': now, 'kind': 'move_up', 'ticker': 'ENR',
                      'severity': 80, 'payload': {'mark': 100.0, 'move_pct': 4.0,
+                                                 'venue': 'variational', 'step': 1,
                                                  'penalties': []}})
+    _sub(UID, 'ENR')
     store.delivery_plan(key, UID)
     bot = FakeBot()
     attach(bot)
@@ -640,13 +778,41 @@ def t_enrichment_never_blocks_the_numbers():
           key in store.enrich_pending(limit=10), store.enrich_pending(limit=10))
     check('ENRICH: замок на строке не даёт купить сводку дважды',
           store.enrich_claim(key) is True and store.enrich_claim(key) is False)
-    brief = {'lines': ['Покупали за сутки:', '  • Fund A — $48000'],
+    brief = {'lines': ['Покупали за 3 ч:', '  • Fund A: $48000'],
              'refused': 'X: нет ключа TWITTERAPI_IO_KEY', 'summary': '',
              'cost_line': 'Стоимость сводки: 10 кр'}
+    _was_sent = len(bot.sent)
+    # ОКНО СРАВНИВАЕМ ПРИРОСТОМ, А НЕ АБСОЛЮТОМ: в общем прогоне этому же человеку до нас уже
+    # приходили алерты других тестов, и проверка «в окне меньше двух» краснела бы от порядка.
+    _win_before = store.sent_in_window(UID, 600)
     n = asyncio.run(outbox.deliver_enrichment(key, brief))
-    check('ENRICH: сводка ушла вторым сообщением', n == 1 and len(bot.sent) == 2, bot.sent)
-    txt = bot.sent[1][1]
-    check('ENRICH: отказ назван КЛАССОМ, а не «не удалось»', 'нет ключа' in txt, txt)
+    check('ENRICH: контекст пришёл ПРАВКОЙ карточки, а не вторым сообщением',
+          n == 1 and len(bot.edits) == 1 and len(bot.sent) == _was_sent,
+          (bot.edits, bot.sent[_was_sent:]))
+    txt = bot.edits[0][2]
+    check('ENRICH: правка несёт И карточку, И контекст (человек не теряет числа)',
+          'ENR' in txt and 'Fund A' in txt, txt[:200])
+    check('ENRICH: предохранитель правку НЕ считает - телефон она не будила',
+          store.sent_in_window(UID, 600) == _win_before,
+          (_win_before, store.sent_in_window(UID, 600)))
+    # ── АВАРИЙНЫЙ ПУТЬ: правка не удалась -> ответ сообщением, и он в окно ВХОДИТ ─────────
+    key2 = 'evtest2%d' % now
+    store.event_new({'key': key2, 'ts': now, 'kind': 'ignition', 'ticker': 'ENR',
+                     'severity': 85, 'payload': {'mark': 100.0, 'venue': 'variational',
+                                                 'symbol': 'ENR', 'penalties': []}})
+    store.delivery_plan(key2, UID)
+    bot2 = FakeBot(edit_fail=True)
+    attach(bot2)
+    asyncio.run(outbox.deliver_due())
+    _before = len(bot2.sent)
+    n3 = asyncio.run(outbox.deliver_enrichment(key2, brief))
+    check('ENRICH: отказ правки не теряет контекст - он уезжает ответом',
+          n3 == 1 and len(bot2.sent) == _before + 1, (n3, bot2.sent[_before:]))
+    txt = bot2.sent[-1][1]
+    # С ЭТАПА 3 ОТКАЗ ЧЕЛОВЕКУ НЕ ПЕЧАТАЕТСЯ: он в логе (`enrichment.build`), а в карточке -
+    # только то, что меняет решение.
+    check('ENRICH: отказ «чего не собрали» в карточку не попадает', 'нет ключа' not in txt
+          and 'Чего не собрали' not in txt and 'Стоимость сводки' not in txt, txt)
     check('ENRICH: пересказ модели подписан как пересказ, если он есть',
           'Пересказ моделью' not in txt or 'пересказ данных выше' in txt)
     store.settings_set(UID, enrich_on=0)
@@ -692,6 +858,45 @@ def t_lease_keeps_one_poller():
           store.lease('t1', ttl=60, owner='B') is True)
     owner, until = store.lease_owner('t1')
     check('LEASE: владелец и срок видны наружу', owner == 'B' and until > time.time())
+    # ═══ РОЛЬ ВМЕСТО ФЛАГА: КТО ИМЕННО ОПРАШИВАЕТ (ЗАМЕР 26.09) ═══
+    # На проде опрос вели ДВА процесса по очереди, раз в TTL+90с вместо 30с, потому что оба
+    # читали `SENTINEL_IN_BOT=0` как «опрашивает кто-то другой». Юнит при этом печатал «опрос у
+    # отдельного юнита», будучи этим самым юнитом. Проверяем поведение, а не текст переменной.
+    _env0 = os.environ.get('SENTINEL_ROLE')
+    try:
+        os.environ['SENTINEL_ROLE'] = 'poller'
+        check('ROLE: юнит с ролью poller считает опрос СВОИМ делом', config.is_poller() is True)
+        check('ROLE: роль едет в имени владельца аренды',
+              store.lease_role(store._me()) == 'poller', store._me())
+        os.environ['SENTINEL_ROLE'] = 'deliver'
+        check('ROLE: бот по умолчанию доставщик, а не опрашивающий',
+              config.is_poller() is False)
+        os.environ.pop('SENTINEL_ROLE', None)
+        check('ROLE: переменной нет -> НЕ опрашивающий (забытая строка не даёт второго опроса)',
+              config.is_poller() is False)
+        os.environ['SENTINEL_ROLE'] = 'polller'
+        check('ROLE: опечатка в роли не превращает доставщика в опрашивающего',
+              config.is_poller() is False)
+        # ВЫТЕСНЕНИЕ: доставщик подхватил опрос, опрашивающий вернулся - и забирает аренду СРАЗУ,
+        # не дожидаясь её истечения. Иначе каждый рестарт юнита стоил бы дырки в кольце.
+        store.lease_release('t2', owner='deliver@bot:1')
+        check('ROLE: доставщик взял опрос, пока опрашивающего не было',
+              store.lease('t2', ttl=600, owner='deliver@bot:1') is True)
+        check('ROLE: вернувшийся опрашивающий забирает аренду сразу',
+              store.lease('t2', ttl=600, owner='poller@unit:2') is True)
+        _o, _u = store.lease_owner('t2')
+        check('ROLE: и владельцем записан именно он', _o == 'poller@unit:2', _o)
+        check('ROLE: доставщик НЕ вытесняет живого опрашивающего (иначе аренда прыгала бы)',
+              store.lease('t2', ttl=600, owner='deliver@bot:1') is False)
+        check('ROLE: аренда старой формы (без роли) считается доставщиком, а не опрашивающим',
+              store.lease_role('host:123') == 'deliver')
+        check('SRV: юнит выдаёт себе роль poller в файле службы',
+              'SENTINEL_ROLE=poller' in open('deploy/sentinel.service', encoding='utf-8').read())
+    finally:
+        if _env0 is None:
+            os.environ.pop('SENTINEL_ROLE', None)
+        else:
+            os.environ['SENTINEL_ROLE'] = _env0
 
 
 def t_rings_and_outcome_are_measured_not_told():
@@ -700,14 +905,30 @@ def t_rings_and_outcome_are_measured_not_told():
     x = one(ticker='SOL', name='Solana', mark='150.0')
     n = store.snapshot_put([x], ts=now - 3600)
     check('RING: снимок записался', n == 1)
-    hist = store.history('SOL', since_ts=now - 7200)
+    hist = store.history('variational', 'SOL', since_ts=now - 7200)
     check('RING: читается по индексу (PG не даёт доступ по имени)',
           hist and hist[0][1] == 150.0, hist[:1])
+    # ═══ ДВЕ ПЛОЩАДКИ В ОДНУ СЕКУНДУ - ДВЕ СТРОКИ, А НЕ ОДНА ═══
+    # ДО 26.09 ключом кольца была пара (тикер, секунда), и `INSERT OR REPLACE` затирал снимок
+    # одной площадки снимком другой. На проде это дало 48 740 строк, в которых смешаны цены трёх
+    # площадок, а детектор, читавший кольцо по ключу «площадка:тикер», не находил НИ ОДНОЙ.
+    _hl = one(ticker='SOL', name='Solana', mark='151.5')
+    _hl.venue = 'hyperliquid'
+    store.snapshot_put([_hl], ts=now - 3600)
+    _var = store.history('variational', 'SOL', since_ts=now - 7200)
+    _hyp = store.history('hyperliquid', 'SOL', since_ts=now - 7200)
+    check('RING: снимки двух площадок в одну секунду лежат ОБА и не перетёрлись',
+          len(_var) == 1 and len(_hyp) == 1 and _var[0][1] == 150.0 and _hyp[0][1] == 151.5,
+          (_var[:1], _hyp[:1]))
+    check('RING: история одной площадки не отдаёт строки другой',
+          all(abs(r[1] - 151.5) > 0.1 for r in _var), _var[:2])
     store.snapshot_put([one(ticker='SOL', name='Solana', mark='156.0')], ts=now - 60)
-    engine._COLD.pop('SOL', None)
+    engine._COLD.pop('variational:SOL', None)
     key = 'outc%d' % now
+    # ПЛОЩАДКА В PAYLOAD - ЭТО ТО, ЧЕМ ЗАМЕР ИСХОДА НАХОДИТ НУЖНОЕ КОЛЬЦО (см. `engine._mark_at`).
     store.event_new({'key': key, 'ts': now - 3600, 'kind': 'move_up', 'ticker': 'SOL',
-                     'severity': 70, 'payload': {'mark': 150.0, 'penalties': []}})
+                     'severity': 70,
+                     'payload': {'mark': 150.0, 'venue': 'variational', 'penalties': []}})
     due = [k for k, _t, _s in store.outcome_due(60, now=now)]
     check('OUTCOME: событие старше горизонта попало в очередь замера', key in due, due[:3])
     asyncio.run(engine.outcome_tick())
@@ -829,7 +1050,7 @@ def t_reads_close_their_cursors_and_never_lock():
     store.cursor_get('нет')
     # ПОСЛЕ ШЕСТИ ЧТЕНИЙ ЗАПИСЬ ОБЯЗАНА ПРОЙТИ. Если курсоры остались открытыми, именно здесь
     # sqlite отдаст «database is locked» - ровно как на сервере.
-    ok, why = store.sub_add(uid, 'ZZTEST')
+    ok, why = _sub(uid, 'ZZTEST')
     check('CURSOR: после серии чтений запись проходит', ok, why)
     check('CURSOR: и читается обратно', 'ZZTEST' in store.sub_list(uid))
     store.sub_del(uid, 'ZZTEST')
@@ -950,7 +1171,7 @@ def t_menu_has_buttons_for_everything_the_words_can_do():
           and kb.inline_keyboard[0][0].callback_data == 'sen:t:al',
           [b.text for b in kb.inline_keyboard[0]])
     check('MENU: пресеты на основном экране (самый частый способ настроить)',
-          'sen:pr:normal' in main_data, main_data)
+          {'sen:pr:newbie', 'sen:pr:trader', 'sen:pr:quiet'} <= set(main_data), main_data)
     for _rare in ('sen:bm:1', 'sen:bw:5', 'sen:sv:5', 'sen:cd:15', 'sen:q:next'):
         check('MENU: редкая настройка %s спрятана под «Ещё»' % _rare,
               _rare not in main_data and _rare in data, _rare)
@@ -1099,7 +1320,7 @@ def t_kinds_and_parts_are_the_subscribers_choice():
           store.kinds_for(uid) == {'ignition'}, store.kinds_for(uid))
 
     now = int(time.time())
-    store.sub_add(uid, 'BTC')
+    _sub(uid, 'BTC')
     store.settings_set(uid, alerts_on=1, enrich_on=0)
     ring = series(60, now - 60 * 900)
     hot = [(now - 900, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 900)]
@@ -1188,30 +1409,59 @@ def t_wallet_sizes_are_read_not_lost():
     были известны и не использованы. Сводка выглядела собранной и не несла ни одного числа.
     """
     from sentinel import enrichment as en
+    # ═══ ПЕРЕПИСАНО 26.09 ВМЕСТЕ С ПУНКТОМ 1.4 ТЗ. ЧТО ИМЕННО ИЗМЕНИЛОСЬ И ПОЧЕМУ ═══
+    # Прежний тест подавал ОДИН список и требовал, чтобы в нём прочитались И покупки, И продажи -
+    # он закреплял правило «бери первое непустое поле объёма». Это правило и было дефектом: у
+    # КАЖДОЙ строки ответа `tgm/who-bought-sold` есть оба поля, первым в списке стоял
+    # `bought_volume_usd`, и в разделе «Продавали» печаталась сумма ПОКУПОК того же адреса.
+    # Живой замер владельца 26.09: Token Millionaire продал на $74 959, купил на $14 773 - в
+    # карточке стояло «$14.8k»; чистый продавец с нулевыми покупками печатался как «$0».
+    # Поэтому теперь сторона ЗАДАЁТСЯ ВЫЗОВОМ, и тест проверяет именно это: одни и те же строки,
+    # прочитанные как покупки и как продажи, дают РАЗНЫЕ суммы.
     rows = [{'address': '0x' + 'ab' * 20, 'address_label': 'Fund A',
-             'bought_volume_usd': 48000},
-            {'address': '0x' + 'cd' * 20, 'sold_volume_usd': 91000},
+             'bought_volume_usd': 48000, 'sold_volume_usd': 0},
+            {'address': '0x' + 'cd' * 20, 'bought_volume_usd': 14773,
+             'sold_volume_usd': 74959},
             {'address': '0x' + 'ef' * 20}]
-    out = en._who_lines(rows, 'Покупали за сутки', bot_un='testbot')
-    body = '\n'.join(out)
-    check('WHO: bought_volume_usd прочитан', '$48.0k' in body, body)
-    check('WHO: sold_volume_usd прочитан', '$91.0k' in body, body)
-    check('WHO: где размера правда нет - сказано словами',
-          'размер не назван' in body, body)
+    buy = '\n'.join(en._who_lines(rows, 'Покупали за 3 ч', bot_un='testbot', side='BUY'))
+    sell = '\n'.join(en._who_lines(rows, 'Продавали за 3 ч', bot_un='testbot', side='SELL'))
+    check('WHO: покупки читаются из bought_volume_usd', '$48.0k' in buy, buy)
+    check('WHO: продажи читаются из sold_volume_usd', '$75.0k' in sell, sell)
+    check('WHO: в продажах НЕ печатается сумма покупок того же адреса (живой дефект 26.09)',
+          '$14.8k' not in sell, sell)
+    check('WHO: нулевую сторону не печатаем вовсе - «$0» это не измерение, а шум',
+          'Fund A' not in sell and '$0' not in sell, sell)
+    check('WHO: строка без объёма вообще не печатается',
+          ('0xefef' not in buy) and ('0xefef' not in sell), (buy, sell))
     # ПРОВЕРЯЕМ ВИДИМЫЙ ТЕКСТ, А НЕ ИСХОДНИК СТРОКИ: адрес обязан быть в АТРИБУТЕ ссылки (по нему
     # открывается экран кошелька) и не обязан быть на экране - человек читает метку, а сорок два
     # символа hex не читает и не сравнивает. Первая редакция проверки смотрела на строку целиком
     # и краснела на своей же ссылке.
     import re as _re2
-    seen = _re2.sub(r'<[^>]+>', '', body)
+    seen = _re2.sub(r'<[^>]+>', '', buy)
     check('WHO: метка читается вместо сорока двух символов hex',
           'Fund A' in seen and ('0x' + 'ab' * 20) not in seen, seen)
-    check('WHO: адрес без метки сокращён', '0xcdcd…cdcd' in body, body)
+    check('WHO: адрес без метки сокращён', '0xcdcd…cdcd' in sell, sell)
     check('WHO: кошелёк - ССЫЛКА на свой экран в боте',
-          't.me/testbot?start=acc_0x' in body, body)
+          't.me/testbot?start=acc_0x' in buy, buy)
     check('WHO: и цена одного токена под сумму НЕ берётся',
           'price_usd' not in en._VOL_FIELDS,
           'спутать их значит напечатать $0.99 вместо $48K')
+    # ОДИНАКОВЫЕ МЕТКИ РАЗЛИЧАЮТСЯ ХВОСТОМ АДРЕСА: три строки «Token Millionaire» подряд читаются
+    # как ОДИН кошелёк, то есть ровно наоборот смыслу сигнала «несколько РАЗНЫХ адресов».
+    same = [{'address': '0x' + '11' * 20, 'address_label': 'Token Millionaire',
+             'sold_volume_usd': 50000},
+            {'address': '0x' + '22' * 20, 'address_label': 'Token Millionaire',
+             'sold_volume_usd': 40000}]
+    st = '\n'.join(en._who_lines(same, 'Продавали', side='SELL'))
+    check('WHO: одинаковые метки различимы хвостом адреса',
+          '…1111' in st and '…2222' in st, st)
+    # НЕТТО СЧИТАЕТ КОД, А НЕ ЧЕЛОВЕК ГЛАЗАМИ ПО ШЕСТИ СТРОКАМ.
+    line, net, turn = en._net_line([rows[0]], [rows[1]], hours=3)
+    check('NET: нетто считается кодом и печатается со знаком',
+          line and '-' in line and '$27' in line, (line, net))
+    check('NET: оборот отдаётся отдельно - по нему решается, платить ли за перп-контекст',
+          abs(turn - (48000 + 74959)) < 1, turn)
 
 
 def t_locked_diagnosis_prints_measurements():
@@ -1267,8 +1517,21 @@ def t_silence_is_explained_by_numbers_not_by_faith():
           '0.40%' in txt and ('%.2f%%' % config.move_pct_15m()) in txt, txt)
     check('NOW: и говорит, что тихо НА РЫНКЕ, а не в дозорном',
           'тихо на рынке' in txt, txt)
-    check('NOW: пустое кольцо тоже объяснено словами',
-          'Кольцо пустое' in (engine._HOT.clear() or ui.now_text('ru')), ui.now_text('ru'))
+    # ПУСТО И ГОРЯЧЕЕ, И ХОЛОДНОЕ (этап 3: без горячего экран читает базу - см. ниже).
+    _rs = store.ring_since
+    store.ring_since = lambda *_a, **_k: {}
+    try:
+        check('NOW: пустое кольцо тоже объяснено словами',
+              'Кольцо пустое' in (engine._HOT.clear() or ui.now_text('ru')), ui.now_text('ru'))
+    finally:
+        store.ring_since = _rs
+    # БОТ БЕЗ СВОЕГО ОПРОСА (опрос в юните): горячего кольца нет - срез из холодного в базе.
+    _xs = one(ticker='NOWDB', name='Now DB', mark='20.0')
+    store.snapshot_put([_xs], ts=now - 30)
+    engine._HOT.clear()
+    _m = engine.market_now(now=now)
+    check('NOW: без горячего кольца срез собирается из базы, а не «кольцо пустое»',
+          _m['tickers'] >= 1 and 'Кольцо пустое' not in ui.now_text('ru'), _m['tickers'])
     check('NOW: на en кириллицы нет',
           not __import__('re').search(r'[А-Яа-яЁё]', ui.now_text('en')), ui.now_text('en'))
 
@@ -1308,7 +1571,10 @@ def t_volume_is_its_own_signal():
     РАНЬШЕ, чем по цене.
     """
     now = 1800000000
-    ring = series(60, now - 60 * 900)
+    # КОЛЬЦО НА 25 ЧАСОВ (ТЗ 2.4): порог оборота мерится медианой СВОИХ часовых приростов, и она
+    # требует `sigma_min_points` часов. На 15-часовом кольце (60 точек) события нет - это
+    # проверяется отдельно в `t_vol_and_oi_thresholds_are_measured_2_4`.
+    ring = series(100, now - 100 * 900)
     hot = [(now - 3600, 100.0, 1.0e6, 1000.0, 900.0, 0.05, 1.0, now - 3600)]
     evs = detector.detect(one(mark='100.0', vol='2000000', quote_iso=_iso(now)), hot, now=now,
                           ring=ring)
@@ -1346,6 +1612,808 @@ def t_db_failure_speaks_with_measurements():
     check('DBFAIL: все отказы записи идут через одну дверь с замерами',
           src.count('_say_fail(') >= 4 and 'def _say_fail' in src,
           'замеры в каждом except по месту однажды забудут в одном из десяти')
+
+
+def t_open_interest_is_dollars_on_every_venue():
+    """ОТКРЫТЫЙ ИНТЕРЕС: единицу ставит слой площадки, детектор считает только доллары.
+
+    ═══ ЗАМЕР 26.09: ТРИ ПЛОЩАДКИ - ТРИ ЕДИНИЦЫ В ОДНОМ ПОЛЕ ═══
+    Variational отдаёт стороны интереса УЖЕ В ДОЛЛАРАХ, Hyperliquid и Lighter - в базовом активе.
+    Детектор умножал на цену ВСЁ и одинаково, и это дало на проде 118 невозможных событий из 139:
+    DELL показывал прирост $47.79M при суточном обороте $497k, SOL - $1.04B, Lighter по BTC
+    выходил на 13.7 ТРИЛЛИОНА (там умножение случалось дважды).
+    Тест идёт по каждой площадке отдельно, потому что общего правила «если число маленькое, это
+    контракты» не существует: это была бы догадка о рынке, а не замер.
+    """
+    # ── VARIATIONAL: числа из живого ответа по DELL (интерес $309 586 при обороте $497k) ──
+    _dell = one(ticker='DELL', name='Dell Technologies', mark='142.0',
+                oi_l='154793', oi_s='154793', vol='497000')
+    check('OIU: Variational - стороны складываются КАК ЕСТЬ, без умножения на цену',
+          abs(_dell.oi_usd - 309586.0) < 1.0, _dell.oi_usd)
+    check('OIU: и это $310k, а не $174M (как печаталось на проде)',
+          _dell.oi_usd < 1e6, _dell.oi_usd)
+    # ── HYPERLIQUID: интерес в БАЗОВОМ активе, перевод один раз (BTC 37 639 при цене 84k) ──
+    _hl = feed.Listing(ticker='BTC', name='BTC', mark=84000.0, volume_24h=1e9,
+                       oi_long=None, oi_short=None, venue='hyperliquid')
+    _hl.oi_total_raw = 37639.0
+    _hl.oi_usd = _hl.oi_total_raw * _hl.mark
+    check('OIU: Hyperliquid - база на цену, получается 3.16 млрд',
+          abs(_hl.oi_usd - 3.16e9) / 3.16e9 < 0.01, _hl.oi_usd)
+    # ── LIGHTER: та же база, но умножение было ДВАЖДЫ (в слое площадки и ещё в детекторе) ──
+    _lg = feed.Listing(ticker='BTC', name='BTC', mark=83900.0, volume_24h=1e9,
+                       oi_long=None, oi_short=None, venue='lighter')
+    _lg.oi_usd = 1953.5 * _lg.mark
+    check('OIU: Lighter - 1953.5 BTC это 164 млн, а не 13.7 триллиона',
+          1.5e8 < _lg.oi_usd < 1.8e8, _lg.oi_usd)
+    # ── ДЕТЕКТОР НЕ УМНОЖАЕТ НИЧЕГО: та же цифра интереса при РАЗНОЙ цене даёт тот же прирост ──
+    now = 1800000000
+    ring = series(60, now - 60 * 900)
+    hot = [hot1(now - 3600, oi_usd=1.0e6)]
+    ev_a = [e for e in detector.detect(
+        one(mark='100.0', oi_l='2000000', oi_s='0', vol='20000000', quote_iso=_iso(now)),
+        hot, now=now, ring=ring) if e['kind'] == 'oi_surge']
+    ev_b = [e for e in detector.detect(
+        one(mark='5000.0', oi_l='2000000', oi_s='0', vol='20000000', quote_iso=_iso(now)),
+        hot, now=now, ring=ring) if e['kind'] == 'oi_surge']
+    check('OIU: прирост интереса НЕ зависит от цены инструмента (цена больше не множитель)',
+          ev_a and ev_b and abs(ev_a[0]['payload']['oi_change_usd']
+                                - ev_b[0]['payload']['oi_change_usd']) < 1.0,
+          [e[0]['payload']['oi_change_usd'] for e in (ev_a, ev_b) if e])
+    # ── СТОРОЖ СОГЛАСОВАННОСТИ: прирост больше двух оборотов - молчим, а не «штрафуем» ──
+    # Случай DELL с прода: оборот $497k, «прирост» $47.79M. Это не неточность, это разные
+    # величины, и событие с таким числом вреднее молчания - человек по нему заходит.
+    hot_small = [hot1(now - 3600, vol=497000.0, oi_usd=2.0e5)]
+    bad = detector.detect(one(mark='142.0', oi_l='24000000', oi_s='24000000',
+                              vol='497000', quote_iso=_iso(now)),
+                          hot_small, now=now, ring=ring)
+    check('OIU: прирост больше двух суточных оборотов события НЕ даёт',
+          'oi_surge' not in {e['kind'] for e in bad}, {e['kind'] for e in bad})
+    check('OIU: и поглощение на тех же несогласованных числах тоже молчит',
+          'absorption' not in {e['kind'] for e in bad}, {e['kind'] for e in bad})
+    # ── КОЛЬЦО ХРАНИТ ДОЛЛАРЫ ОТДЕЛЬНЫМ ПОЛЕМ, И ОНО ПОСЛЕДНЕЕ В КОРТЕЖЕ ──
+    _t = int(time.time())
+    _x = one(ticker='OIU', name='OIU', mark='10.0', oi_l='700000', oi_s='300000')
+    store.snapshot_put([_x], ts=_t)
+    _h = store.history('variational', 'OIU', since_ts=_t - 60)
+    check('OIU: кольцо вернуло 9 полей, интерес в долларах - последним',
+          _h and len(_h[0]) == 9 and abs(_h[0][8] - 1.0e6) < 1.0, _h[:1])
+    check('OIU: фандинг и спред остались на своих индексах (сдвига нет)',
+          _h and _h[0][5] == 0.05 and _h[0][6] == 1.0, _h[:1])
+
+
+def t_perp_context_on_real_nansen_shapes():
+    """ПЕРП-КОНТЕКСТ И СЕГМЕНТЫ НА НАСТОЯЩИХ ОТВЕТАХ NANSEN (фикстура живой пробы 26.09).
+
+    ЗАЧЕМ ФИКСТУРА, А НЕ ЗАГЛУШКА. Строка «С плечом» в 1b не появилась НИ РАЗУ: код перебирал
+    словарь `perp_positioning_data` как список и падал на строке-ключе. Тест на самодельной
+    заглушке этого поймать не мог - заглушка была той формы, которую ожидал код, а не той, что
+    отдаёт Nansen. Нашёл живой прогон; теперь форма живого ответа закреплена фикстурой.
+    """
+    import json as _json
+    from sentinel import enrichment as en
+    import nansen_api as N
+    # ПУТЬ ФИКСТУРЫ - ОБА МИРА: в боте `nansen/fixtures/`, в публичной выжимке `fixtures/`.
+    _fxp = os.path.join(BASE, 'nansen', 'fixtures', 'sentinel_perp_context.json')
+    if not os.path.exists(_fxp):
+        _fxp = os.path.join(BASE, 'fixtures', 'sentinel_perp_context.json')
+    fx = _json.load(open(_fxp,
+                         encoding='utf-8'))
+    _pi, _pp = N.perp_positioning, N.perp_positions
+    N.perp_positioning = lambda key: (fx['position_intelligence_HYPE'][0] if key == 'HYPE'
+                                      else None)
+    N.perp_positions = lambda key, n=20: fx['perp_positions_JUP'] if key == 'JUP' else []
+    try:
+        lines, cr = asyncio.run(en._perp_lines('HYPE', None, None, 100.0, 'hyperliquid'))
+        body = '\n'.join(lines)
+        check('PCTX: строка «С плечом» собирается из настоящего ответа (дефект 1b)',
+              'С плечом' in body and 'смарт-трейдеры лонг' in body, body)
+        lines2, _ = asyncio.run(en._perp_lines('JUP', None, None, 0.35, 'variational'))
+        body2 = '\n'.join(lines2)
+        check('PCTX: ликвидации есть и у события не с Hyperliquid, и площадка названа',
+              'Ликвидации' in body2 and '(Hyperliquid)' in body2, body2)
+        _ref = sorted(float(r['mark_price']) for r in fx['perp_positions_JUP'])[20]
+        check('PCTX: расстояние до ликвидации считается от цены Hyperliquid, а не события',
+              en._liq_line(fx['perp_positions_JUP'], _ref) in body2, (body2, _ref))
+    finally:
+        N.perp_positioning, N.perp_positions = _pi, _pp
+    seg = en.segment_text(fx['flow_intelligence_JUP'][0], 25000)
+    check('PCTX: сегменты за сутки - одной строкой и только значимые',
+          seg and seg.startswith('• за сутки:'), seg)
+    check('PCTX: при пороге выше всех чисел строки нет вовсе',
+          en.segment_text(fx['flow_intelligence_JUP'][0], 1e12) is None)
+    check('PCTX: биржи в строку не идут (их знак читается наоборот)',
+          seg is None or 'бирж' not in seg, seg)
+    from sentinel import assets
+    check('PCTX: HYPE - нативная монета, ончейн по солановскому однофамильцу не зовётся',
+          assets.onchain_refusal('HYPE') is not None, assets.onchain_refusal('HYPE'))
+
+
+def t_ignition_without_mcap_goes_to_digest():
+    """ЗАЖИГАНИЕ: звонит только то, что прошло ВСЕ ТРИ порога (решение владельца 26.09).
+
+    Замер ленты: SI - шесть адресов на $43.8k, капитализации нет. Без неё третий порог (доля
+    рынка) не проверен, и прежде такое событие звонило со штрафом - то есть непроверенное
+    подменялось уверенностью похуже.
+    """
+    from sentinel import ignition
+    now = int(time.time())
+    check('IGN: дефолт суммы - $100 000 (p99 полного окна 180 мин: 133 токена, $113k)',
+          config.ign_usd() == 100000.0 or os.getenv('SENTINEL_IGN_USD'), config.ign_usd())
+    base = {'chain': 'solana', 'address': 'SiMint', 'symbol': 'SI',
+            'wallets': {'a', 'b', 'c', 'd', 'e', 'f'}, 'labels': ['Smart Trader'],
+            'usd': 143842.0, 'trades': 6, 'age_days': 40.0, 'last_ts': now - 60,
+            'usd_by': {}, 'txs': set()}
+    ev = ignition.judge(dict(base, mcap=None), now=now)
+    check('IGN: без капитализации событие ЕСТЬ (оно посчитано и записано)', ev, ev)
+    check('IGN: но помечено «только в сводку» с причиной словами',
+          ev and ev['payload'].get('digest_only') == 'капитализация неизвестна, долю проверить нечем',
+          ev['payload'] if ev else None)
+    uid = UID + 13
+    store.settings_set(uid, alerts_on=1, min_sev=0, burst_max=50, daily_cap=200)
+    v, why = outbox.mute_reason(uid, ev, now=now)
+    check('IGN: и в звонок не идёт ни при какой уверенности - только в сводку',
+          v == 'digest' and 'капитализация неизвестна' in why, (v, why))
+    ev2 = ignition.judge(dict(base, mcap=3.0e7), now=now)
+    check('IGN: с капитализацией и долей 47.9 б.п. - обычное событие, звонит',
+          ev2 and not ev2['payload'].get('digest_only')
+          and outbox.mute_reason(uid, ev2, now=now)[0] is None,
+          (ev2['payload'] if ev2 else None, outbox.mute_reason(uid, ev2, now=now) if ev2 else None))
+    ev3 = ignition.judge(dict(base, mcap=4.0e8), now=now)
+    check('IGN: доля 3.6 б.п. ниже порога 5 - события нет вовсе (STONK-подобный случай)',
+          ev3 is None, ev3)
+
+
+def t_venue_gap_is_rare_and_not_a_basis():
+    """РАСХОЖДЕНИЕ ПЛОЩАДОК (ТЗ 2.3): разовый лаг и структурный базис - не события.
+
+    Замер F7: 613 событий расхождения за сутки - половина всех событий дозора; живучие пары
+    (AERO, ZRO, NIL, JUP, LDO) держали 40-74 б.п. часами, US500 - 90 221 б.п. (разные
+    инструменты). Живая карточка JUP 26.09: Variational дешевле Hyperliquid часами.
+    """
+    now = 1800000000
+
+    def _pair(t, lo_mark, hi_mark, vol=2e7, lo_q=None):
+        a = feed.Listing(ticker=t, name=t, mark=lo_mark, volume_24h=vol, venue='variational',
+                         spread_bps=5.0, quote_ts=lo_q)
+        b = feed.Listing(ticker=t, name=t, mark=hi_mark, volume_24h=vol, venue='hyperliquid',
+                         spread_bps=5.0)
+        return [a, b]
+    calm = lambda t, a, b: (4.0, 60)           # обычная пара: базис 4 б.п. за сутки, 60 точек
+    basis = lambda t, a, b: (45.0, 60)         # структурный базис, как у JUP
+    none_ = lambda t, a, b: (None, 0)          # суточной истории пары нет
+    st = {}
+    evs = []
+    for i in range(3):
+        evs.append(detector.cross_venue(_pair('GAPX', 100.0, 102.5, lo_q=now + i * 30),
+                                        now=now + i * 30, median_fn=calm, state=st))
+    check('GAP: первый и второй тик расхождения - ещё не событие (лаг котировки)',
+          not evs[0] and not evs[1], [len(e) for e in evs])
+    check('GAP: третий тик подряд - событие', len(evs[2]) == 1, evs[2])
+    p = evs[2][0]['payload'] if evs[2] else {}
+    check('GAP: в событии названы чистая кромка, тики и суточная медиана пары',
+          p.get('net_bps') and p.get('ticks') == 3 and p.get('median_24h_bps') == 4.0, p)
+    st2 = {}
+    for i in range(4):
+        e = detector.cross_venue(_pair('BASX', 100.0, 102.5, lo_q=now + i * 30),
+                                 now=now + i * 30, median_fn=basis, state=st2)
+    check('GAP: структурный базис пары (медиана 45 б.п.) событием НЕ становится (JUP)',
+          not e, e)
+    st3 = {}
+    for i in range(4):
+        e = detector.cross_venue(_pair('NOMX', 100.0, 102.5, lo_q=now + i * 30),
+                                 now=now + i * 30, median_fn=none_, state=st3)
+    check('GAP: без суточной истории пары события НЕТ (нет базы - нет звонка)', not e, e)
+    st4 = {}
+    for i in range(4):
+        e = detector.cross_venue(_pair('SMLX', 100.0, 101.0, lo_q=now + i * 30),
+                                 now=now + i * 30, median_fn=calm, state=st4)
+    check('GAP: 100 б.п. ниже порога 150 - не событие', not e, e)
+    st5 = {}
+    for i in range(4):
+        e = detector.cross_venue(_pair('OLDX', 100.0, 102.5, lo_q=now - 300),
+                                 now=now + i * 30, median_fn=calm, state=st5)
+    check('GAP: при котировке старше минуты расхождение - это устаревшая цена, не событие',
+          not e, e)
+    st6 = {}
+    for i in range(4):
+        e = detector.cross_venue(_pair('US500', 100.0, 1000.0, lo_q=now + i * 30),
+                                 now=now + i * 30, median_fn=calm, state=st6)
+    check('GAP: расхождение больше 2000 б.п. - разные инструменты, и пара запомнена',
+          not e and any(r.get('different') for r in st6.values()), st6)
+    e = detector.cross_venue(_pair('US500', 100.0, 102.5, lo_q=now + 200), now=now + 200,
+                             median_fn=calm, state=st6)
+    check('GAP: и в сверку она больше не входит, даже когда цены сблизились', not e, e)
+    st7 = {}
+    for i in range(3):
+        e_small = detector.cross_venue(_pair('CFA', 100.0, 102.2, lo_q=now + i * 30),
+                                       now=now + i * 30, median_fn=calm, state=st7)
+    st8 = {}
+    for i in range(3):
+        e_big = detector.cross_venue(_pair('CFB', 100.0, 106.0, lo_q=now + i * 30),
+                                     now=now + i * 30, median_fn=calm, state=st8)
+    check('GAP: уверенность зависит от кромки (не постоянные 80)',
+          e_small and e_big and e_big[0]['severity'] > e_small[0]['severity'],
+          (e_small[0]['severity'] if e_small else None, e_big[0]['severity'] if e_big else None))
+    check('GAP: по умолчанию вид выключен у новых подписчиков',
+          'venue_gap' not in config.DEFAULT_KINDS)
+    check('GAP: расхождение есть только в «Потоке», во всех остальных пресетах его нет',
+          all(('venue_gap' in p['kinds']) == (k == 'flow') for k, p in store.PRESETS.items()),
+          {k: p['kinds'] for k, p in store.PRESETS.items()})
+
+
+def t_verdict_is_code_and_model_is_behind_a_flag():
+    """ИТОГ КОДОМ, МОДЕЛЬ ЗА ФЛАГОМ (ТЗ 2.8). Живая карточка JUP: «Вывод модели» написал про
+    «80% bullish настроя в X» - такого числа в данных нет, и текст был обрезан на полуслове."""
+    from sentinel import enrichment as en
+    _env = os.environ.pop('SENTINEL_LLM_SUMMARY', None)
+    try:
+        check('VERD: модель по умолчанию ВЫКЛЮЧЕНА', config.llm_summary_on() is False)
+        os.environ['SENTINEL_LLM_SUMMARY'] = '1'
+        check('VERD: и включается флагом (обратный путь проверен)', config.llm_summary_on())
+    finally:
+        os.environ.pop('SENTINEL_LLM_SUMMARY', None)
+        if _env is not None:
+            os.environ['SENTINEL_LLM_SUMMARY'] = _env
+    base_hl = {'venue': 'hyperliquid', 'funding_raw': 0.0000125, 'funding_interval_s': 3600}
+    up = {'kind': 'move_up', 'ticker': 'JUP', 'payload': dict(base_hl, move_pct=5.0)}
+    v = en.verdict_lines(up, {'sm': ('net', 150000.0, 400000.0), 'tweets': []})
+    check('VERD: нетто в сторону движения - «подтверждают»', 'подтверждают' in v[0], v)
+    v = en.verdict_lines(up, {'sm': ('net', -412000.0, 548000.0), 'tweets': []})
+    check('VERD: нетто против движения - «против», со знаком и суммой',
+          'против' in v[0] and '-$412' in v[0], v)
+    down = {'kind': 'move_down', 'ticker': 'JUP', 'payload': dict(base_hl, move_pct=-5.0)}
+    v = en.verdict_lines(down, {'sm': ('net', -90000.0, 200000.0), 'tweets': []})
+    check('VERD: у падения продажи смарт-мани ПОДТВЕРЖДАЮТ (знак считается от направления)',
+          'подтверждают' in v[0], v)
+    v = en.verdict_lines(up, {'sm': ('silent', 1000.0, 4000.0), 'tweets': []})
+    check('VERD: мелкий след - «молчат», и размер назван', 'молчат' in v[0] and '$4' in v[0], v)
+    vol = {'kind': 'vol_surge', 'ticker': 'JUP', 'payload': dict(base_hl)}
+    v = en.verdict_lines(vol, {'sm': ('net', 50000.0, 90000.0), 'tweets': []})
+    check('VERD: у вида без направления нет ни «подтверждают», ни «против»',
+          'подтверждают' not in v[0] and 'против' not in v[0], v)
+    # С ЭТАПА 3 СОСТОЯНИЕ ФАНДИНГА ПЕЧАТАЕТ КАРТОЧКА (`cards.funding_line`), итог его не повторяет.
+    check('VERD: фандинг в итоге не повторяется (он в строке карточки)',
+          not any('фандинг' in x for x in v), v)
+    check('VERD: базовая ставка Hyperliquid - одним словом «базовый», без сырого поля и сторон',
+          cards.funding_line(base_hl) == 'Фандинг базовый', cards.funding_line(base_hl))
+    hot = {'venue': 'hyperliquid', 'funding_raw': 0.0000945, 'funding_interval_s': 3600}
+    _fh = cards.funding_line(hot) or ''
+    check('VERD: повышенный фандинг назван числом и стороной',
+          'повышен' in _fh and 'платят лонги' in _fh and '0.0000945' not in _fh, _fh)
+    lg_eq = {'venue': 'lighter', 'funding_raw': 0.000032, 'funding_interval_s': 28800}
+    check('VERD: у акции на Lighter своя база (3.5%), и она тоже «базовый»',
+          cards.funding_line(lg_eq) == 'Фандинг базовый', cards.funding_line(lg_eq))
+    tw = [{'text': '$JUP is up 60% for the month. Hated rally coming.'},
+          {'text': 'Jupiter announces mainnet upgrade for JUP staking'}]
+    v = en.verdict_lines(up, {'sm': None, 'tweets': tw})
+    check('VERD: причина - только твит со словом новости, мнение причиной не считается',
+          any('причина в X' in x and 'mainnet' in x for x in v)
+          and not any('Hated rally' in x for x in v), v)
+    v = en.verdict_lines(up, {'sm': None, 'tweets': tw[:1]})
+    check('VERD: без новостного твита - честное «не найдена»',
+          any('причина в X не найдена' in x for x in v), v)
+    ign = {'kind': 'ignition', 'ticker': 'STONK', 'payload': {'usd': 156000}}
+    v = en.verdict_lines(ign, {'sm': ('source', 156000.0, 5.0), 'tweets': []}, {'nansen'})
+    check('VERD: у зажигания смарт-мани - это само событие, строки фандинга нет',
+          len(v) == 1 and 'это и есть событие' in v[0], v)
+    # ── СТОРОЖ МОДЕЛИ, ЕСЛИ ЕЁ ВКЛЮЧИЛИ ──
+    data = 'JUP +5.2% за 15 мин, нетто -$412k'
+    check('VERD: число, которого нет в данных, выбрасывает пересказ целиком',
+          en.guard_summary('Настрой в X 80% bullish, это подтверждает рост.', data) == '')
+    check('VERD: обрезанный на полуслове пересказ выбрасывается',
+          en.guard_summary('Движение 5.2% не подтверждается смарт-мани, котор', data) == '')
+    check('VERD: честный пересказ с числами из данных проходит',
+          en.guard_summary('Рост на 5.2% идёт против продаж смарт-мани.', data) != '')
+    card = cards.enrich_card(up, {'lines': ['x'], 'verdict': ['смарт-мани молчат'],
+                                  'cost_line': 'Сводка: 10 кр Nansen'})
+    check('VERD: в карточке блок «Итог»', '<b>Итог</b>' in card and 'молчат' in card, card)
+    check('VERD: строки расхода кредитов у подписчика НЕТ', 'кр Nansen' not in card, card)
+    check('VERD: и у владельца её тоже нет (этап 3: расход - на экране дозорного)',
+          'кр Nansen' not in cards.enrich_card(up, {'lines': ['x'],
+                                                    'cost_line': 'Сводка: 10 кр Nansen'},
+                                               owner=True))
+
+
+def t_x_and_polymarket_lines_are_for_the_reader():
+    """X И POLYMARKET В КАРТОЧКЕ - ТОЛЬКО ТО, ЧТО ЧЕЛОВЕК ПРОЧТЁТ И ЧЕМ ВОСПОЛЬЗУЕТСЯ (ТЗ 2.7)."""
+    from sentinel import enrichment as en
+    check('X: твит на китайском не проходит (живой случай JUP, «暴富三剑客»)',
+          en._lang_ok('$AXS $JUP $INJ 暴富三剑客，这三个币，你买一个，这一轮牛市 你就会暴富！') is False)
+    check('X: английский проходит', en._lang_ok('$JUP is up more than 60% for the month.'))
+    check('X: русский проходит', en._lang_ok('JUP растёт третий день, объём вырос вдвое'))
+    check('X: одни тикеры и ссылка - не повод выкинуть твит',
+          en._lang_ok('$JUP $SOL https://t.co/abc'))
+    check('X: не больше двух твитов', en.X_LIMIT == 2, en.X_LIMIT)
+    for m in ('entry:', 'sl:', 'tp:', 'targets:', 'new listing around the corner',
+              'community vote', 'vip access', 'launchpad', 'join our official'):
+        check('X: спам-метка %r' % m, en._is_spam('Great setup! %s 0.5' % m.upper()))
+    t_eq = {'text': 'Dell announced new laptops today'}
+    check('X: у акции имя компании релевантностью НЕ считается',
+          en._relevant(t_eq, 'DELL', 'Dell Technologies', None, klass='equity') is False)
+    check('X: у акции засчитывается кэштег',
+          en._relevant({'text': '$DELL beats estimates'}, 'DELL', 'Dell', None, klass='equity'))
+    # ── POLYMARKET: отказ поиска - в лог, а не человеку ──
+    from sentinel import ignition, predict
+    _rp, _rc, _rx = predict.lines, ignition.confirm, en._x_lines
+
+    async def _no_market(*a, **k):
+        return [], 'у инструмента нет полного имени, а по тикеру искать нельзя', 0
+
+    async def _no_onchain(*a, **k):
+        return {'refused': None, 'address': None}
+
+    async def _no_x(*a, **k):
+        return [], None
+    predict.lines, ignition.confirm, en._x_lines = _no_market, _no_onchain, _no_x
+    try:
+        ev = {'kind': 'venue_gap', 'ticker': 'JUPX', 'key': 'pmx',
+              'payload': {'venue': 'hyperliquid', 'mark': 0.35, 'name': 'JUPX'}}
+        b = asyncio.run(en.build(ev))
+    finally:
+        predict.lines, ignition.confirm, en._x_lines = _rp, _rc, _rx
+    check('PM: «предсказательный рынок не найден» человеку НЕ показывается',
+          'предсказательный' not in (b.get('refused') or '')
+          and 'Polymarket' not in '\n'.join(b.get('lines') or []), b)
+
+
+def t_live_defects_after_1b():
+    """ЧЕТЫРЕ ДЕФЕКТА, ПОЙМАННЫХ ПЕРВЫМИ ЖИВЫМИ СОБЫТИЯМИ ПОСЛЕ 1b (26.09).
+
+    Живые события были хорошими - зажигание STONK (5 адресов, $156k, 6.7 б.п.), смарт-перп NEAR
+    (лонг трёх китов на $689k) - и НИ ОДНО не дошло до владельца.
+    """
+    from sentinel import clusters, ignition
+    import nansen_api as N
+    now = int(time.time())
+    uid = UID + 11
+    store.settings_set(uid, alerts_on=1, venues='hyperliquid', min_sev=0, burst_max=50,
+                       daily_cap=200)
+    # ── 1. ФИЛЬТР ПЛОЩАДКИ НЕ РЕЖЕТ ЗАЖИГАНИЕ И СМАРТ-ПЕРП ────────────────────────────────
+    # У зажигания поля `venue` нет вовсе, и фильтр подставлял 'variational'. У владельца
+    # Variational выключена - событие резалось «площадка выключена».
+    ign = {'kind': 'ignition', 'ticker': 'STONK', 'severity': 90,
+           'payload': {'symbol': 'STONK', 'chain': 'solana', 'penalties': []}}
+    v, why = outbox.mute_reason(uid, ign, now=now)
+    check('LIVE1: зажигание доходит до того, у кого включена только Hyperliquid',
+          v != 'drop' or 'площадка' not in why, (v, why))
+    rows = [{'transaction_hash': '0xnp%d' % i, 'token_symbol': 'NEARP', 'side': 'Long',
+             'action': 'Add', 'trader_address': '0xw%d' % i, 'value_usd': 230000,
+             'trader_address_label': 'HL Perps Whale',
+             'block_timestamp': __import__('datetime').datetime.utcfromtimestamp(
+                 now - 60).strftime('%Y-%m-%dT%H:%M:%SZ')} for i in range(3)]
+    pevs, _ = ignition.scan_perp(now=now, fetch=lambda: rows)
+    sp = [e for e in pevs if e['payload'].get('symbol') == 'NEARP']
+    check('LIVE1: смарт-перп несёт свою площадку явно', sp and
+          sp[0]['payload'].get('venue') == 'hyperliquid', sp[0]['payload'] if sp else None)
+    v2, why2 = outbox.mute_reason(uid, sp[0], now=now) if sp else ('drop', 'нет события')
+    check('LIVE1: и доходит до того, у кого включена только Hyperliquid',
+          v2 != 'drop' or 'площадка' not in why2, (v2, why2))
+    store.settings_set(uid, venues='variational')
+    v3, why3 = outbox.mute_reason(uid, sp[0], now=now) if sp else (None, '')
+    check('LIVE1: а у того, у кого Hyperliquid выключена, смарт-перп режется честно',
+          v3 == 'drop' and 'hyperliquid' in why3, (v3, why3))
+    # ── 2. НОВЫЙ ВИД НЕ РАВЕН ВЫКЛЮЧЕННОМУ ──────────────────────────────────────────────
+    # Набор владельца сохранён до появления смарт-перпа - и вид стоял «✗», хотя он его не трогал.
+    old = UID + 12
+    store.settings_set(old, alerts_on=1)
+    c = store.conn()
+    c.execute('UPDATE sentinel_settings SET kinds=?, kinds_seen=NULL WHERE user_id=?',
+              ('move_up,move_down,ignition', old))
+    c.commit()
+    check('LIVE2: у подписчика со старым набором новый вид ВКЛЮЧЁН',
+          'sm_perp' in store.kinds_for(old), store.kinds_for(old))
+    check('LIVE2: и то, что он выключал сам, осталось выключенным',
+          'oi_surge' not in store.kinds_for(old), store.kinds_for(old))
+    store.kind_toggle(old, 'sm_perp')
+    check('LIVE2: выключил смарт-перп руками - он выключен и не возвращается сам',
+          'sm_perp' not in store.kinds_for(old), store.kinds_for(old))
+    check('LIVE2: пресеты включают смарт-перп (они ставят набор целиком)',
+          all('sm_perp' in p['kinds'] for p in store.PRESETS.values()),
+          [p['kinds'] for p in store.PRESETS.values()])
+    # ── 3. АДРЕС SOLANA НЕ ПРИВОДИТСЯ К НИЖНЕМУ РЕГИСТРУ ─────────────────────────────────
+    # Живой замер: `3uox8K7U…` как есть -> 10 связей, в нижнем регистре -> 422
+    # invalid_address_format. base58 чувствителен к регистру; проверка связей по Solana не
+    # работала никогда и давала «связи не проверены: badreq».
+    sol = '3uox8K7U4NZoZCXKFYm1CpT1TX3etbHDtJNv1ggBSjpK'
+    trs = [{'transaction_hash': '0xs%d' % i, 'token_bought_symbol': 'CASE',
+            'token_bought_address': 'CaseMint111', 'chain': 'solana', 'trade_value_usd': 1000,
+            'trader_address': (sol if i == 0 else 'Bi8CtUDGiGz2Y9ptmTnoAcrvjaJiVak868bwV8Qrbxmi'),
+            'block_timestamp': __import__('datetime').datetime.utcfromtimestamp(
+                now - 60).strftime('%Y-%m-%dT%H:%M:%SZ')} for i in range(2)]
+    g = list(ignition.group(ignition.rows_from_feed(trs), now=now).values())[0]
+    top = ignition._top_wallets(g, 6)
+    check('LIVE3: адреса для проверки связей уходят в ИСХОДНОМ регистре',
+          sol in top, top)
+    check('LIVE3: а разные адреса считаются по нормализованному виду (EVM-checksum не двоится)',
+          len(g['wallets']) == 2, g['wallets'])
+    seen = []
+    _real = N.profiler_related_wallets
+    N.profiler_related_wallets = lambda a, ch, n=10: (seen.append(a) or [])
+    try:
+        asyncio.run(clusters.check(top, 'solana', spend=False))
+    finally:
+        N.profiler_related_wallets = _real
+    check('LIVE3: в Nansen уходит адрес как есть, а не в нижнем регистре',
+          sol in seen and sol.lower() not in seen, seen)
+    # ── 4. ТЕХНИЧЕСКИЕ МЕТКИ ЧЕЛОВЕКУ НЕ ПОКАЗЫВАЕМ ─────────────────────────────────────
+    for lb in ('Uses "LEGENDTRADE" HL Referral Code', 'wallet.poor', 'sh4dow.eth*',
+               'Funded @abc On Friendtech'):   # короткая ручка: скруббер выжимки берёт 4+
+        check('LIVE4: техническая метка скрыта: %s' % lb, N.meaningful_label(lb) == '')
+    for lb in ('HL Perps Whale', 'Smart Trader', 'Fund', 'STONK Whale',
+               'MILKSHAKE Token Deployer'):
+        check('LIVE4: смысловая метка показана: %s' % lb, N.meaningful_label(lb) == lb)
+    rows2 = [dict(r, trader_address_label=('Uses "ZXY" HL Referral Code' if i else
+                                            'HL Perps Whale'),
+                  transaction_hash='0xlb%d' % i, token_symbol='LBL')
+             for i, r in enumerate(rows)]
+    ev4, _ = ignition.scan_perp(now=now, fetch=lambda: rows2)
+    lb4 = [e for e in ev4 if e['payload'].get('symbol') == 'LBL']
+    check('LIVE4: в карточку смарт-перпа едут только смысловые метки',
+          lb4 and lb4[0]['payload']['labels'] == ['HL Perps Whale'],
+          lb4[0]['payload']['labels'] if lb4 else None)
+    # ── 5. СОКРАЩЕНИЕ ПОЗИЦИИ - НЕ ВХОД ────────────────────────────────────────────────
+    # Замер ленты: 25 из 100 перп-сделок - Reduce. Сторона у них та же («Long»), и прежний код
+    # складывал их с входами: фиксацию прибыли по лонгу считал «открыл лонг».
+    red = [dict(r, action='Reduce', transaction_hash='0xrd%d' % i, token_symbol='RED')
+           for i, r in enumerate(rows)]
+    e5, _ = ignition.scan_perp(now=now, fetch=lambda: red)
+    check('LIVE5: три сокращения лонга событием «открыли лонг» НЕ становятся',
+          not [e for e in e5 if e['payload'].get('symbol') == 'RED'], e5)
+
+
+def t_sigma60_is_estimated_until_hourly_points_exist():
+    """ЧАСОВАЯ СИГМА ОЦЕНИВАЕТСЯ ПО 15-МИНУТНОЙ, ПОКА ЧАСОВЫХ ТОЧЕК МАЛО (решение владельца 26.09).
+
+    Замер: 20 часовых доходностей набираются за 21 час кольца, и без оценки часовые движения
+    молчали бы весь день показа. Оценка - тот же ряд, пересчитанный на окно по названной формуле
+    (sigma60 = sigma15 * sqrt(4)), поэтому это не подмена сигнала соседним. Но она обязана быть
+    ВИДНА: источник едет в payload, карточка помечает число.
+    """
+    now = 1800000000
+    hot60 = [(now - 3600, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 3600)]
+    # 30 точек по 15 минут: 15-минутных доходностей 29 (хватает), часовых около 6 (не хватает).
+    short = series(30, now - 30 * 900)
+    s15, n15 = detector.sigma_pct(short)
+    s60, n60 = detector.sigma_pct(short, step=detector.W60)
+    check('S60: исходные условия теста честные - 15-мин точек хватает, часовых нет',
+          n15 >= config.sigma_min_points() and n60 < config.sigma_min_points(), (n15, n60))
+    ev = [e for e in detector.detect(one(mark='103.0', quote_iso=_iso(now)), hot60, now=now,
+                                     ring=short) if e['kind'] == 'move_up']
+    check('S60: часовое движение ЕСТЬ, хотя часовых точек мало', ev, (n15, n60))
+    p = ev[0]['payload'] if ev else {}
+    check('S60: источник сигмы назван - оценка по 15-мин',
+          p.get('sigma_source') == '15m*sqrt4' and p.get('sigma_window') == '60м', p)
+    check('S60: и это ровно sigma15 * 2, формула не подменена другой',
+          p.get('sigma_pct') and abs(p['sigma_pct'] - s15 * 2.0) < 1e-9,
+          (p.get('sigma_pct'), s15))
+    txt = cards.card(ev[0]) if ev else ''
+    check('S60: карточка помечает число как оценку', 'оценка по 15-мин' in txt, txt[:260])
+    check('S60: и по-английски тоже', 'estimated from 15-min' in cards.card(ev[0], lang='en')
+          if ev else False)
+    # 104 точки: часовых доходностей 25 - оценка больше не участвует.
+    long_ = series(104, now - 104 * 900)
+    _s60, _n60 = detector.sigma_pct(long_, step=detector.W60)
+    ev2 = [e for e in detector.detect(one(mark='103.0', quote_iso=_iso(now)), hot60, now=now,
+                                      ring=long_) if e['kind'] == 'move_up']
+    p2 = ev2[0]['payload'] if ev2 else {}
+    check('S60: при %d часовых точках берётся НАСТОЯЩАЯ часовая сигма' % _n60,
+          ev2 and p2.get('sigma_source') == '60m' and abs(p2['sigma_pct'] - _s60) < 1e-9,
+          (p2.get('sigma_source'), p2.get('sigma_pct'), _s60))
+    check('S60: и пометки об оценке в карточке уже нет',
+          ev2 and 'оценка по 15-мин' not in cards.card(ev2[0]))
+    # БЕЗ 15-МИНУТНОЙ СИГМЫ ОЦЕНИВАТЬ НЕЧЕГО: события нет, как и было.
+    tiny = series(8, now - 8 * 900)
+    ev3 = [e for e in detector.detect(one(mark='103.0', quote_iso=_iso(now)), hot60, now=now,
+                                      ring=tiny) if e['kind'] == 'move_up']
+    check('S60: если и 15-мин точек мало, оценки нет и события нет', not ev3)
+
+
+def t_fuse_counts_every_message_not_only_alerts():
+    """ПРЕДОХРАНИТЕЛЬ СЧИТАЕТ ВСЁ, ЧТО ПРИШЛО НА ТЕЛЕФОН (ТЗ 2.6).
+
+    ═══ ЗАМЕР ПРОДА 26.09 ═══
+    Владельцу ушло 586 сообщений за сутки: 280 алертов, 279 обогащений, 27 сводок; в час пик 101
+    алерт и 100 обогащений. Предохранитель считал ТОЛЬКО алерты, то есть видел меньше половины
+    потока: «не больше 3 за 10 минут» на практике означало семь. Ограничитель, не видящий
+    половину того, что ограничивает, не ограничитель.
+    """
+    uid = UID + 8
+    now = int(time.time())
+    store.settings_set(uid, alerts_on=1, burst_max=3, burst_win_min=10)
+    _b = store.sent_in_window(uid, 600, now)
+    store.sent_log(uid, 'alert', 'k1', 1, now=now)
+    store.sent_log(uid, 'thread', 'k2', 2, now=now)
+    store.sent_log(uid, 'brief', 'k3', 3, now=now)
+    store.sent_log(uid, 'digest', None, 4, now=now)
+    check('FUSE: в окно попали все четыре вида сообщений, а не только алерт',
+          store.sent_in_window(uid, 600, now) - _b == 4,
+          store.sent_in_window(uid, 600, now) - _b)
+    check('FUSE: за пределами окна они не считаются (окно - это окно)',
+          store.sent_in_window(uid, 60, now + 3600) == 0)
+    # ПРЕДОХРАНИТЕЛЬ ВИДИТ ЭТО ЧИСЛО И ГОВОРИТ ПРИЧИНУ ВЕЛИЧИНОЙ, А НЕ ФЛАГОМ.
+    ev = {'kind': 'move_up', 'ticker': 'FUSE', 'severity': 95,
+          'payload': {'venue': 'variational', 'move_pct': 5.0, 'step': 2, 'penalties': []}}
+    _sub(uid, 'FUSE')
+    verdict, why = outbox.mute_reason(uid, ev, now=now)
+    check('FUSE: четыре сообщения при границе 3 - в сводку, и причина числом',
+          verdict == 'digest' and 'предохранитель' in why and '4' in why, (verdict, why))
+    check('FUSE: неизвестный вид сообщения не проглатывается молча',
+          'alert' in store.SENT_KINDS and 'digest' in store.SENT_KINDS, store.SENT_KINDS)
+
+
+def t_digest_says_one_line_per_ticker():
+    """СВОДКА: одна строка на инструмент, и это МАКСИМАЛЬНАЯ величина (ТЗ 2.2).
+
+    Без дедупликации сводка повторяла ровно тот дефект, от которого уходят алерты:
+    развивающееся движение по одному инструменту давало десяток строк про один и тот же SAGA, и
+    «сводка» становилась тем же потоком, собранным в одно сообщение.
+    """
+    uid = UID + 9
+    now = int(time.time())
+    store.settings_set(uid, alerts_on=1, enrich_on=0, quiet_from=None, quiet_to=None)
+    for i, mv in enumerate((3.0, 7.5, 4.2)):
+        k = 'dg-%d-%d' % (now, i)
+        store.event_new({'key': k, 'ts': now, 'kind': 'move_up', 'ticker': 'DGT',
+                         'severity': 60 + i,
+                         'payload': {'mark': 10.0, 'move_pct': mv, 'venue': 'variational',
+                                     'step': 1, 'penalties': []}})
+        store.digest_add(uid, k, 60 + i, 'слабое')
+    k2 = 'dg-other-%d' % now
+    store.event_new({'key': k2, 'ts': now, 'kind': 'move_up', 'ticker': 'OTH',
+                     'severity': 65, 'payload': {'mark': 5.0, 'move_pct': 2.0,
+                                                 'venue': 'variational', 'step': 1,
+                                                 'penalties': []}})
+    store.digest_add(uid, k2, 65, 'слабое')
+    bot = FakeBot()
+    attach(bot)
+    people, rows = asyncio.run(outbox.deliver_digest(now=now + 10 * 60))
+    # СЧИТАЕМ СВОИ СООБЩЕНИЯ: в общем прогоне сводки накопились и у других тестовых людей, и
+    # «получателей ровно один» краснело бы от порядка запуска, а не от дефекта.
+    mine = [t for (c, t) in bot.sent if c == uid]
+    check('DIGEST: этому человеку ушло РОВНО одно сообщение',
+          len(mine) == 1 and people >= 1, (people, rows, len(mine)))
+    body = mine[0] if mine else ''
+    check('DIGEST: по инструменту ОДНА строка, а не три', body.count('DGT') == 1, body)
+    check('DIGEST: и в ней максимальная величина (7.5%, а не 3.0%)',
+          '7.5' in body and '3.0' not in body, body)
+    check('DIGEST: другой инструмент остался отдельной строкой', 'OTH' in body, body)
+    check('DIGEST: свёрнутые события отмечены отправленными и не приедут снова',
+          not store.digest_pending(uid), store.digest_pending(uid))
+
+
+def t_one_move_is_one_thread_not_twelve_alerts():
+    """НИТЬ: 12 событий по одному инструменту за 70 минут дают ОДНУ карточку и пару ответов.
+
+    ═══ ЖИВОЙ ЗАМЕР 26.09: SAGA, 12 АЛЕРТОВ ЗА 70 МИНУТ ═══
+    Причина была не в пороге, а в КЛЮЧЕ события: в него входит ступень силы (|ход| // порог). При
+    часовом пороге 2.5% ход +15% давал ступень 6, +18% - 7, +21% - 8; откат давал новую ступень,
+    «вверх» и «вниз» были разными видами, а пауза по инструменту тоже включала ступень - то есть
+    каждая новая ступень законно открывала себе окно заново. Механизм работал как написан, и
+    «покрутить порог» не изменило бы ничего.
+    ЧТО ПРОВЕРЯЕТСЯ ЗДЕСЬ: первая карточка одна; дальше человек слышит только РОСТ ЧИСЛА, и
+    слышит его ОТВЕТОМ на первую карточку; события, которые не превысили взятую ступень, ложатся
+    в базу без доставки. Сценарий ТЗ воспроизведён числами того же порядка, что были на проде.
+    """
+    now = int(time.time())
+    uid = UID + 7
+    store.settings_set(uid, alerts_on=1, enrich_on=0, daily_cap=200, min_pct=None,
+                       burst_max=50, burst_win_min=10, min_sev=0)
+    _sub(uid, 'SAGA')
+    bot = FakeBot()
+    attach(bot)
+    # ХОД РАСТЁТ И ОТКАТЫВАЕТ, КАК НА ЖИВОМ РЫНКЕ: 12 событий, ступени 6,6,7,7,8,8,...
+    moves = [15.0, 15.4, 18.2, 18.6, 21.1, 21.5, 23.0, 22.8, 21.0, 16.0, 15.5, 15.2]
+    for i, mv in enumerate(moves):
+        step = int(abs(mv) // 2.5)
+        k = 'saga-%d-%d' % (now, i)
+        store.event_new({'key': k, 'ts': now + i * 300, 'kind': 'move_up', 'ticker': 'SAGA',
+                         'severity': 90,
+                         'payload': {'mark': 0.04 + i * 0.001, 'move_pct': mv, 'step': step,
+                                     'window': '60м', 'threshold_pct': 2.5,
+                                     'venue': 'variational', 'penalties': []}})
+        store.delivery_plan(k, uid)
+        asyncio.run(outbox.deliver_due())
+    mine = [t for (c, t) in bot.sent if c == uid]
+    firsts = [t for t in mine if 'Дозорный' in t or 'необычность' in t or 'Оборот' in t
+              or 'оборот' in t]
+    replies = [t for t in mine if 'усилилось' in t or 'откат' in t]
+    check('THREAD: человеку ушла ОДНА полная карточка, а не двенадцать',
+          len(mine) - len(replies) == 1, [t[:60] for t in mine])
+    check('THREAD: продолжений не больше двух (ТЗ: не больше 2 ответов)',
+          len(replies) <= 2, [t[:80] for t in replies])
+    check('THREAD: продолжение говорит НОВЫМ числом, а не повторяет старое',
+          not replies or any('%' in t for t in replies), replies)
+    check('THREAD: и приходит ОТВЕТОМ на первую карточку (нить в интерфейсе)',
+          all(len(bot.sent) >= 1 for _ in replies))
+    _t = store.thread_get('variational', 'SAGA', uid)
+    check('THREAD: нить помнит максимальную ступень и пик', _t and _t['max_step'] >= 6
+          and _t['peak_pct'] is not None, _t)
+    # ОТКАТ ПОСЛЕ ПИКА - ОТДЕЛЬНАЯ НОВОСТЬ, И ОНА СЧИТАЕТСЯ ОТ ПИКА, А НЕ ОТ НУЛЯ.
+    d = outbox._thread_decide(uid, {'kind': 'move_up', 'ticker': 'SAGA',
+                                    'payload': {'venue': 'variational', 'step': 9,
+                                                'move_pct': 12.0, 'threshold_pct': 2.5,
+                                                'window': '60м'}},
+                              now=now + 100000)
+    check('THREAD: нить старше шести часов начинается заново, а не тянется вечно',
+          d['act'] == 'first', d)
+
+
+def t_feed_is_stored_because_window_is_longer_than_page():
+    """ЛЕНТА СМАРТ-МАНИ ХРАНИТСЯ У НАС: окно события длиннее того, что отдаёт один ответ.
+
+    ═══ ЗАМЕР ВЛАДЕЛЬЦА 26.09, КОТОРЫЙ ЭТО ЗАВЁЛ ═══
+    Один вызов `smart-money/dex-trades` (100 сделок) покрывает 44 МИНУТЫ, а окно зажигания - 180.
+    Пока агрегат собирался по последнему ответу, порог «три разных адреса в одном токене за три
+    часа» проверялся по данным за три четверти часа и был НЕДОСТИЖИМ ПРИ ЛЮБОМ ЧИСЛЕ: истории
+    между опросами не существовало, а курсор помнил лишь «эту сделку я уже видел».
+    Из 35 токенов той ленты два адреса собрали пять токенов, три адреса - ни один; единственным
+    токеном с шестью адресами оказался SOL на $6412, то есть мейджор с нулевой долей рынка.
+    """
+    from sentinel import assets, ignition
+    now = int(time.time())
+
+    def _tr(h, sym, addr, who, usd, ts, chain='ethereum', mcap=None):
+        return {'transaction_hash': h, 'token_bought_symbol': sym, 'token_bought_address': addr,
+                'trader_address': who, 'trade_value_usd': usd, 'chain': chain,
+                'block_timestamp': __import__('datetime').datetime.utcfromtimestamp(ts).strftime(
+                    '%Y-%m-%dT%H:%M:%SZ'),
+                'token_bought_market_cap': mcap, 'trader_address_label': 'Smart Trader'}
+
+    # ДВА АДРЕСА ПРИШЛИ ДАВНО (в прошлой «странице»), ТРЕТИЙ - СЕЙЧАС. Раньше первые два к этому
+    # моменту уже уехали из ответа провайдера, и порог не собирался никогда.
+    old = [_tr('0xa1', 'MOON', '0xmoon', '0xw1', 60000, now - 9000, mcap=5e7),
+           _tr('0xa2', 'MOON', '0xmoon', '0xw2', 60000, now - 8400, mcap=5e7)]
+    store.sm_trades_put(ignition.rows_from_feed(old), feed='dex', now=now - 8000)
+    # СЧИТАЕМ СВОИ СТРОКИ, А НЕ ВСЮ ТАБЛИЦУ: в общем прогоне до нас в неё пишут другие тесты, и
+    # проверка «в таблице ровно две записи» краснела бы от порядка запуска, а не от дефекта.
+    _mine = [r for r in store.sm_trades_window(now - 4 * 3600, feed='dex')
+             if r.get('token_address') == '0xmoon']
+    check('FEED: сделки прошлых опросов лежат в базе', len(_mine) == 2, _mine)
+    fresh = [_tr('0xa3', 'MOON', '0xmoon', '0xw3', 60000, now - 120, mcap=5e7)]
+    evs, note = ignition.scan(now=now, fetch=lambda: fresh)
+    kinds = {e['kind'] for e in evs}
+    check('FEED: третий адрес СОБИРАЕТ порог вместе с двумя из базы',
+          'ignition' in kinds, (kinds, note))
+    _ev = [e for e in evs if e['kind'] == 'ignition'][0]
+    check('FEED: в событии три РАЗНЫХ адреса, а не три сделки одного',
+          _ev['payload']['wallets'] == 3, _ev['payload']['wallets'])
+    # ОКНО СТРОГОЕ: сделка старше окна в агрегат не входит, иначе «за три часа» станет «когда-то».
+    g = ignition.group(_mine, now=now + 4 * 3600)
+    check('FEED: за пределами окна агрегат пуст (окно не растягивается молча)', not g, g)
+    # ЛЕНТА КОРОЧЕ ОКНА - ГОВОРИМ ОБ ЭТОМ СЛОВАМИ. Иначе «событий 0» читается как «рынок тихий»,
+    # и через сутки тишины человек идёт искать поломку в пороге (ровно это и было).
+    # СВЕРЯЕМ С ФАКТОМ, А НЕ С ОЖИДАНИЕМ: накопленный размах зависит от того, что записали тесты
+    # до нас, поэтому проверяется соответствие строки замеру, а не сам замер.
+    _span_s, _ = store.sm_trades_span('dex')
+    _short = _span_s < int(config.ign_window_min()) * 60
+    check('FEED: строка итога честно говорит, хватает ли накопленного на окно',
+          ('окно ещё неполное' in note) == _short, (note, _span_s))
+    # ── ОТСЕВ МЕЙДЖОРОВ (замер: единственный кандидат ленты был SOL) ──────────────────────
+    sol = [_tr('0xb%d' % i, 'SOL', '0xsol', '0xs%d' % i, 200000, now - 300, chain='solana',
+               mcap=1.48e9) for i in range(4)]
+    store.sm_trades_put(ignition.rows_from_feed(sol), feed='dex', now=now)
+    evs2, _n2 = ignition.scan(now=now, fetch=lambda: sol)
+    check('FEED: покупка SOL четырьмя умными адресами событием НЕ считается',
+          not [e for e in evs2 if e['payload'].get('symbol') == 'SOL'], evs2)
+    check('FEED: и причина отсева называется словами, а не булевым флагом',
+          'мейджор' in (assets.major_reason('SOL', 1.48e9) or ''),
+          assets.major_reason('SOL', 1.48e9))
+    check('FEED: гигант по капитализации тоже мимо, даже если имени в реестре нет',
+          assets.major_reason('NEWCOIN', 2.5e9) is not None,
+          assets.major_reason('NEWCOIN', 2.5e9))
+    check('FEED: нативная монета сети названа причиной, а не «ончейн недоступен»',
+          'нативная монета' in (assets.major_reason('NEAR') or ''),
+          assets.major_reason('NEAR'))
+    # ── МЕТКА НОВОГО ТОКЕНА: в ключах срезана, человеку показана ──────────────────────────
+    # В ленте прода символ приходит как «🌱 P(DOOM)». Не срежешь - один токен живёт под двумя
+    # именами и порог по адресам не собирается никогда; срежешь молча - потеряешь «ноль дней».
+    clean, is_new = assets.clean_symbol('🌱 P(DOOM)')
+    check('FEED: метка нового токена срезана из символа', clean == 'P(DOOM)', clean)
+    check('FEED: и факт новизны не потерян', is_new is True)
+    newt = [_tr('0xc%d' % i, '🌱 FRESH', '0xfresh', '0xf%d' % i, 60000, now - 200,
+                chain='solana', mcap=3e6) for i in range(3)]
+    e3, _n3 = ignition.scan(now=now, fetch=lambda: newt)
+    _fresh = [e for e in e3 if e['payload'].get('symbol') == 'FRESH']
+    check('FEED: токен с меткой собрался под ОДНИМ именем', _fresh, e3)
+    check('FEED: и новизна доехала до карточки', _fresh and _fresh[0]['payload'].get('is_new'),
+          _fresh[0]['payload'] if _fresh else None)
+    check('FEED: карточка говорит «новый токен» словами',
+          'Новый токен' in cards.card(_fresh[0]), cards.card(_fresh[0])[:200])
+    # ── УБОРКА: только по сроку и только с условием (стоп-правило живой базы) ─────────────
+    store.sm_trades_prune(hours=1, now=now + 7200)
+    _s2, _c2 = store.sm_trades_span('dex')
+    check('FEED: уборка убрала старое и оставила таблицу живой', _c2 >= 0, (_s2, _c2))
+
+
+def t_smart_perp_is_a_side_not_a_purchase():
+    """СМАРТ-ПЕРП (ТЗ 1.7): два разных адреса открыли ОДНУ сторону по одному инструменту.
+
+    ЗАЧЕМ ВИД, КОТОРОГО НЕ БЫЛО. Зажигание видит покупку токена В СЕТИ, а дозорный смотрит за
+    ПЕРПАМИ: смарт-адрес, открывший лонг на Hyperliquid, в DEX-ленте не появляется вовсе. То
+    есть самый близкий к нашему домену сигнал умных денег не читался ни одним видом.
+    СТОРОНА - ЧАСТЬ КЛЮЧА: «двое зашли в лонг» и «один купил, другой продал» это разные новости,
+    и без стороны они слиплись бы в одну.
+    """
+    from sentinel import ignition
+    now = int(time.time())
+
+    def _pt(h, sym, side, who, usd, ts, price=None):
+        return {'transaction_hash': h, 'token_symbol': sym, 'side': side,
+                'trader_address': who, 'value_usd': usd, 'price_usd': price,
+                'trader_address_label': 'Smart Trader',
+                'block_timestamp': __import__('datetime').datetime.utcfromtimestamp(ts).strftime(
+                    '%Y-%m-%dT%H:%M:%SZ')}
+
+    rows = [_pt('0xp1', 'HYPE', 'long', '0xq1', 150000, now - 600, 41.5),
+            _pt('0xp2', 'HYPE', 'long', '0xq2', 150000, now - 300, 41.8)]
+    evs, note = ignition.scan_perp(now=now, fetch=lambda: rows)
+    check('PERP: два адреса в одну сторону на $300k - событие',
+          [e for e in evs if e['kind'] == 'sm_perp'], (evs, note))
+    ev = [e for e in evs if e['kind'] == 'sm_perp'][0]
+    check('PERP: сторона названа', ev['payload']['side'] == 'long', ev['payload'])
+    check('PERP: и сумма сложена по обоим адресам',
+          abs(ev['payload']['usd'] - 300000) < 1, ev['payload']['usd'])
+    txt = cards.card(ev)
+    check('PERP: карточка ведёт СТОРОНОЙ и суммой', 'лонг' in txt and '$300' in txt, txt[:220])
+    check('PERP: дисклеймера «не рекомендация» в карточке нет (этап 3, он в справке)',
+          'не рекомендация' not in txt, txt)
+    # ПРОТИВОПОЛОЖНЫЕ СТОРОНЫ НЕ СКЛАДЫВАЮТСЯ: это не согласованность, а обычный рынок.
+    mixed = [_pt('0xp3', 'FART', 'long', '0xr1', 200000, now - 300),
+             _pt('0xp4', 'FART', 'short', '0xr2', 200000, now - 200)]
+    e2, _ = ignition.scan_perp(now=now, fetch=lambda: mixed)
+    check('PERP: лонг и шорт разных адресов событием НЕ становятся',
+          not [e for e in e2 if e['payload'].get('symbol') == 'FART'], e2)
+    # ОДИН АДРЕС, РЕЗАВШИЙ ВХОД НА ЧАСТИ - ЭТО ОДИН ЧЕЛОВЕК (тот же закон, что у зажигания).
+    one = [_pt('0xp5', 'WIF', 'long', '0xsame', 200000, now - 300),
+           _pt('0xp6', 'WIF', 'long', '0xsame', 200000, now - 200)]
+    e3, _ = ignition.scan_perp(now=now, fetch=lambda: one)
+    check('PERP: один адрес двумя сделками порог НЕ собирает',
+          not [e for e in e3 if e['payload'].get('symbol') == 'WIF'], e3)
+    check('PERP: вид включён по умолчанию', 'sm_perp' in config.DEFAULT_KINDS,
+          config.DEFAULT_KINDS)
+    check('PERP: вид есть в реестре видов детектора', 'sm_perp' in detector.KINDS)
+
+
+def t_liquidation_clusters_and_outcomes_by_kind():
+    """КЛАСТЕРЫ ЛИКВИДАЦИЙ (1.6в) И ИСХОД ПО ВИДУ (1.9) - оба считает КОД, а не модель."""
+    from sentinel import enrichment as en
+    # ── КОРЗИНЫ ПО 1% ЦЕНЫ: значение имеет СКОПЛЕНИЕ, а не одинокая позиция ──────────────
+    rows = [{'liquidation_price': 0.0350, 'position_value_usd': 600000},
+            {'liquidation_price': 0.0351, 'position_value_usd': 500000},
+            {'liquidation_price': 0.0450, 'position_value_usd': 600000},
+            {'liquidation_price': 0.0300, 'position_value_usd': 3000}]
+    line = en._liq_line(rows, 0.0418)
+    check('LIQ: названы обе стороны и расстояние в процентах',
+          line and 'лонгов' in line and 'шортов' in line and '%' in line, line)
+    check('LIQ: скопление сложено в один уровень ($1.1M, а не две строки)',
+          line and '$1.1' in line, line)
+    check('LIQ: одинокая позиция на $3k уровнем НЕ называется',
+          line and '0.03' not in line.split('лонгов')[1][:14], line)
+    check('LIQ: без цены не выдумываем ничего', en._liq_line(rows, 0) is None)
+    # ── ИСХОД ПО ВИДУ: три класса видов - три разных ответа ──────────────────────────────
+    # Прежний отчёт считал «продолжением» рост для move_up, ignition и oi_surge: move_down не
+    # оценивался вовсе, а скачок интереса считался лонговым, хотя интерес растёт и на входе в
+    # шорт. По этой цифре человек решает, верить ли дозору.
+    down = [('k%d' % i, -2.0, 'move_down') for i in range(10)]
+    txt = engine._rate_text(down, 'move_down', 7, 60)
+    check('RATE: падение после move_down считается ПОПАДАНИЕМ',
+          '100%' in txt, txt)
+    up_wrong = [('k%d' % i, -2.0, 'move_up') for i in range(10)]
+    check('RATE: падение после move_up попаданием НЕ считается',
+          '0%' in engine._rate_text(up_wrong, 'move_up', 7, 60),
+          engine._rate_text(up_wrong, 'move_up', 7, 60))
+    oi = [('o%d' % i, (1.5 if i % 2 else 0.2), 'oi_surge') for i in range(10)]
+    t_oi = engine._rate_text(oi, 'oi_surge', 7, 60)
+    check('RATE: у вида без направления процент попаданий НЕ печатается',
+          'направление НЕ утверждалось' in t_oi, t_oi)
+    check('RATE: вместо него - медиана хода и доля ходов больше процента',
+          'медиана' in t_oi and 'больше 1%' in t_oi, t_oi)
+    # С ФИНАЛЬНОГО ЗАХОДА ИСХОД РАСХОЖДЕНИЯ - ИЗМЕНЕНИЕ САМОЙ КРОМКИ В ПРОЦЕНТАХ (outcome_tick):
+    # -50 и ниже значит «сошлась вдвое». 7 из 10 сошлись, 3 - нет.
+    gap = [('g%d' % i, (-80.0 if i < 7 else 10.0), 'venue_gap') for i in range(10)]
+    _gt = engine._rate_text(gap, 'venue_gap', 7, 60)
+    check('RATE: у расхождения исход - сошлась ли кромка, числом', 'сошлась вдвое и больше у 7 (70%)'
+          in _gt, _gt)
 
 
 def t_venues_are_data_not_branches():
@@ -1463,7 +2531,7 @@ def t_venue_filter_and_presets_are_personal():
     """ПЛОЩАДКА И ПРЕСЕТ - ЛИЧНЫЕ НАСТРОЙКИ. Отсев по площадке стоит на доставке."""
     uid = 991500
     store.settings_set(uid, alerts_on=1, enrich_on=0, venues=None, kinds=None)
-    store.sub_add(uid, 'BTC')
+    _sub(uid, 'BTC')
     check('VF: по умолчанию слушаем все живые площадки',
           store.venues_for(uid) == set(venues.live()), store.venues_for(uid))
     now = int(time.time())
@@ -1481,21 +2549,23 @@ def t_venue_filter_and_presets_are_personal():
     store.event_new(ev2)
     check('VF: после включения - уходит', outbox.plan(ev2)[0] == 1)
     # ── ПРЕСЕТЫ: ОТВЕТ НА «КАКИЕ НАСТРОЙКИ ВЫСТАВИТЬ, ЧТОБЫ ПОБОЛЬШЕ АЛЕРТОВ» ──
+    # С ЭТАПА 4 «тестовый» пресет называется «Поток» (старое имя - алиас для старых кнопок).
     nm, why2 = store.preset_apply(uid, 'test')
     s = store.settings(uid)
-    check('PRESET: «поток» применился и назвал себя словами',
-          nm == 'test' and 'пауза 10 минут' in why2, (nm, why2))
+    check('PRESET: «поток» применился и назвал себя словами (старое имя - алиас)',
+          nm == 'flow' and 'Поток' in why2 and 'потолок в сутки 120' in why2, (nm, why2))
     check('PRESET: пауза опущена', s['cooldown_min'] == 10, s['cooldown_min'])
     check('PRESET: потолок поднят', store.cap_for(uid) == 120, store.cap_for(uid))
     check('PRESET: личный порог снят (ловим всё, что даёт общий)',
           s['min_pct'] is None, s['min_pct'])
-    check('PRESET: спред и фандинг в поток НЕ включены (они не повод звонить)',
-          'spread_shock' not in store.kinds_for(uid)
-          and 'funding_extreme' not in store.kinds_for(uid), store.kinds_for(uid))
+    # ТЗ 4.1: «Поток» - ВСЕ виды, включая расхождение, спред и фандинг (инструмент проверки).
+    check('PRESET: в «Поток» входят все виды, включая спред, фандинг и расхождение',
+          {'spread_shock', 'funding_extreme', 'venue_gap'} <= store.kinds_for(uid),
+          store.kinds_for(uid))
     store.preset_apply(uid, 'quiet')
-    check('PRESET: «тихий» ставит порог и длинную паузу',
-          store.settings(uid)['min_pct'] == 3.0 and store.settings(uid)['cooldown_min'] == 180,
-          store.settings(uid))
+    check('PRESET: «тихий» ставит порог 5% и паузу три часа (ТЗ 4.1)',
+          store.settings(uid)['min_pct'] == 5.0 and store.settings(uid)['cooldown_min'] == 180
+          and store.cap_for(uid) == 6, store.settings(uid))
     check('PRESET: чужое имя - отказ со словом',
           store.preset_apply(uid, 'нет такого')[0] is None)
     check('PRESET: пресет НЕ трогает общие пороги детектора',
@@ -1570,11 +2640,12 @@ def t_every_screen_leads_further():
             (now, p1, 9e8, 1000.0, 900.0, 0.05, 1.0, now)]
     kb = ui.now_kb('ru')
     data = [b.callback_data for row in (kb.inline_keyboard if kb else []) for b in row]
-    check('CROSS: под срезом рынка есть кнопки тикеров',
-          any(d.startswith('sen:card:') for d in data), data)
-    check('CROSS: кнопка несёт И площадку, И тикер',
-          'sen:card:variational:AAA' in data, data)
-    check('CROSS: кнопка возврата в дозор тоже есть', 'sen:home' in data, data)
+    # С ЭТАПА 3 ТИКЕР - ССЫЛКА В ТЕКСТЕ, А НЕ РЯД КНОПОК (та же дверь, что у `sen:card`).
+    _nt = ui.now_text('ru', 'testbot')
+    check('CROSS: тикер в срезе рынка - ссылка на карточку инструмента',
+          '?start=sen_variational_AAA' in _nt, _nt)
+    check('CROSS: рядов кнопок-тикеров под срезом нет, возврат в дозор есть',
+          data == ['sen:home'], data)
     check('CROSS: цена для сопоставления берётся из кольца, а не запросом',
           engine.last_mark('AAA') == 102.0, engine.last_mark('AAA'))
     check('CROSS: тикера, которого мы не видели, в кольце нет',
@@ -1697,26 +2768,42 @@ def t_crowd_and_absorption_describe_not_predict():
                                quote_iso=_iso(now)), hot, now=now, ring=ring_f)
     check('CROWD: перекос без дорогой ставки событием НЕ считается',
           'crowded' not in {e['kind'] for e in calm}, {e['kind'] for e in calm})
-    # ── ПОГЛОЩЕНИЕ: интерес растёт, цена стоит ──
+    # ── ПОГЛОЩЕНИЕ: интерес растёт, цена стоит. С ТЗ 2.4 - СТРОКА КАРТОЧКИ СКАЧКА ИНТЕРЕСА ──
     ring = series(60, now - 60 * 900)
-    hot2 = [(now - 3600, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 3600)]
-    ab = detector.detect(one(mark='100.2', oi_l='4000', oi_s='900', quote_iso=_iso(now)),
+    hot2 = [hot1(now - 3600)]
+    ab = detector.detect(one(mark='100.2', oi_l='4000000', oi_s='900000', vol='50000000',
+                             quote_iso=_iso(now)),
                          hot2, now=now, ring=ring)
-    kinds = {e['kind'] for e in ab}
-    check('ABSORB: интерес +150% при стоящей цене - событие', 'absorption' in kinds, kinds)
-    a0 = [e for e in ab if e['kind'] == 'absorption'][0]
+    kinds = [e['kind'] for e in ab]
+    # ═══ НЕ ДВЕ КАРТОЧКИ НА ОДИН СКАЧОК (ТЗ 2.4) ═══
+    # Прежде этот замер давал `oi_surge` И `absorption` - два сообщения про один факт.
+    check('ABSORB: скачок интереса при стоящей цене - ОДНО событие, а не два',
+          kinds.count('oi_surge') == 1 and 'absorption' not in kinds, kinds)
+    a0 = [e for e in ab if e['kind'] == 'oi_surge'][0]
+    check('ABSORB: признак поглощения лежит в payload скачка',
+          a0['payload'].get('absorption') is True, a0['payload'].get('absorption'))
     txt2 = cards.card(a0)
-    check('ABSORB: карточка ведёт интересом и говорит «цена стоит»',
-          'а цена стоит' in txt2, txt2[:140])
+    check('ABSORB: карточка скачка называет поглощение строкой, с ценой за час числом',
+          'Поглощение' in txt2 and 'цена за час' in txt2, txt2)
     check('ABSORB: и честно признаёт, что направления здесь нет',
           'Подтверждения направления здесь нет' in txt2, txt2)
+    check('ABSORB: строка сводки тоже говорит «цена стоит»',
+          'цена стоит' in cards.digest_line(a0), cards.digest_line(a0))
+    _en2 = cards.card(a0, lang='en')
+    check('ABSORB: EN-строка поглощения без кириллицы (закон 20)',
+          'Absorption' in _en2 and 'no confirmation of direction' in _en2, _en2)
     # ЦЕНА УШЛА - ЭТО УЖЕ НЕ ПОГЛОЩЕНИЕ, А ДВИЖЕНИЕ
-    moved = detector.detect(one(mark='104.0', oi_l='4000', oi_s='900', quote_iso=_iso(now)),
+    moved = detector.detect(one(mark='104.0', oi_l='4000000', oi_s='900000', vol='50000000',
+                                quote_iso=_iso(now)),
                             hot2, now=now, ring=ring)
+    _mo = [e for e in moved if e['kind'] == 'oi_surge']
     check('ABSORB: при ушедшей цене поглощением это не называется',
-          'absorption' not in {e['kind'] for e in moved}, {e['kind'] for e in moved})
-    check('ABSORB: оба вида включены по умолчанию',
-          {'crowded', 'absorption'} <= set(config.DEFAULT_KINDS), config.DEFAULT_KINDS)
+          _mo and not _mo[0]['payload'].get('absorption')
+          and 'Поглощение' not in cards.card(_mo[0]),
+          [e['kind'] for e in moved])
+    check('ABSORB: толпа по умолчанию включена, поглощения в наборе видов больше нет',
+          'crowded' in config.DEFAULT_KINDS and 'absorption' not in config.DEFAULT_KINDS
+          and 'absorption' not in detector.KINDS, (config.DEFAULT_KINDS, detector.KINDS))
 
 
 def t_write_after_many_reads():
@@ -1732,7 +2819,7 @@ def t_write_after_many_reads():
     """
     uid = 991700
     now = int(time.time())
-    store.sub_add(uid, 'LOCKTEST')
+    _sub(uid, 'LOCKTEST')
     store.settings_set(uid, alerts_on=1, enrich_on=0)
     ev = {'kind': 'move_up', 'ticker': 'LOCKTEST', 'ts': now, 'severity': 80,
           'key': 'lock%d' % now,
@@ -1849,17 +2936,18 @@ def t_funding_unit_is_measured_not_guessed():
     # КАРТОЧКА: ГОДОВЫЕ ТАМ, ГДЕ ИЗМЕРЕНО; ИМЯ ПОЛЯ ТАМ, ГДЕ НЕТ.
     _known = cards.funding_line({'venue': 'variational', 'funding_raw': 0.1095,
                                  'funding_interval_s': 28800})
-    check('FUND: карточка ведёт годовыми процентами', '10.95% годовых' in _known, _known)
-    check('FUND: и говорит, КТО платит', 'платят лонги' in _known, _known)
-    check('FUND: сырое поле остаётся рядом - иначе нас нечем проверить',
-          '0.1095' in _known, _known)
+    # С ЭТАПА 3 БАЗОВАЯ СТАВКА - ОДНИМ СЛОВОМ: 10.95% годовых - устройство площадки, не сигнал.
+    check('FUND: базовая ставка Variational - «Фандинг базовый»', _known == 'Фандинг базовый',
+          _known)
+    check('FUND: без «платят лонги» и без сырого 0.1095 / 8ч',
+          'платят' not in _known and '0.1095' not in _known, _known)
     _neg = cards.funding_line({'venue': 'variational', 'funding_raw': -0.0821,
                               'funding_interval_s': 14400})
     check('FUND: отрицательная ставка читается как «платят шорты»', 'платят шорты' in _neg, _neg)
     _unknown = cards.funding_line({'venue': '__чужая__', 'funding_raw': 0.05,
                                    'funding_interval_s': 3600})
-    check('FUND: без замера карточка честно печатает ИМЯ ПОЛЯ, а не выдуманные проценты',
-          'funding_rate' in _unknown and 'годовых' not in _unknown, _unknown)
+    check('FUND: без замера единицы строки нет вовсе - выдуманных процентов тоже',
+          _unknown is None, _unknown)
     # ПОРОГ, КОТОРЫЙ ДЕВЯТЬ КРУГОВ БЫЛ МЁРТВЫМ, ТЕПЕРЬ ЧИТАЕТСЯ.
     import inspect
     _src = inspect.getsource(detector.detect)
@@ -2027,7 +3115,7 @@ def t_one_connection_per_thread_not_per_call():
           'кэш соединения из пула исчерпал бы пул и остановил бота')
     before = len([o for o in gc.get_objects() if isinstance(o, sqlite3.Connection)])
     uid = 778001
-    store.sub_add(uid, 'BTC')
+    _sub(uid, 'BTC')
     store.settings_set(uid, alerts_on=1)
     # РОВНО ТА СЕРИЯ ЧТЕНИЙ, ЧТО ДЕЛАЕТ `outbox.plan` ПЕРЕД ЗАПИСЬЮ.
     for _ in range(3):
@@ -2102,7 +3190,8 @@ def t_lab_body_matches_the_venue_schema():
     check('LAB: одиночного chain в теле больше нет', "'chain':" not in src)
     check('LAB: date_range на месте', "'date_range'" in src)
     check('LAB: и все три замера записаны рядом с кодом',
-          'date_range' in src and 'YYYY-MM-DD' in src and 'list of chain names' in src)
+          all(_gt.in_prose_of(src, _w, allow_negated=True)
+              for _w in ('date_range', 'YYYY-MM-DD', 'list of chain names')))
     r = lab._days_range(30)
     check('LAB: дата без времени', 'T' not in r['from'] and 'Z' not in r['to'], r)
     # ── РЕМОНТ ПОНИМАЕТ ПОДСКАЗКУ ПРО СПИСОК (дословный текст с прода) ───────────────────
@@ -2207,7 +3296,7 @@ def t_silence_names_the_cap_and_the_dead_poller():
     """
     now = int(time.time())
     uid = 660002
-    store.sub_add(uid, store.ALL)
+    _sub(uid, store.ALL)
     store.settings_set(uid, alerts_on=1, daily_cap=25)
     c = store.conn()
     for i in range(147):
@@ -2309,6 +3398,28 @@ def t_bot_takes_over_a_dead_poller():
     check('FIX: и говорит, что опрос подхватится сам', 'подхватит опрос' in t1, t1)
     check('FIX: ведёт ЗАМЕРАМИ - снимки за 5 минут и за час',
           'Снимков за 5 минут' in t1, t1)
+    # ── ЭКРАН НАЗЫВАЕТ РОЛЬ ОПРАШИВАЮЩЕГО (ЗАМЕР 26.09) ──────────────────────────────────
+    # «Юнит опрашивает» и «бот подхватил вместо юнита» - РАЗНЫЕ новости: вторая означает, что
+    # отдельный юнит не работает, и смотреть надо его лог. До 26.09 узнать это из чата было
+    # нечем: владелец аренды был безымянным «хост:pid».
+    _lease('poller@unit:7', now + 300)
+    check('FIX: роль опрашивающего названа словами - отдельный юнит',
+          'Опрашивает' in ui.fix_polling(uid, now=now)
+          and 'отдельный юнит' in ui.fix_polling(uid, now=now),
+          ui.fix_polling(uid, now=now))
+    _lease('deliver@bot:9', now + 300)
+    check('FIX: подхват ботом назван прямо, а не спрятан',
+          'подхватил вместо юнита' in ui.fix_polling(uid, now=now),
+          ui.fix_polling(uid, now=now))
+    # ЭКРАН ДВУЯЗЫЧЕН (закон 20): по экранам ходит обходчик и требует отсутствия кириллицы на en.
+    _en = ui.fix_polling(uid, now=now, lang='en')
+    check('FIX: на английском экране нет кириллицы',
+          not __import__('re').search(r'[А-Яа-яЁё]', _en), _en)
+    check('FIX: и на английском он тоже ведёт замерами и ролью',
+          'Snapshots in 5 min' in _en and 'Polling by' in _en, _en)
+    # ДЛИННЫХ ТИРЕ В ТЕКСТАХ БОТА НЕТ (закон 9) - проверяем оба языка.
+    check('FIX: длинных тире в экране нет ни на одном языке',
+          '—' not in ui.fix_polling(uid, now=now) and '—' not in _en)
     # ПРОЦЕСС ЖИВ, НО НЕ РАБОТАЕТ - самый коварный случай: кнопка честно говорит, что бессильна.
     _lease('host:1', now + 300)
     t2 = ui.fix_polling(uid, now=now)
@@ -2497,7 +3608,7 @@ def t_the_switch_actually_switches_off():
     """
     now = int(time.time())
     uid = 777001
-    store.sub_add(uid, 'BTC')
+    _sub(uid, 'BTC')
     store.settings_set(uid, alerts_on=1, enrich_on=0, daily_cap=None, cooldown_min=None,
                        min_pct=None, quiet_from=None, quiet_to=None)
     ev = _ev_for(now=now)
@@ -2574,7 +3685,7 @@ def t_burst_guard_is_a_boundary_not_a_setting():
     """
     now = int(time.time())
     uid = 777002
-    store.sub_add(uid, store.ALL)
+    _sub(uid, store.ALL)
     # ПРЕСЕТ «ПОТОК» - САМЫЕ РАЗРЕШАЮЩИЕ НАСТРОЙКИ, КАКИЕ ЧЕЛОВЕК МОЖЕТ ВЫБРАТЬ.
     store.preset_apply(uid, 'test')
     store.settings_set(uid, enrich_on=0, quiet_from=None, quiet_to=None)
@@ -2590,19 +3701,19 @@ def t_burst_guard_is_a_boundary_not_a_setting():
         outbox.plan(e)
         asyncio.run(outbox.deliver_due())
     got = len([c for c, _t in bot.sent if c == uid])
-    check('BURST: ушло не больше границы (%d), а не десять' % config.burst_max(),
-          got <= config.burst_max(), got)
+    _bm = store.burst_for(uid)[0]
+    check('BURST: ушло не больше границы пресета (%d), а не десять' % _bm, got <= _bm, got)
     check('BURST: и при этом ушло хоть что-то - молчать предохранитель не должен', got > 0, got)
     pend = store.digest_pending(uid)
     check('BURST: остальное НЕ ПОТЕРЯНО, а лежит в сводке',
-          len(pend) >= 10 - config.burst_max() - 1, len(pend))
+          len(pend) >= 10 - _bm - 1, len(pend))
     check('BURST: у каждой отложенной строки есть ПРИЧИНА отсрочки',
           all(r[2] for r in pend), pend[:3])
     check('BURST: причина называется величиной, а не словом «лимит»',
           any('предохранитель' in (r[2] or '') for r in pend), [r[2] for r in pend[:3]])
     # ГРАНИЦА ПОВЕРХ ЛЮБЫХ НАСТРОЕК: человек выкрутил всё, что мог, и всё равно не залит.
-    check('BURST: пресет «поток» предохранитель НЕ СНЯЛ',
-          got <= config.burst_max(),
+    check('BURST: пресет «поток» предохранитель НЕ СНЯЛ (5 из 10 по ТЗ, не 10)',
+          got <= _bm < 10,
           'иначе ошибка в пресете снова заливала бы человека до невозможности нажать кнопку')
 
 
@@ -2610,7 +3721,7 @@ def t_weak_events_do_not_ring():
     """СЛАБОЕ СОБЫТИЕ НЕ ЗВОНИТ, А ИДЁТ В СВОДКУ. Уверенность — величина, а не украшение."""
     now = int(time.time())
     uid = 777003
-    store.sub_add(uid, 'BTC')
+    _sub(uid, 'BTC')
     store.settings_set(uid, alerts_on=1, enrich_on=0, daily_cap=None, cooldown_min=None,
                        min_pct=None, quiet_from=None, quiet_to=None)
     ev = _ev_for(now=now)
@@ -2635,7 +3746,7 @@ def t_digest_is_one_message_sorted_by_strength():
     """СВОДКА: одно сообщение, сильное сверху, кнопки на карточки, остаток назван числом."""
     now = int(time.time())
     uid = 777004
-    store.sub_add(uid, store.ALL)
+    _sub(uid, store.ALL)
     store.settings_set(uid, alerts_on=1, enrich_on=0, quiet_from=None, quiet_to=None)
     keys = []
     for i, sev in enumerate((55, 95, 70, 88)):
@@ -2674,15 +3785,20 @@ def t_digest_is_one_message_sorted_by_strength():
     check('DIG: сводка размечена HTML', '<b>' in txt)
     check('DIG: строки отмечены отправленными', not store.digest_pending(uid),
           store.digest_pending(uid))
+    # СЧИТАЕМ ИМЕННО ЭТОГО ЧЕЛОВЕКА: с этапа 4 период сводки личный, и у соседей по прогону
+    # (пресет «Тихий» - 60 мин) их сводка законно уезжает именно на этом шаге.
+    _mine0 = len([c for c, _t in bot.sent if c == uid])
+    asyncio.run(outbox.deliver_digest(now=now + 99999))
     check('DIG: повторно та же сводка не уедет',
-          asyncio.run(outbox.deliver_digest(now=now + 99999))[0] == 0)
+          len([c for c, _t in bot.sent if c == uid]) == _mine0)
     kb = cards.digest_kb([{'ev': store.event(k), 'why': ''} for k, _s in keys])
     flat = [b for row in (kb.inline_keyboard if kb else []) for b in row]
-    check('DIG: под сводкой кнопки-тикеры (сквозной сценарий)',
-          any('DG0' in (b.text or '') for b in flat), [b.text for b in flat])
-    check('DIG: кнопка ведёт в карточку инструмента, а не в никуда',
-          any((b.callback_data or '').startswith('sen:card:') for b in flat),
-          [b.callback_data for b in flat])
+    # С ЭТАПА 3 РЯДА КНОПОК-ТИКЕРОВ НЕТ: тикер в строке сводки - сам ссылка на карточку.
+    check('DIG: под сводкой ОДНА кнопка «Дозорный», тикеров-кнопок нет',
+          [b.callback_data for b in flat] == ['sen:home'], [b.callback_data for b in flat])
+    _dl = cards.digest_line(store.event(keys[0][0]), bot_un='testbot')
+    check('DIG: тикер в строке сводки - ссылка на карточку инструмента',
+          '?start=sen_variational_DG' in _dl, _dl)
     # ОСТАТОК НАЗЫВАЕТСЯ ЧИСЛОМ
     many = [{'ev': store.event(k), 'why': 'x'} for k, _s in keys]
     card_txt = cards.digest_card(many, extra=34)
@@ -2700,7 +3816,7 @@ def t_queue_is_taken_by_one_process_only():
     """
     now = int(time.time())
     uid = 777005
-    store.sub_add(uid, 'ETH')
+    _sub(uid, 'ETH')
     store.settings_set(uid, alerts_on=1, enrich_on=0, daily_cap=None, cooldown_min=None,
                        min_pct=None, quiet_from=None, quiet_to=None)
     ev = _ev_for(ticker='ETH', mark='104.0', now=now)
@@ -2725,7 +3841,7 @@ def t_emergency_switch_stops_everything():
     """АВАРИЙНЫЙ РУБИЛЬНИК: `SENTINEL_DELIVER=0` глушит отправку целиком и говорит об этом."""
     now = int(time.time())
     uid = 777006
-    store.sub_add(uid, 'BTC')
+    _sub(uid, 'BTC')
     store.settings_set(uid, alerts_on=1, enrich_on=0, daily_cap=None, cooldown_min=None,
                        min_pct=None, quiet_from=None, quiet_to=None)
     ev = _ev_for(mark='109.0', now=now)
@@ -2786,7 +3902,8 @@ def t_lab_field_name_came_from_the_venue():
     src = inspect.getsource(lab.holdings)
     check('LAB: в теле запроса стоит date_range', "'date_range'" in src, src[:200])
     check('LAB: старого имени поля больше нет', "'date':" not in src)
-    check('LAB: и живой замер записан рядом с кодом', 'date_range' in src and '422' in src)
+    check('LAB: и живой замер записан рядом с кодом',
+          all(_gt.in_prose_of(src, _w, allow_negated=True) for _w in ('date_range', '422')))
     calls, credits, line = lab.plan(['0xabc'], 30)
     check('LAB: план расхода печатается ДО траты', 'План:' in line and str(credits) in line)
     rows, refused = lab.holdings('ethereum', '0xabc', days=30)
@@ -2818,6 +3935,827 @@ class _Ctx:
         async def send_message(chat_id=None, text=None, **kw):
             _Ctx.bot.sent.append((chat_id, text))
             return True
+
+
+def t_vol_and_oi_thresholds_are_measured_2_4():
+    """ТЗ 2.4: ОБОРОТ МЕРИТСЯ СВОИМ ОБЫЧНЫМ ЧАСОМ, ИНТЕРЕС - ОБОРОТОМ, ОБРАТНАЯ НОГА НЕ ЗВОНИТ.
+
+    Каждый порог проверяется ПО ОТДЕЛЬНОСТИ: сценарий, где два других порога пройдены, а
+    проверяемый - нет. Иначе тест был бы зелёным у кода, где сработал соседний порог.
+    """
+    import os as _os
+    now = 1800000000
+
+    def _ring(hours, vols=None, ois=None):
+        """Кольцо на `hours` часов по 15 минут; оборот и интерес - функции номера точки."""
+        n = hours * 4
+        base = series(n, now - n * 900)
+        return [(r[0], r[1], (vols(i) if vols else r[2]), r[3], r[4], r[5], r[6], r[7],
+                 (ois(i) if ois else r[8])) for i, r in enumerate(base)]
+
+    def _vol(ring, v_now, v_then, lst_kw=None):
+        hot = [(now - 3600, 100.0, v_then, 1000.0, 900.0, 0.05, 1.0, now - 3600, 1.9e6)]
+        return [e for e in detector.detect(one(mark='100.0', vol=str(v_now), quote_iso=_iso(now),
+                                               **(lst_kw or {})),
+                                           hot, now=now, ring=ring)
+                if e['kind'] == 'vol_surge']
+
+    # ── ОБОРОТ: нет медианы (15 часов кольца) - нет события, и молчание названо в лог ──
+    import io as _io
+    import contextlib as _cl
+    detector._SURGE_SAID.clear()
+    _buf = _io.StringIO()
+    with _cl.redirect_stdout(_buf):
+        _no_med = _vol(series(60, now - 60 * 900), 3.0e6, 1.0e6)
+    check('VOL24: без медианы часовых приростов события нет (закон 41)', not _no_med, _no_med)
+    check('VOL24: и молчание названо числом часов в логе',
+          'медианы часовых приростов нет' in _buf.getvalue() and 'нужно' in _buf.getvalue(),
+          _buf.getvalue()[-200:])
+    # ── МЕДИАНА: обычный час этого инструмента $600k -> порог 3 x = $1.8M ──
+    # Оборот 24ч растёт на $600k каждый час (поквартально +150k), значит |изменение| часа $600k.
+    _busy = _ring(26, vols=lambda i: 1.0e7 + 150000.0 * i)
+    _below = _vol(_busy, 2.2e7 + 1.5e6, 2.2e7)
+    check('VOL24: +$1.5M при обычном часе $600k НЕ событие (нужно 3 x медиана = $1.8M)',
+          not _below, [e['payload'].get('vol_threshold_usd') for e in _below])
+    _above = _vol(_busy, 2.2e7 + 2.0e6, 2.2e7)
+    check('VOL24: +$2.0M при том же обычном часе - событие',
+          len(_above) == 1, _above)
+    _pa = _above[0]['payload'] if _above else {}
+    check('VOL24: сработавший порог назван: медиана часа',
+          'медиана' in (_pa.get('vol_threshold_src') or '')
+          and abs((_pa.get('vol_median_usd') or 0) - 6.0e5) < 1.0
+          and abs((_pa.get('vol_threshold_usd') or 0) - 1.8e6) < 1.0, _pa)
+    _txt = cards.card(_above[0]) if _above else ''
+    check('VOL24: карточка печатает порог и обычный час числом',
+          'Порог' in _txt and 'обычный час' in _txt, _txt)
+    # ── 5% ОБОРОТА: у крупного инструмента +$1.5M - его обычное дыхание ──
+    _flat = _ring(26)                                  # оборот стоит: медиана 0
+    _big_no = _vol(_flat, 4.0e7, 4.0e7 - 1.5e6)
+    check('VOL24: +$1.5M при обороте $40M НЕ событие (5% = $2M)',
+          not _big_no, [e['payload'] for e in _big_no])
+    _big_yes = _vol(_flat, 4.0e7, 4.0e7 - 2.5e6)
+    check('VOL24: +$2.5M при обороте $40M - событие, порог назван долей оборота',
+          len(_big_yes) == 1 and 'оборота' in _big_yes[0]['payload']['vol_threshold_src'],
+          [e['payload'].get('vol_threshold_src') for e in _big_yes])
+    # ── НИЖНЯЯ ГРАНИЦА: медиана 0, 5% = копейки - решает $500k ──
+    _tiny = _vol(_flat, 1.0e6 + 4.0e5, 1.0e6)
+    check('VOL24: +$400k у тонкого инструмента НЕ событие (нижняя граница $500k)', not _tiny,
+          _tiny)
+    # ── СНЯТЫЙ КЛЮЧ ГОВОРИТ О СЕБЕ ──
+    _old = _os.environ.get('SENTINEL_VOL_PCT')
+    _os.environ['SENTINEL_VOL_PCT'] = '40'
+    try:
+        _lines = config.retired_env_lines()
+    finally:
+        if _old is None:
+            _os.environ.pop('SENTINEL_VOL_PCT', None)
+        else:
+            _os.environ['SENTINEL_VOL_PCT'] = _old
+    check('VOL24: SENTINEL_VOL_PCT в .env называет себя снятым, а не молча игнорируется',
+          any('SENTINEL_VOL_PCT' in _l and 'больше не читается' in _l for _l in _lines), _lines)
+    check('VOL24: у конфига нет мёртвой ручки vol_pct/absorb_oi_pct',
+          not hasattr(config, 'vol_pct') and not hasattr(config, 'absorb_oi_pct'))
+
+    # ── ИНТЕРЕС: max($250k, 3% оборота 24ч) ───────────────────────────────────────────────
+    ring = series(60, now - 60 * 900)
+    _hot = [hot1(now - 3600, oi_usd=1.0e7)]
+
+    def _oi(oi_now, vol, ring_=ring, hot_=_hot):
+        return [e for e in detector.detect(
+            one(mark='100.0', oi_l=str(oi_now), oi_s='0', vol=str(vol), quote_iso=_iso(now)),
+            hot_, now=now, ring=ring_) if e['kind'] == 'oi_surge']
+
+    # +$4M (+40%) при обороте $200M: 3% = $6M
+    check('OI24: +$4M (+40%) при обороте $200M НЕ событие (3% оборота = $6M)',
+          not _oi(1.4e7, 2.0e8), 'порог в деньгах от оборота не применён')
+    _ok = _oi(1.8e7, 2.0e8)
+    check('OI24: +$8M (+80%) при том же обороте - событие, порог назван долей оборота',
+          _ok and 'оборота' in _ok[0]['payload']['oi_threshold_src']
+          and abs(_ok[0]['payload']['oi_threshold_usd'] - 6.0e6) < 1.0,
+          [e['payload'].get('oi_threshold_src') for e in _ok])
+    # процент по-прежнему обязателен: +$3M это +15% к $20M
+    _hot20 = [hot1(now - 3600, oi_usd=2.0e7)]
+    check('OI24: +15% к интересу НЕ событие, даже если деньги прошли (процент обязателен)',
+          not _oi(2.3e7, 5.0e7, hot_=_hot20), 'процентный порог потерян')
+    _txt_oi = cards.card(_ok[0]) if _ok else ''
+    check('OI24: карточка печатает порог прироста', 'Порог прироста' in _txt_oi, _txt_oi)
+
+    # ── ОБРАТНАЯ НОГА: интерес $10M -> $20M -> назад к $10.5M за три часа ─────────────────
+    # Кольцо: до now-2ч интерес $10M, дальше $20M. Час назад (горячая точка) - $20M.
+    # Оборот $100M: 3% = $3M, так что порог в деньгах проходят все сценарии ниже.
+    _rt_ring = _ring(26, ois=lambda i: (1.0e7 if (now - 26 * 3600 + i * 900) < now - 7200
+                                        else 2.0e7))
+    _hot_top = [hot1(now - 3600, oi_usd=2.0e7)]
+    _back = _oi(1.05e7, 1.0e8, ring_=_rt_ring, hot_=_hot_top)
+    check('ROUND: возврат интереса к старту прошлого скачка - событие с round_trip=1',
+          _back and _back[0]['payload']['round_trip'] == 1
+          and abs(_back[0]['payload']['round_trip_from_oi'] - 1.0e7) < 1.0,
+          [e['payload'].get('round_trip') for e in _back])
+    # возврат лишь на треть - это не обратная нога (допуск 20% ОТ СКАЧКА, а не от уровня)
+    _part = _oi(1.5e7, 1.0e8, ring_=_rt_ring, hot_=_hot_top)
+    check('ROUND: возврат на половину скачка - НЕ обратная нога',
+          _part and _part[0]['payload']['round_trip'] == 0,
+          [e['payload'].get('round_trip') for e in _part])
+    # первая нога: до неё интерес стоял на СТАРОМ уровне - не обратная
+    _first_ring = _ring(26, ois=lambda i: 1.0e7)
+    _first = _oi(2.0e7, 1.0e8, ring_=_first_ring, hot_=[hot1(now - 3600, oi_usd=1.0e7)])
+    check('ROUND: первая нога скачка обратной не считается',
+          _first and _first[0]['payload']['round_trip'] == 0,
+          [e['payload'].get('round_trip') for e in _first])
+    # за пределами окна (старт был 5 часов назад) - уже не обратная нога
+    _old_ring = _ring(26, ois=lambda i: (1.0e7 if (now - 26 * 3600 + i * 900) < now - 5 * 3600
+                                         else 2.0e7))
+    _late = _oi(1.05e7, 1.0e8, ring_=_old_ring, hot_=_hot_top)
+    check('ROUND: старт прошлого скачка старше 3 часов - обычное событие',
+          _late and _late[0]['payload']['round_trip'] == 0,
+          [e['payload'].get('round_trip') for e in _late])
+    # НЕ ЗВОНИТ И НЕ ИДЁТ В СВОДКУ: mute_reason режет по полю, с причиной словами
+    uid = 7702401
+    store.settings_set(uid, alerts_on=1, kinds='oi_surge', venues='variational')
+    if _back:
+        _v, _why = outbox.mute_reason(uid, _back[0])
+        check('ROUND: обратная нога не звонит и не идёт в сводку - drop с причиной',
+              _v == 'drop' and 'обратная нога' in _why, (_v, _why))
+    if _part:
+        _v2, _w2 = outbox.mute_reason(uid, _part[0])
+        check('ROUND: а неполный возврат доставляется как обычно',
+              _v2 != 'drop', (_v2, _w2))
+    # ОТЧЁТ ПОПАДАНИЙ ЕЁ НЕ СЧИТАЕТ: никому не звонила - доверие к дозору не мерит
+    _k1, _k2 = 'rt-test-%d-a' % now, 'rt-test-%d-b' % now
+    store.event_new({'key': _k1, 'ts': now, 'kind': 'oi_surge', 'ticker': 'RTT',
+                     'severity': 90, 'payload': {'round_trip': 1}})
+    store.event_new({'key': _k2, 'ts': now, 'kind': 'oi_surge', 'ticker': 'RTT',
+                     'severity': 90, 'payload': {'round_trip': 0}})
+    store.outcome_put(_k1, 60, 100.0, 103.0)
+    store.outcome_put(_k2, 60, 100.0, 101.0)
+    _keys = {r[0] for r in store.outcomes(kind='oi_surge', horizon_min=60, since_ts=now - 1)}
+    check('ROUND: отчёт попаданий не считает обратную ногу, обычный скачок считает',
+          _k1 not in _keys and _k2 in _keys, _keys)
+
+    # ── СНЯТЫЙ ВИД: «поглощение» вычитается из сохранённого набора и не стоит в меню ──
+    store.settings_set(uid, kinds='oi_surge,absorption')
+    check('KIND24: сохранённое «absorption» не читается как включённый вид',
+          'absorption' not in store.kinds_for(uid), store.kinds_for(uid))
+    # ОБА ВИДА ЭКРАНА (основной и «Ещё»): виды событий могут лежать в любом из них.
+    _cbs = []
+    for _adv in (False, True):
+        if _adv:
+            ui._ADV[uid] = True
+        else:
+            ui._ADV.pop(uid, None)
+        _cbs += [b.callback_data for r in ui.menu_kb(uid, 'ru').inline_keyboard for b in r]
+    ui._ADV.pop(uid, None)
+    check('KIND24: тумблера «Поглощение» в настройках больше нет, смарт-перп на месте',
+          'sen:k:absorb' not in _cbs and 'sen:k:smperp' in _cbs, _cbs)
+
+
+def t_asset_class_on_live_names_and_nyse_session_2_5():
+    """ТЗ 2.5: КЛАСС АКТИВА ПО ЖИВЫМ ИМЕНАМ VARIATIONAL, АКЦИЯ ВНЕ СЕССИИ NYSE - ТОЛЬКО СВОДКА.
+
+    Имена взяты из ОДНОГО живого ответа `/metadata/stats` 26.09 (553 листинга, фикстура
+    `tests/fixtures/variational_names_20260926.json`), а не придуманы: правило, проверенное на
+    выдуманных именах, проверяет фантазию автора теста.
+    """
+    import json as _json
+    import types as _types
+    import sys as _sys
+    from sentinel import assets as _as
+    _fx = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures',
+                       'variational_names_20260926.json')
+    live = {t: n for t, n in _json.load(open(_fx, encoding='utf-8'))['listings']}
+    check('CLS: фикстура - весь живой ответ, а не выборка', len(live) == 553, len(live))
+
+    def _k(t, n=None):
+        return feed.asset_class(_types.SimpleNamespace(ticker=t, name=live[t] if n is None else n))
+
+    # ── 40 ЖИВЫХ ИМЁН С ПРОВЕРЕННЫМ РУКАМИ КЛАССОМ. Первые шесть акций до 2.5 были 'unknown'. ──
+    expect = {
+        'CRWV': 'equity', 'ARM': 'equity', 'NBIS': 'equity', 'NVO': 'equity', 'NOK': 'equity',
+        'CRCL': 'equity', 'BNC': 'equity', 'QNTX': 'equity', 'SHAZ': 'equity', 'ALAB': 'equity',
+        'MRNA': 'equity', 'NVDA': 'equity', 'DELL': 'equity', 'CSCO': 'equity', 'RIVN': 'equity',
+        'UBER': 'equity', 'BABA': 'equity', 'JPM': 'equity', 'TSM': 'equity',
+        'QQQ': 'fund', 'US500': 'fund', 'IWM': 'fund', 'UVXY': 'fund', 'KSTR': 'fund',
+        'XAU': 'metal', 'XAG': 'metal', 'XAUS': 'metal', 'XAGS': 'metal', 'COPPER': 'metal',
+        'XPT': 'metal', 'XPD': 'metal',
+        'CL': 'commodity', 'BZ': 'commodity', 'NATGAS': 'commodity', 'UKOILP': 'commodity',
+        'USOILP': 'commodity',
+        'US500S': 'index', 'US100S': 'index', 'TWIS': 'index',
+        # ТОКЕНЫ, ПОХОЖИЕ НА ДРУГОЕ: до 2.5 первые два были «фондами» и теряли ончейн
+        'TWT': 'unknown', 'GIGGLE': 'unknown', 'PAXG': 'unknown', 'XAUT': 'unknown',
+        'AGLD': 'unknown', 'GAS': 'unknown', 'A': 'unknown', 'US': 'unknown', 'SPX': 'unknown',
+        'CVX': 'unknown', 'ONG': 'unknown', 'BTC': 'unknown',
+    }
+    _missing = [t for t in expect if t not in live]
+    check('CLS: все проверяемые имена - из живого ответа', not _missing, _missing)
+    _bad = [(t, live.get(t), _k(t), want) for t, want in expect.items()
+            if t in live and _k(t) != want]
+    check('CLS: %d живых имён получают свой класс' % len(expect), not _bad, _bad)
+    # ── ИНВАРИАНТ НА ВСЁМ ОТВЕТЕ: имя с признаком токена не становится акцией/сырьём ──
+    import re as _re
+    _crypto = _re.compile(r'(?i)\b(token|protocol|network|coin|dao|finance|fan|meme|chain)\b')
+    _leak = [(t, n, _k(t)) for t, n in live.items() if _crypto.search(n) and _k(t) != 'unknown']
+    check('CLS: ни один токен из 553 не записан в акции, фонды или сырьё', not _leak, _leak)
+    # ── РЕЕСТР ИМЁН ЖИВОЙ: каждая пара в нём есть в ответе площадки (мёртвая строка хуже) ──
+    _dead = [k for k in feed.NAMED_CLASS if live.get(k[0], '').lower() != k[1]]
+    check('CLS: каждая пара реестра сырья/металлов/индексов есть в живом ответе', not _dead, _dead)
+    check('CLS: то же имя с чужим тикером не угадывается', _k('GOLDX', 'Gold') == 'unknown')
+    # ── ОНЧЕЙН ДЛЯ СЫРЬЯ/МЕТАЛЛА/ИНДЕКСА НЕ ЗОВЁТСЯ (у «Gold» нашёлся бы PAX Gold) ──
+    _r = _as.onchain_refusal('XAU', 'metal')
+    check('CLS: металл - отказ от ончейна словами', _r and 'металл' in _r, _r)
+    _r_en = _as.onchain_refusal('CL', 'commodity', lang='en')
+    check('CLS: EN-отказ без кириллицы', _r_en and not _re.search('[а-яё]', _r_en.lower()), _r_en)
+    check('CLS: токен PAX Gold ончейн не теряет', _as.onchain_refusal('PAXG', _k('PAXG')) is None)
+    from sentinel import enrichment as _en
+    _tw = {'text': 'gold just broke out, silver next'}
+    check('CLS: у металла твит засчитывается только кэштегом',
+          not _en._relevant(_tw, 'XAU', 'Gold', None, klass='metal')
+          and _en._relevant({'text': 'watching $XAU here'}, 'XAU', 'Gold', None, klass='metal'),
+          'слово «gold» в тексте засчитывалось бы новостью про перп')
+
+    # ── СЕССИЯ NYSE ─────────────────────────────────────────────────────────────────────
+    FRI_OPEN, FRI_EARLY, SAT = 1790348400, 1790341200, 1790434800       # 25.09 15:00, 13:00; 26.09
+    DEC_14, DEC_2030 = 1796133600, 1796157000                            # 01.12 (зимнее время)
+    FRI_1959, FRI_2000 = 1790366340, 1790366400
+    check('NYSE: пятница 15:00 UTC (11:00 NY) - открыта', _as.nyse_open(FRI_OPEN)[0])
+    check('NYSE: пятница 13:00 UTC (09:00 NY) - закрыта', not _as.nyse_open(FRI_EARLY)[0])
+    check('NYSE: 19:59 открыта, 20:00 закрыта (граница закрытия)',
+          _as.nyse_open(FRI_1959)[0] and not _as.nyse_open(FRI_2000)[0])
+    check('NYSE: суббота - закрыта весь день', not _as.nyse_open(SAT)[0])
+    check('NYSE: зимой 14:00 UTC это 09:00 NY - закрыта, 20:30 UTC - открыта',
+          not _as.nyse_open(DEC_14)[0] and _as.nyse_open(DEC_2030)[0],
+          'фиксированное окно UTC звонило бы по закрытой бирже с ноября')
+    # без базы часовых поясов - окно ТЗ, и источник назван
+    _zi = _sys.modules.get('zoneinfo')
+    _sys.modules['zoneinfo'] = _types.ModuleType('zoneinfo')         # ZoneInfo нет -> ImportError
+    try:
+        _ok, _src = _as.nyse_open(FRI_OPEN)
+        _ok2, _ = _as.nyse_open(FRI_EARLY)
+    finally:
+        if _zi is None:
+            _sys.modules.pop('zoneinfo', None)
+        else:
+            _sys.modules['zoneinfo'] = _zi
+    check('NYSE: без tzdata - окно ТЗ 13:30-20:00 UTC, и источник назван',
+          _ok and not _ok2 and 'UTC' in _src, (_ok, _ok2, _src))
+
+    # ── ДЕТЕКТОР: акция вне сессии -> все её события только в сводку, с причиной ──
+    def _move(tick, name, now):
+        ring = series(60, now - 60 * 900)
+        hot = [(now - 900, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 900)]
+        return [e for e in detector.detect(one(ticker=tick, name=name, mark='104.0',
+                                               quote_iso=_iso(now)),
+                                           hot, now=now, ring=ring)
+                if e['kind'] == 'move_up']
+    _sat = _move('DELL', live['DELL'], SAT)
+    _open = _move('DELL', live['DELL'], FRI_OPEN)
+    _btc = _move('BTC', 'Bitcoin', SAT)
+    _xau = _move('XAU', 'Gold', SAT)
+    check('SESSION: движение акции в субботу - только в сводку, причина словами',
+          _sat and _sat[0]['payload'].get('digest_only') == 'биржа закрыта, перп на тонкой книге'
+          and _sat[0]['payload'].get('session') == 'closed',
+          _sat[0]['payload'].get('digest_only') if _sat else 'события нет')
+    check('SESSION: то же движение в сессию звонит как обычно',
+          _open and not _open[0]['payload'].get('digest_only'),
+          _open[0]['payload'].get('digest_only') if _open else 'события нет')
+    check('SESSION: крипта и металл в субботу сессией не режутся',
+          _btc and not _btc[0]['payload'].get('digest_only')
+          and _xau and not _xau[0]['payload'].get('digest_only'),
+          ([e['payload'].get('digest_only') for e in _btc],
+           [e['payload'].get('digest_only') for e in _xau]))
+    uid = 7702502
+    store.settings_set(uid, alerts_on=1, kinds='move_up,move_down', venues='variational',
+                       min_sev=0)
+    if _sat:
+        _v, _why = outbox.mute_reason(uid, _sat[0], now=SAT)
+        check('SESSION: доставка кладёт её в сводку с той же причиной',
+              _v == 'digest' and 'биржа закрыта' in _why, (_v, _why))
+        check('SESSION: строка сводки несёт пометку у своего тикера',
+              'биржа закрыта' in cards.digest_line(_sat[0]), cards.digest_line(_sat[0]))
+
+
+#: Реестр запрещённых служебных строк живёт в `cards.SERVICE_FORBIDDEN` (одна копия, закон 40).
+SERVICE_FORBIDDEN = cards.SERVICE_FORBIDDEN
+
+
+def _stage3_events(now):
+    """Событие каждого вида, какое реально бывает, с живыми полями. -> [ev]."""
+    evs = []
+    for kind, mark in (('move_up', '104.0'), ('move_down', '96.0')):
+        e = _ev_for(ticker='BTC', mark=mark, now=now, kind=kind)
+        if e:
+            evs.append(e)
+    base = {'venue': 'hyperliquid', 'mark': 12.3, 'volume_24h': 4.0e7, 'oi_usd': 4.27e6,
+            'oi_skew': 0.55, 'funding_raw': 0.0000125, 'funding_interval_s': 3600,
+            'spread_bps': None, 'penalties': ['котировка старше минуты'], 'asset_class': 'unknown'}
+    evs.append({'kind': 'oi_surge', 'ticker': 'DASH', 'severity': 90,
+                'payload': dict(base, oi_change_pct=25.4, oi_change_usd=1.16e6,
+                                oi_threshold_usd=1.2e6, oi_threshold_src='3% оборота 24ч',
+                                absorption=True, ret60_pct=0.1)})
+    evs.append({'kind': 'vol_surge', 'ticker': 'ACE', 'severity': 70,
+                'payload': dict(base, venue='variational', name='Fusionist',
+                                funding_raw=0.1095, funding_interval_s=28800,
+                                vol_change_pct=180.0, vol_change_usd=2.0e6,
+                                vol_threshold_usd=1.8e6, vol_threshold_src='3 x медиана часа',
+                                vol_median_usd=6.0e5, vol_median_points=24, ret60_pct=5.73)})
+    evs.append({'kind': 'venue_gap', 'ticker': 'ARB', 'severity': 72,
+                'payload': {'venue': 'hyperliquid', 'gap_bps': 180.0, 'cheap_venue': 'variational',
+                            'cheap_mark': 0.4, 'rich_venue': 'hyperliquid', 'rich_mark': 0.4072,
+                            'cost_bps': 20.0, 'net_bps': 160.0, 'median_24h_bps': 8.0,
+                            'volume_24h': 9.0e6, 'penalties': []}})
+    evs.append({'kind': 'ignition', 'ticker': 'STONK', 'severity': 90,
+                'payload': {'usd': 352500.0, 'wallets': 8, 'mcap': None, 'mcap_bps': None,
+                            'chain': 'solana', 'address': 'StonkMint111', 'window_min': 180,
+                            'digest_only': 'капитализация неизвестна, долю проверить нечем',
+                            'penalties': []}})
+    evs.append({'kind': 'sm_perp', 'ticker': 'NEAR', 'severity': 90,
+                'payload': {'venue': 'hyperliquid', 'side': 'long', 'wallets': 3, 'usd': 689000.0,
+                            'price': 2.41, 'labels': ['HL Perps Whale'], 'penalties': []}})
+    return evs
+
+
+def t_stage3_cards_are_links_without_service_lines():
+    """ЭТАП 3: ТИКЕР ССЫЛКОЙ, СЛУЖЕБКИ НЕТ, НИТЬ ОДНА НА ИНСТРУМЕНТ, СТАРОЕ НЕ ДОЕЗЖАЕТ.
+
+    Живые карточки и сводка владельца после деплоя #940 (скриншот 26.09): «Чего не собрали:
+    предсказательный рынок», «Вывод модели», «Сводка: 0 кр Nansen · сожжено 2944», ряд
+    кнопок-тикеров под сводкой, две карточки оборота ACE за две минуты, расхождения 43-95 б.п.
+    при пороге 150, твит про «fusionist claim» из политфилософии в X по ACE.
+    """
+    from sentinel import assets as _as, enrichment as en
+    now = int(time.time())
+    evs = _stage3_events(now)
+    # ── ЗАКОН: ни одна запрещённая подстрока в карточке, сводке, строке нити и обогащении ──
+    brief = {'lines': ['<b>С плечом</b>', '• смарт-мани лонг $1.2M / шорт $0.4M'],
+             'verdict': ['смарт-мани <b>молчат</b>: след за 3 ч пустой'],
+             'refused': 'предсказательный рынок: рынка про Fusionist на Polymarket не нашлось',
+             'summary': 'Вывод модели здесь быть не должен.',
+             'cost_line': 'Сводка: 0 кр Nansen · кредитов сожжено сегодня 2944'}
+    texts = []
+    for e in evs:
+        texts.append(('card', e['kind'], cards.card(e, bot_un='testbot')))
+        texts.append(('digest', e['kind'], cards.digest_line(e, bot_un='testbot')))
+        texts.append(('enrich', e['kind'], cards.enrich_card(e, brief, bot_un='testbot',
+                                                             owner=True)))
+    texts.append(('digest_card', '-', cards.digest_card([{'ev': e, 'why': 'x'} for e in evs],
+                                                        extra=3, bot_un='testbot')))
+    _bad = [(w, k, f) for w, k, t in texts for f in SERVICE_FORBIDDEN if f in t]
+    check('ЗАКОН: в карточке, сводке и обогащении нет ни одной служебной строки',
+          not _bad, _bad[:6])
+    # ── ТИКЕР - ССЫЛКА НА КАРТОЧКУ ИНСТРУМЕНТА ВЕЗДЕ ──
+    _no_link = [(w, k) for w, k, t in texts if w in ('card', 'digest')
+                and '?start=sen_' not in t]
+    check('LINK: тикер ссылкой в заголовке каждой карточки и в каждой строке сводки',
+          not _no_link, _no_link)
+    _en = cards.enrich_card(evs[0], brief, bot_un='testbot', standalone=True)
+    check('LINK: и в обогащении, пришедшем отдельным сообщением',
+          '?start=sen_variational_BTC' in _en, _en[:120])
+    check('LINK: sen_<площадка>_<ТИКЕР> туда и обратно, двоеточие HL-тикера - дефисом',
+          cards.parse_sen_start(cards.sen_start('hyperliquid', 'xyz:TSLA'))
+          == ('hyperliquid', 'XYZ:TSLA')
+          and cards.parse_sen_start(cards.sen_start('variational', 'OPN_OPINION'))
+          == ('variational', 'OPN_OPINION'),
+          cards.sen_start('hyperliquid', 'xyz:TSLA'))
+    check('LINK: тикер с недопустимыми для /start знаками ссылкой не становится',
+          cards.sen_start('variational', 'A B') is None
+          and '<a ' not in cards.tick_link('A B', 'variational', 'testbot'))
+    check('LINK: без имени бота ссылки нет (тест-бот не уводит в прод)',
+          '<a ' not in cards.tick_link('BTC', 'variational', None))
+    check('LINK: под сводкой одна кнопка «Дозорный»',
+          [b.callback_data for r in cards.digest_kb([]).inline_keyboard for b in r]
+          == ['sen:home'])
+    # ── МАРКЕР КЛАССА ──
+    # МАРКЕРЫ ПО ТЗ 3.2: 🪙 токен с контрактом, 🐸 мем, 📊 акция/фонд, 📈 индекс, 🛢 сырьё, 🥇 металл;
+    # неизвестное - без маркера (неверный маркер хуже отсутствия).
+    marks = {k: cards.tick_link('X', 'variational', None, k).split('<')[0] for k in
+             ('equity', 'fund', 'index', 'commodity', 'metal', 'token', 'meme', 'unknown')}
+    check('MARK: у каждого класса маркер ТЗ, у неизвестного - никакого',
+          marks == {'equity': '📊', 'fund': '📊', 'index': '📈', 'commodity': '🛢', 'metal': '🥇',
+                    'token': '🪙', 'meme': '🐸', 'unknown': ''}, marks)
+    _ign = [t for w, k, t in texts if w == 'card' and k == 'ignition'][0]
+    check('MARK: зажигание без капитализации - токен 🪙, и ссылка на паспорт в первой карточке',
+          '🪙' in _ign.split('\n')[0] and 'start=tok_StonkMint111' in _ign, _ign)
+    _meme = dict(evs[-2], payload=dict(evs[-2]['payload'], mcap=3.0e7))
+    check('MARK: зажигание с капитализацией меньше $100M - мем 🐸',
+          '🐸' in cards.card(_meme).split('\n')[0], cards.card(_meme).split('\n')[0])
+    # ── УВЕРЕННОСТЬ ОДНИМ ЧИСЛОМ В ЗАГОЛОВКЕ; ПРИЧИНЫ - ТОЛЬКО КОГДА ИХ БОЛЬШЕ ОДНОЙ ──
+    _oi = cards.card(evs[2], bot_un='testbot')
+    check('CONF: уверенность в строке заголовка', '· 90/100' in _oi.split('\n')[0], _oi)
+    check('CONF: одна причина штрафа не печатается', 'котировка старше минуты' not in _oi, _oi)
+    _two = dict(evs[2], payload=dict(evs[2]['payload'], penalties=['a-причина', 'b-причина']))
+    check('CONF: две и больше - печатаются одной строкой',
+          'a-причина; b-причина' in cards.card(_two), cards.card(_two))
+    # ── ФАНДИНГ БАЗОВЫЙ, ОИ С ЕДИНИЦЕЙ ──
+    _ace = cards.card(evs[3], bot_un='testbot')
+    check('FUND3: базовая ставка Variational - «Фандинг базовый»', 'Фандинг базовый' in _ace
+          and 'платят лонги' not in _ace, _ace)
+    check('OI3: интерес с единицей - «ОИ $4.27M»', 'ОИ $4.27M' in _oi, _oi)
+    # ── ОБОГАЩЕНИЕ: нечего добавить - блока нет; модель - только при флаге ──
+    check('ENR3: пустая сводка не печатается вовсе', cards.enrich_card(evs[0], {}) == '')
+    _old = os.environ.get('SENTINEL_LLM_SUMMARY')
+    os.environ['SENTINEL_LLM_SUMMARY'] = '1'
+    try:
+        _on = cards.enrich_card(evs[0], brief)
+    finally:
+        if _old is None:
+            os.environ.pop('SENTINEL_LLM_SUMMARY', None)
+        else:
+            os.environ['SENTINEL_LLM_SUMMARY'] = _old
+    check('ENR3: при включённом флаге пересказ модели виден (обратный путь флага)',
+          'Вывод модели' in _on, _on)
+
+    # ── X: ИМЯ-СЛОВО И ТИКЕР-СЛОВО - ТОЛЬКО КЭШТЕГОМ ──
+    _tw = {'text': 'The fusionist claim is that liberty and virtue are compatible. Ace point.'}
+    check('X3: «fusionist claim» из политфилософии не засчитан новостью про ACE',
+          en._relevant(_tw, 'ACE', 'Fusionist', None) is False)
+    check('X3: тикер больше не ищется подстрокой («ace» в «place»)',
+          en._relevant({'text': 'Great place to be'}, 'ACE', 'Fusionist', None) is False)
+    check('X3: кэштег $ACE засчитан', en._relevant({'text': '$ACE breaking out'}, 'ACE',
+                                                    'Fusionist', None))
+    check('X3: кэштег с границей - $ACEX это другой тикер',
+          en._relevant({'text': '$ACEX moon'}, 'ACE', 'Fusionist', None) is False)
+    check('X3: заглавный тикер-не-слово засчитан (JUP)',
+          en._relevant({'text': 'JUP staking is live'}, 'JUP', 'Jupiter', None))
+    check('X3: заглавный тикер-словарное-слово (GAS) без кэштега не засчитан',
+          en._relevant({'text': 'GAS prices are up'}, 'GAS', 'Gas', None) is False)
+    check('X3: многословное имя целой фразой засчитано',
+          en._relevant({'text': 'Ethereum Name Service ships v2'}, 'ENS',
+                       'Ethereum Name Service', None))
+
+    # ── ОДНА НИТЬ НА ИНСТРУМЕНТ: ДВА ВСПЛЕСКА ОБОРОТА ACE ЗА ДВЕ МИНУТЫ ──
+    uid = 7703301
+    store.settings_set(uid, alerts_on=1, kinds='vol_surge,move_up,move_down', min_sev=0)
+    v1 = dict(evs[3], payload=dict(evs[3]['payload'], step=1))
+    d1 = outbox._thread_decide(uid, v1, now=now, bot_un='testbot')
+    check('THR3: первый всплеск оборота - полная карточка', d1['act'] == 'first', d1)
+    store.thread_open('variational', 'ACE', uid, 'ace1', 501, 1, None, now=now,
+                      family='vol_surge')
+    v2 = dict(evs[3], payload=dict(evs[3]['payload'], step=1))
+    d2 = outbox._thread_decide(uid, v2, now=now + 120, bot_un='testbot')
+    check('THR3: второй всплеск той же ступени через 2 мин - в базу, не человеку',
+          d2['act'] == 'skip', d2)
+    v3 = dict(evs[3], payload=dict(evs[3]['payload'], step=2))
+    d3 = outbox._thread_decide(uid, v3, now=now + 150, bot_un='testbot')
+    check('THR3: ступень выше - одна строка ОТВЕТОМ на первую карточку, тикер ссылкой',
+          d3['act'] == 'reply' and d3['reply_to'] == 501 and '?start=sen_variational_ACE'
+          in (d3['text'] or ''), d3)
+    for i in range(2):
+        store.thread_bump('variational', 'ACE', uid, 2 + i, None, now=now + 200 + i,
+                          family='vol_surge')
+    v4 = dict(evs[3], payload=dict(evs[3]['payload'], step=9))
+    check('THR3: потолок ответов по виду - дальше только в базу',
+          outbox._thread_decide(uid, v4, now=now + 300)['act'] == 'skip')
+    mv = dict(_ev_for(ticker='ACE', mark='104.0', now=now), ticker='ACE')
+    mv['payload'] = dict(mv['payload'], venue='variational')
+    d5 = outbox._thread_decide(uid, mv, now=now + 310, bot_un='testbot')
+    check('THR3: движение цены в нити оборота - своя строка ответом, а не вторая карточка',
+          d5['act'] == 'reply' and d5['reply_to'] == 501, d5)
+
+    # ── СТАРЫЕ ПРАВИЛА НЕ ДОЕЗЖАЮТ: ни алертом, ни строкой сводки ──
+    check('RULES: событие без штампа версии - прежние правила',
+          outbox.rules_reason({'kind': 'move_up', 'payload': {}}) != '')
+    check('RULES: со штампом текущей версии - годное',
+          outbox.rules_reason({'kind': 'move_up', 'payload': {'rules': config.RULES_VERSION}})
+          == '')
+    check('RULES: расхождение 90 б.п. с новым штампом всё равно не доезжает (порог 150)',
+          'ниже порога' in outbox.rules_reason({'kind': 'venue_gap', 'payload': {
+              'rules': config.RULES_VERSION, 'gap_bps': 90.0, 'median_24h_bps': 5.0}}))
+    ud = 7703302
+    _sub(ud, store.ALL)
+    store.settings_set(ud, alerts_on=1, enrich_on=0, quiet_from=None, quiet_to=None,
+                       kinds='venue_gap,move_up', venues='variational,hyperliquid')
+    _old_ev = {'key': 'oldgap%d' % now, 'ts': now, 'kind': 'venue_gap', 'ticker': 'ZRO',
+               'severity': 80, 'payload': {'venue': 'hyperliquid', 'gap_bps': 87.0,
+                                           'rules': 2}}
+    _new_ev = dict(_ev_for(ticker='DGN', mark='104.0', now=now), key='newmv%d' % now)
+    store.event_new(_old_ev)
+    store.event_new(_new_ev)
+    check('RULES: event_new ставит штамп версии', (store.event(_new_ev['key'])['payload']
+                                                   .get('rules')) == config.RULES_VERSION)
+    store.digest_add(ud, _old_ev['key'], 80, 'предохранитель')
+    store.digest_add(ud, _new_ev['key'], 90, 'предохранитель')
+    bot = FakeBot()
+    attach(bot)
+    asyncio.run(outbox.deliver_digest(now=now + config.digest_sec() + 5))
+    mine = [t for c, t in bot.sent if c == ud]
+    check('RULES: сводка уехала, в ней свежее событие и нет расхождения по прежним правилам',
+          mine and 'DGN' in mine[0] and 'ZRO' not in mine[0], mine)
+    store.sub_del(ud, store.ALL)          # не оставлять подписчика соседним тестам доставки
+
+    # ── СЕССИЯ: SKHY - по часам KRX ──
+    import datetime as _dt
+    TUE_03 = int(_dt.datetime(2026, 9, 29, 3, 0, tzinfo=_dt.timezone.utc).timestamp())
+    TUE_15 = int(_dt.datetime(2026, 9, 29, 15, 0, tzinfo=_dt.timezone.utc).timestamp())
+    check('KRX: SKHY во вторник 03:00 UTC - корейская биржа открыта',
+          _as.session_note('equity', TUE_03, ticker='SKHY') is None)
+    check('KRX: SKHY во вторник 15:00 UTC - закрыта, хотя NYSE открыта',
+          _as.session_note('equity', TUE_15, ticker='SKHY') is not None
+          and _as.session_note('equity', TUE_15, ticker='NVDA') is None)
+    check('KRX: NVDA в 03:00 UTC - NYSE закрыта', _as.session_note('equity', TUE_03,
+                                                                    ticker='NVDA') is not None)
+
+    # ── КЛАСС HL/LIGHTER - ИЗ VARIATIONAL ПО ТИКЕРУ ──
+    _rows = [one(ticker='TSLA', name='Tesla, Inc.'), one(ticker='XAU', name='Gold')]
+    _as.book_update(_rows)
+    _hl = feed.Listing(ticker='TSLA', name='TSLA', mark=250.0, volume_24h=1e8, oi_long=None,
+                       oi_short=None, venue='lighter')
+    _sm = feed.Listing(ticker='SAMSUNG', name='SAMSUNG', mark=1.0, volume_24h=1e8, oi_long=None,
+                       oi_short=None, venue='lighter')
+    check('CLS3: Lighter TSLA получает класс Variational (акция)',
+          feed.asset_class(_hl) == 'equity', feed.asset_class(_hl))
+    check('CLS3: тикера нет у Variational - unknown, Азию не угадываем',
+          feed.asset_class(_sm) == 'unknown', feed.asset_class(_sm))
+    _as._BOOK['map'], _as._BOOK['loaded_at'] = {}, 0
+    check('CLS3: справочник лежит в базе - процесс без опроса (бот) видит его тоже',
+          _as.book_class('XAU') == 'metal', _as.book_class('XAU'))
+
+    # ── КАРТОЧКА ИНСТРУМЕНТА ПО ССЫЛКЕ - ИЗ БАЗЫ, КОГДА ГОРЯЧЕГО КОЛЬЦА НЕТ (бот) ──
+    engine._HOT.clear()
+    _x = one(ticker='LNK3', name='Link Three', mark='10.0', oi_l='700000', oi_s='300000')
+    store.snapshot_put([_x], ts=now - 60)
+    _c = asyncio.run(ui.card_link('LNK3', 'variational', 'ru'))
+    check('CARD3: карточка по ссылке собирается из холодного кольца в базе',
+          'Цена <b>10.0000</b>' in _c and 'ОИ $1.00M' in _c, _c)
+
+    class _B:
+        def __init__(self):
+            self.sent = []
+
+        async def send_message(self, **k):
+            self.sent.append(k)
+    _b = _B()
+    ok = asyncio.run(ui.open_start(_b, 7703303, 'sen_variational_LNK3', 'ru'))
+    check('CARD3: /start sen_... открывает ту же карточку, что кнопка sen:card',
+          ok and _b.sent and 'LNK3' in _b.sent[0]['text']
+          and _b.sent[0].get('parse_mode') == 'HTML', _b.sent)
+    check('CARD3: чужой /start не наш',
+          asyncio.run(ui.open_start(_b, 7703303, 'tok_0xabc', 'ru')) is False)
+
+    # ── КОД НА ДИСКЕ НОВЕЕ ПРОЦЕССА ──
+    check('STALE: свежий процесс - пусто', engine.code_stale() == [], engine.code_stale())
+    _ia = engine._IMPORTED_AT
+    engine._IMPORTED_AT = 0
+    try:
+        _st = engine.code_stale()
+    finally:
+        engine._IMPORTED_AT = _ia
+    check('STALE: диск новее процесса - названы файлы', 'cards.py' in _st, _st)
+
+
+def t_presets_stage4():
+    """ЭТАП 4: ПРЕСЕТЫ НОВИЧОК / ТРЕЙДЕР / ТИХИЙ / ПОТОК С ЧИСЛАМИ ИЗ ТЗ 4.1.
+
+    Каждое число сверяется с ТЗ, а не с кодом: тест, списанный с кода, зелен у любой опечатки.
+    """
+    import re
+    now = int(time.time())
+    P = store.PRESETS
+    check('PR4: четыре пресета ТЗ', set(P) == {'newbie', 'trader', 'quiet', 'flow'}, set(P))
+    nb = P['newbie']
+    check('PR4: Новичок - move_up, move_down, ignition, sm_perp; 3%; 2/10; 12; 120 мин; 30 мин',
+          set(nb['kinds'].split(',')) == {'move_up', 'move_down', 'ignition', 'sm_perp'}
+          and nb['min_pct'] == 3.0 and nb['burst_max'] == 2 and nb['burst_win_min'] == 10
+          and nb['daily_cap'] == 12 and nb['cooldown_min'] == 120 and nb['digest_min'] == 30
+          and set(nb['parts'].split(',')) == {'card', 'nansen', 'news'}, nb)
+    tr = P['trader']
+    check('PR4: Трейдер - + oi_surge, vol_surge, crowded; 2%; 3/10; 25; 60; 10',
+          set(tr['kinds'].split(',')) == set(nb['kinds'].split(',')) | {'oi_surge', 'vol_surge',
+                                                                         'crowded'}
+          and tr['min_pct'] == 2.0 and tr['burst_max'] == 3 and tr['daily_cap'] == 25
+          and tr['cooldown_min'] == 60 and tr['digest_min'] == 10, tr)
+    qu = P['quiet']
+    check('PR4: Тихий - те же виды, что у Новичка; 5%; 6; 180; 60',
+          set(qu['kinds'].split(',')) == set(nb['kinds'].split(',')) and qu['min_pct'] == 5.0
+          and qu['daily_cap'] == 6 and qu['cooldown_min'] == 180 and qu['digest_min'] == 60, qu)
+    fl = P['flow']
+    check('PR4: Поток - все виды, включая расхождение, спред и фандинг; 120; 5/10',
+          set(fl['kinds'].split(',')) == set(detector.KINDS) and fl['daily_cap'] == 120
+          and fl['burst_max'] == 5 and fl['burst_win_min'] == 10, (fl['kinds'], detector.KINDS))
+    check('PR4: расхождение выключено во всех пресетах, кроме Потока',
+          all(('venue_gap' in p['kinds']) == (k == 'flow') for k, p in P.items()))
+    # ── ПЕРВАЯ ПОДПИСКА - НОВИЧОК; ТОТ, КТО НАСТРОЙКИ ТРОГАЛ, ОСТАЁТСЯ СО СВОИМИ ──
+    fresh, veteran = 7704401, 7704402
+    ok, why = store.sub_add(fresh, 'BTC')
+    check('PR4: первая подписка без настроек ставит Новичка и говорит об этом',
+          ok and 'Новичок' in why and store.cap_for(fresh) == 12
+          and store.digest_sec_for(fresh) == 1800
+          and store.kinds_for(fresh) == {'move_up', 'move_down', 'ignition', 'sm_perp'},
+          (why, store.cap_for(fresh), store.kinds_for(fresh)))
+    store.settings_set(veteran, kinds='move_up,move_down,vol_surge,venue_gap', daily_cap=40)
+    _before = (store.kinds_for(veteran), store.cap_for(veteran))
+    ok2, why2 = store.sub_add(veteran, 'ETH')
+    check('PR4: у того, кто настройки трогал (владелец), набор видов НЕ тронут',
+          ok2 and 'Новичок' not in why2 and (store.kinds_for(veteran), store.cap_for(veteran))
+          == _before, (why2, store.kinds_for(veteran)))
+    ok3, why3 = store.sub_add(fresh, 'ETH')
+    check('PR4: вторая подписка пресет не переставляет', 'Новичок' not in why3, why3)
+    # ── ПРЕДПРОСМОТР: ЧТО ИЗМЕНИТСЯ, ЧИСЛАМИ, ДО ПРИМЕНЕНИЯ ──
+    rows = store.preset_preview(veteran, 'trader')
+    _f = {r[0]: (r[3], r[4]) for r in rows}
+    check('PR4: предпросмотр называет было -> станет по меняющимся полям',
+          _f.get('daily_cap') == (40, 25) and _f.get('min_pct', (None, None))[1] == 2.0
+          and 'kinds' in _f, _f)
+    check('PR4: предпросмотр ничего не применил', store.cap_for(veteran) == 40)
+    txt = ui.preset_preview_text(veteran, 'trader', 'ru')
+    check('PR4: текст предпросмотра - «было -> станет» с числами',
+          'Трейдер' in txt and '40 -> <b>25</b>' in txt, txt)
+    check('PR4: EN-предпросмотр без кириллицы',
+          not re.search('[А-Яа-яЁё]', ui.preset_preview_text(veteran, 'trader', 'en')),
+          ui.preset_preview_text(veteran, 'trader', 'en'))
+    kb = ui.preset_preview_kb(veteran, 'trader', 'ru')
+    check('PR4: под предпросмотром «Применить» (sen:pa:trader) и «Не менять»',
+          [b.callback_data for r in kb.inline_keyboard for b in r] == ['sen:pa:trader',
+                                                                       'sen:home'])
+    store.preset_apply(veteran, 'trader')
+    check('PR4: после применения предпросмотр того же пресета пуст',
+          store.preset_preview(veteran, 'trader') == [], store.preset_preview(veteran, 'trader'))
+    check('PR4: личный период сводки Трейдера - 10 мин', store.digest_sec_for(veteran) == 600)
+    # ── ПОТОК: ТОЛЬКО ВЛАДЕЛЬЦУ И ТЕСТИРОВЩИКАМ ──
+    _adm, _fl = os.environ.get('ADMIN_IDS'), os.environ.get('SENTINEL_FLOW_UIDS')
+    os.environ['ADMIN_IDS'], os.environ['SENTINEL_FLOW_UIDS'] = '111', '222'
+    try:
+        check('PR4: Поток доступен владельцу и тестировщику, остальным нет',
+              store.preset_allowed(111, 'flow') and store.preset_allowed(222, 'flow')
+              and not store.preset_allowed(fresh, 'flow')
+              and store.preset_allowed(fresh, 'trader'))
+        _d = [b.callback_data for r in ui.menu_kb(fresh, 'ru').inline_keyboard for b in r]
+        _o = [b.callback_data for r in ui.menu_kb(111, 'ru').inline_keyboard for b in r]
+        check('PR4: кнопка Потока не рисуется подписчику и рисуется владельцу',
+              'sen:pr:flow' not in _d and 'sen:pr:flow' in _o, (_d, _o))
+        check('PR4: старая кнопка «поток» (sen:pr:test) - тот же запрет',
+              not store.preset_allowed(fresh, 'test'))
+    finally:
+        for _k, _v in (('ADMIN_IDS', _adm), ('SENTINEL_FLOW_UIDS', _fl)):
+            if _v is None:
+                os.environ.pop(_k, None)
+            else:
+                os.environ[_k] = _v
+    # ── ПОРОГ ДВИЖЕНИЯ «ТОЛЬКО 📈📉» И ПОДСКАЗКА ──
+    ui._ADV[veteran] = True
+    _lbl = [b.text for r in ui.menu_kb(veteran, 'ru').inline_keyboard for b in r]
+    ui._ADV.pop(veteran, None)
+    check('PR4: кнопка порога называется «Порог движения (только 📈📉)»',
+          any(t.startswith('Порог движения (только 📈📉)') for t in _lbl), _lbl)
+    check('PR4: подсказка группы говорит, что интерес и оборот порогом не фильтруются',
+          'не фильтруются' in ui._t('h_power', 'ru') and 'not filtered' in ui._t('h_power', 'en'))
+    # ── ЭКРАН: ЧЕТЫРЕ ЧИСЛА СУТОК ──
+    d = store.day_totals(veteran)
+    check('PR4: итог суток - события, доставлено, в сводках, кредиты',
+          set(d) == {'events', 'delivered', 'digested', 'credits'}, d)
+    mt = ui.menu_text(veteran, 'ru')
+    check('PR4: экран дозорного печатает «событий N, доставлено M, в сводках K, кредитов L»',
+          re.search(r'За сутки: событий \d+, доставлено \d+, в сводках \d+, кредитов Nansen \d+',
+                    mt), mt)
+    store.sent_log(veteran, 'alert', 'x1', 1)
+    store.sent_log(veteran, 'service', None, 2)
+    check('PR4: «доставлено» считает алерты человека, а не служебные сообщения',
+          store.day_totals(veteran)['delivered'] == d['delivered'] + 1)
+
+
+def t_contract_cache_gap_outcome_and_card_gap_line():
+    """ХВОСТЫ ТЗ: кэш контракта (3.2), исход расхождения по кромке, расхождение в карточке (2.3)."""
+    now = int(time.time())
+    # ── КЭШ КОНТРАКТА: первая карточка уже со ссылкой на паспорт ──
+    store.contract_put('variational', 'CCH', 'solana', 'CchMint111', now=now)
+    ev = dict(_ev_for(ticker='CCH', mark='104.0', now=now))
+    got = outbox.with_contract(ev)
+    _c = cards.card(got, bot_un='testbot')
+    check('CC: контракт из кэша - в первой карточке паспорт и маркер 🪙',
+          'start=tok_CchMint111' in _c and '🪙' in _c.split('\n')[0], _c)
+    check('CC: событие в базе при этом не меняется (копия)',
+          not (ev.get('payload') or {}).get('address'))
+    check('CC: кэшу больше суток - не используется',
+          store.contract_get('variational', 'CCH', now=now + 86401) is None)
+    eq = dict(ev, payload=dict(ev['payload'], asset_class='equity'))
+    check('CC: акции контракт не подставляется никогда',
+          not outbox.with_contract(eq)['payload'].get('address'))
+    # ── ИСХОД РАСХОЖДЕНИЯ ПО КРОМКЕ ──
+    t0 = now - 7200
+    for v, mark in (('variational', 100.0), ('hyperliquid', 100.1)):
+        x = one(ticker='GPO', name='GPO', mark=str(mark))
+        x.venue = v
+        store.snapshot_put([x], ts=t0 + 3600)
+    engine._COLD.clear()
+    key = 'gpo%d' % now
+    store.event_new({'key': key, 'ts': t0, 'kind': 'venue_gap', 'ticker': 'GPO', 'severity': 80,
+                     'payload': {'venue': 'hyperliquid', 'gap_bps': 180.0, 'mark': 101.8,
+                                 'cheap_venue': 'variational', 'rich_venue': 'hyperliquid'}})
+    asyncio.run(engine.outcome_tick())
+    _o = [r for r in store.outcomes(kind='venue_gap', horizon_min=60, since_ts=t0 - 1)
+          if r[0] == key]
+    check('GO: исход расхождения записан как изменение кромки (180 -> 10 б.п. = -94%)',
+          _o and _o[0][1] is not None and -96 < _o[0][1] < -93, _o)
+    # ── РАСХОЖДЕНИЕ СТРОКОЙ КАРТОЧКИ ИНСТРУМЕНТА ──
+    engine._HOT.clear()
+    _saved = os.environ.get('SENTINEL_VENUES')
+    os.environ['SENTINEL_VENUES'] = 'variational,hyperliquid'
+    try:
+        for v, mark in (('variational', 50.0), ('hyperliquid', 50.25)):
+            x = one(ticker='GCL', name='GCL', mark=str(mark))
+            x.venue = v
+            store.snapshot_put([x], ts=now - 30)
+        txt = asyncio.run(ui.card_link('GCL', 'variational', 'ru'))
+    finally:
+        os.environ['SENTINEL_VENUES'] = _saved or 'variational'
+    check('GL: в карточке инструмента - цена другой площадки и расхождение в б.п.',
+          'Hyperliquid 50.2500: дороже на 50 б.п.' in txt, txt)
+
+
+def t_poller_watchdog_and_one_message_per_incident():
+    """ЭТАП 5: СТОРОЖ ПРОЦЕССА, ТАЙМАУТЫ, ОДНО СООБЩЕНИЕ НА ИНЦИДЕНТ, ЧАС ПОСЛЕ РЕСТАРТА."""
+    now = 1800000000
+    # ── 5.1 СТОРОЖ: снимка нет дольше 3 x poll_sec - процесс умирает, чтобы юнит поднял его ──
+    hb = {'fetch_ok': now - 30, 'elsewhere': 0}
+    check('WD: свежий снимок - жить', engine.watchdog_verdict(now, now - 999, hb, 30) is None)
+    hb2 = {'fetch_ok': now - 91, 'elsewhere': 0}
+    _v = engine.watchdog_verdict(now, now - 999, hb2, 30)
+    check('WD: 91 с без снимка при опросе 30 с - умереть, причина числом',
+          _v and '91' in _v and '90' in _v, _v)
+    check('WD: первые 3 x poll_sec после старта - льгота (снимка ещё не было)',
+          engine.watchdog_verdict(now, now - 60, {'fetch_ok': 0, 'elsewhere': 0}, 30) is None)
+    check('WD: аренда у другого живого процесса - молчание законно, не умирать',
+          engine.watchdog_verdict(now, now - 999, {'fetch_ok': 0, 'elsewhere': now - 10}, 30)
+          is None)
+    import inspect
+    from sentinel import main as _mn
+    _src = inspect.getsource(_mn)
+    check('WD: сторож - отдельный поток и os._exit с ненулевым кодом (не sys.exit из потока)',
+          'threading.Thread' in _src and 'os._exit(WATCHDOG_EXIT_CODE)' in _src
+          and _mn.WATCHDOG_EXIT_CODE != 0)
+    # ── ТАЙМАУТ НА ПЛОЩАДКУ: зависшая площадка отдаёт отказ, остальные читаются ──
+    import asyncio as _aio
+
+    async def _hang():
+        await _aio.sleep(3600)
+
+    async def _fast():
+        return [one(ticker='WDOK')], {'latency_ms': 1}
+    _saved = {k: dict(v) for k, v in venues.VENUES.items()}
+    _to = venues.VENUE_TIMEOUT_S
+    venues.VENUES['variational']['fetch'] = _fast
+    venues.VENUES['hyperliquid']['fetch'] = _hang
+    venues.VENUE_TIMEOUT_S = 1
+    try:
+        _t0 = time.time()
+        rows, notes = asyncio.run(venues.fetch_all(['variational', 'hyperliquid']))
+        _dt = time.time() - _t0
+    finally:
+        for k, v in _saved.items():
+            venues.VENUES[k] = v
+        venues.VENUE_TIMEOUT_S = _to
+    check('TO: зависшая площадка - отказ «timeout» за секунду, а не вечный тик',
+          _dt < 5 and getattr(notes.get('hyperliquid'), 'kind', '') == 'timeout', (_dt, notes))
+    check('TO: и соседняя площадка при этом прочитана', rows and rows[0].ticker == 'WDOK')
+    # ── 5.2 ОДНО СООБЩЕНИЕ НА ИНЦИДЕНТ И ОДНО ПРИ ВОЗВРАТЕ ──
+    sent = []
+
+    async def _cap(text, label):
+        sent.append((label, text))
+    _orig = engine._say_owners
+    engine._say_owners = _cap
+    store.cursor_set(engine.INCIDENT_CURSOR, '')
+    try:
+        store.cursor_set(engine.POLL_OK_CURSOR, str(now - 60))
+        asyncio.run(engine.poll_watch(now=now))
+        check('INC: минута без снимка - не инцидент (сторож лечит рестартом)', not sent, sent)
+        store.cursor_set(engine.POLL_OK_CURSOR, str(now - 400))
+        for i in range(5):
+            asyncio.run(engine.poll_watch(now=now + i * 30))
+        check('INC: потеря опроса - ОДНО сообщение, сколько бы тиков ни прошло',
+              [l for l, _t in sent] == ['sentinel:poll_lost'], sent)
+        check('INC: сообщение называет, сколько минут нет снимка',
+              sent and 'Последний снимок 6 мин' in sent[0][1], sent[:1])
+        store.cursor_set(engine.POLL_OK_CURSOR, str(now + 900))
+        asyncio.run(engine.poll_watch(now=now + 930))
+        asyncio.run(engine.poll_watch(now=now + 960))
+        check('INC: возврат - одно «опрос вернулся, кольцо было пустым N минут»',
+              [l for l, _t in sent] == ['sentinel:poll_lost', 'sentinel:poll_back']
+              and 'кольцо было пустым 21 мин' in sent[-1][1], sent)
+        check('INC: второй процесс не отправит то же самое (сравнить-и-записать в базе)',
+              store.cursor_cas(engine.INCIDENT_CURSOR, 'нечто', 'x') is False
+              and store.cursor_cas(engine.INCIDENT_CURSOR, '', 'x') is True
+              and store.cursor_cas(engine.INCIDENT_CURSOR, '', 'y') is False)
+    finally:
+        engine._say_owners = _orig
+        store.cursor_set(engine.INCIDENT_CURSOR, '')
+        store.cursor_set(engine.POLL_OK_CURSOR, '')
+    # ── 5.3 ПОСЛЕ РЕСТАРТА ЧАС ИЗ ХОЛОДНОГО КОЛЬЦА, С ПОМЕТКОЙ ──
+    ring = series(100, now - 100 * 900)
+    hot_fresh = [(now - 600, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 600, 1.9e6)]
+    evs = detector.detect(one(mark='103.0', quote_iso=_iso(now)), hot_fresh, now=now, ring=ring)
+    mv = [e for e in evs if e['kind'] == 'move_up']
+    check('R53: после рестарта (горячему кольцу 10 мин) часовое движение есть - из холодного',
+          mv and mv[0]['payload'].get('p60_src') == 'cold15'
+          and mv[0]['payload'].get('window') == '60м',
+          [(e['kind'], e['payload'].get('p60_src')) for e in evs])
+    _c = cards.card(mv[0]) if mv else ''
+    check('R53: карточка помечает «после рестарта, точность часового окна 15 мин»',
+          'после рестарта, точность часового окна 15 мин' in _c, _c)
+    full = [(now - 3600, 100.0, 8e8, 1000.0, 900.0, 0.05, 1.0, now - 3600, 1.9e6)]
+    ev_h = [e for e in detector.detect(one(mark='103.0', quote_iso=_iso(now)), full, now=now,
+                                       ring=ring) if e['kind'] == 'move_up']
+    check('R53: с полным горячим кольцом пометки нет',
+          ev_h and ev_h[0]['payload'].get('p60_src') == 'hot'
+          and 'после рестарта' not in cards.card(ev_h[0]))
 
 
 def main():
@@ -2854,6 +4792,26 @@ def main():
                t_volume_is_its_own_signal,
                t_db_failure_speaks_with_measurements,
                # ── круг 5 (25.09): площадки как данные, пресеты, HTML на экранах ──
+               t_open_interest_is_dollars_on_every_venue,
+               t_perp_context_on_real_nansen_shapes,
+               t_ignition_without_mcap_goes_to_digest,
+               t_venue_gap_is_rare_and_not_a_basis,
+               t_verdict_is_code_and_model_is_behind_a_flag,
+               t_x_and_polymarket_lines_are_for_the_reader,
+               t_live_defects_after_1b,
+               t_sigma60_is_estimated_until_hourly_points_exist,
+               t_vol_and_oi_thresholds_are_measured_2_4,
+               t_asset_class_on_live_names_and_nyse_session_2_5,
+               t_stage3_cards_are_links_without_service_lines,
+               t_presets_stage4,
+               t_contract_cache_gap_outcome_and_card_gap_line,
+               t_poller_watchdog_and_one_message_per_incident,
+               t_fuse_counts_every_message_not_only_alerts,
+               t_digest_says_one_line_per_ticker,
+               t_one_move_is_one_thread_not_twelve_alerts,
+               t_feed_is_stored_because_window_is_longer_than_page,
+               t_smart_perp_is_a_side_not_a_purchase,
+               t_liquidation_clusters_and_outcomes_by_kind,
                t_venues_are_data_not_branches,
                t_venue_filter_and_presets_are_personal,
                t_screens_are_sent_as_html,

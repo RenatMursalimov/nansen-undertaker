@@ -49,6 +49,7 @@
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -145,6 +146,21 @@ class Listing:
     #: ОТКРЫТЫЙ ИНТЕРЕС ОДНИМ ЧИСЛОМ - для площадок, которые не разбивают его на стороны
     #: (Hyperliquid). Положить весь интерес в `oi_long` значило бы соврать про перекос.
     oi_total_raw: float = None
+    #: ═══ ОТКРЫТЫЙ ИНТЕРЕС В ДОЛЛАРАХ. ЕДИНИЦУ СТАВИТ СЛОЙ ПЛОЩАДКИ, И ТОЛЬКО ОН ═══
+    #: ЗАМЕР 26.09, ТРИ ПЛОЩАДКИ - ТРИ РАЗНЫЕ ЕДИНИЦЫ В ОДНОМ И ТОМ ЖЕ ПОЛЕ:
+    #:   * Variational отдаёт `long_open_interest`/`short_open_interest` УЖЕ В ДОЛЛАРАХ
+    #:     (проверено сверкой с верхнеуровневым `open_interest`: сумма сторон по всем
+    #:     инструментам дала ровно половину от него, то есть обе стороны одного и того же;
+    #:     умножение на цену дало 20 триллионов - число, которого на рынке нет);
+    #:   * Hyperliquid - в базовом активе (BTC 37 639 = 3.16 млрд долларов);
+    #:   * Lighter - в базовом активе (BTC 1953.5 = 163.9 млн долларов).
+    #: Детектор умножал на цену ВСЁ и одинаково. Итог на проде: 118 событий из 139 имели
+    #: «прирост интереса» больше двух суточных оборотов, то есть физически невозможный; DELL
+    #: показывал 174 млн при интересе 310 тысяч.
+    #: ПОЧЕМУ ПОЛЕ, А НЕ СВОЙСТВО-ВЫЧИСЛЕНИЕ. Свойство внутри `Listing` не знает, в чём пришло
+    #: число, и любое общее правило («если мало - значит контракты») было бы догадкой о рынке.
+    #: Единицу знает ровно одно место - тот код, который читает ответ конкретной площадки.
+    oi_usd: float = None
 
     @property
     def oi_total(self):
@@ -226,6 +242,15 @@ def parse(payload):
             quote_ts=_ts(q.get('updated_at')),
             quotes=quotes,
             missing=tuple(miss)))
+        # ═══ ИНТЕРЕС В ДОЛЛАРАХ СТАВИТСЯ ЗДЕСЬ, В РАЗБОРЕ ОТВЕТА ПЛОЩАДКИ ═══
+        # Единицу знает тот код, который читает конкретный ответ, и ставить её надо ровно там же:
+        # первая редакция считала `oi_usd` в обёртке `venues.var_fetch`, и любой, кто звал `parse`
+        # напрямую (тесты - в первую очередь), получал инструмент без интереса вовсе. То есть
+        # величина существовала только на одном из двух путей к тем же данным.
+        # У Variational складываем стороны КАК ЕСТЬ: обе уже в долларах (замер 26.09, разбор в
+        # докстринге поля `Listing.oi_usd`).
+        _s = (out[-1].oi_long or 0.0) + (out[-1].oi_short or 0.0)
+        out[-1].oi_usd = _s or None
     if not out:
         raise FeedError('shape', 'ни одной строки с тикером')
     return out, meta
@@ -271,24 +296,76 @@ def fetch(timeout=None):
 # 'NVIDIA Corporation', 'Moderna, Inc.', 'Invesco QQQ Trust, Series 1'. Всё остальное
 # ('Bitcoin', 'Gold', 'WTI Crude Oil', 'SKALE') из имени НЕ различается — 'Gold' с тем же
 # правом бывает тикером мема, — и поэтому получает 'unknown'.
+#: ЮРИДИЧЕСКАЯ ФОРМА ПОСЛЕДНИМ СЛОВОМ ИМЕНИ. Точки внутри формы снимаются до сравнения: живое
+#: имя 'Nebius Group N.V.' давало слово 'n.v' и выпадало в 'unknown' (замер 26.09, ТЗ 2.5).
+#: ТЗ 2.5 добавил 'technologies', 'systems', 'automotive' (их в реестре Variational носят только
+#: компании), замер - 'a/s' (Novo Nordisk A/S), 'oyj' (Nokia Oyj), 'group' (Circle Internet
+#: Group). Каждое проверено на ВСЁМ живом ответе: ни одно не заканчивает имя крипто-токена
+#: (`tests/fixtures/variational_names_20260926.json`, сторож в t_asset_class_on_live_names).
 _CORP = ('inc', 'corp', 'corporation', 'company', 'co', 'plc', 'ltd', 'limited', 'holdings',
-         'nv', 'sa', 'ag', 'incorporated', 'se')
-_FUND = ('etf', 'trust', 'fund')
+         'holding', 'nv', 'sa', 'ag', 'incorporated', 'se', 'a/s', 'oyj', 'technologies',
+         'systems', 'automotive', 'group')
+#: КЛАСС БУМАГИ В ХВОСТЕ ИМЕНИ: 'CoreWeave, Inc. Class A Common Stock', 'Arm Holdings plc American
+#: Depositary Shares'. Юрформа тут не последняя, и прежнее правило отдавало шесть живых акций в
+#: 'unknown' - то есть мимо правила «у акции нет контракта» они шли в платный ончейн.
+_SHARE_TAIL = re.compile(r'(?:,?\s+class\s+[a-z])?\s+(?:common\s+stock|ordinary\s+shares|'
+                         r'american\s+depositary\s+shares|depositary\s+shares)\s*$')
+#: ФОНД ТОЛЬКО ПО СЛОВУ ETF ИЛИ ФОРМЕ «TRUST, SERIES N». Прежнее «любое слово trust/fund» живьём
+#: отдавало в фонды два крипто-токена: 'Trust Wallet' (TWT) и 'Giggle Fund' (GIGGLE) - и
+#: вместе с классом у них отрезался ончейн, хотя контракт в сети у обоих есть.
+_FUND_RX = re.compile(r'\betf\b|\btrust,?\s+series\s+\d+')
+#: ═══ СЫРЬЁ, МЕТАЛЛЫ, ИНДЕКСЫ - РЕЕСТРОМ ТОЧНЫХ ИМЁН VARIATIONAL, А НЕ СЛОВОМ (ТЗ 2.5) ═══
+#: 'Gold' словом угадывать нельзя: в том же ответе живут 'PAX Gold' (PAXG), 'Tether Gold'
+#: (XAUT) и 'Adventure Gold' (AGLD) - это ТОКЕНЫ с контрактом в сети, а 'Gas' (GAS) - токен NEO.
+#: Поэтому ключ - ПАРА (тикер, имя) ровно так, как их отдала площадка 26.09. Площадка
+#: переименует инструмент - он честно уйдёт в 'unknown', а не в чужой класс.
+NAMED_CLASS = {
+    ('XAU', 'gold'): 'metal', ('XAG', 'silver'): 'metal', ('XPD', 'palladium'): 'metal',
+    ('XPT', 'platinum'): 'metal', ('COPPER', 'copper'): 'metal',
+    ('XAUS', 'swap on gold spot'): 'metal', ('XAGS', 'swap on silver spot'): 'metal',
+    ('CL', 'wti crude oil'): 'commodity', ('BZ', 'brent oil'): 'commodity',
+    ('NATGAS', 'natural gas'): 'commodity', ('USOILP', 'swap on wti crude oil'): 'commodity',
+    ('UKOILP', 'swap on brent crude oil'): 'commodity',
+    ('US500S', 'swap on us 500'): 'index', ('US100S', 'swap on us non-financial 100'): 'index',
+    ('TWIS', 'swap on taiwan index'): 'index',
+}
+#: Классы, у которых НЕТ контракта в сети (ончейн и кэштег-правило X). 'unknown' сюда не входит.
+OFFCHAIN_CLASSES = ('equity', 'fund', 'commodity', 'metal', 'index')
 
 
 def asset_class(listing):
-    """-> 'equity' | 'fund' | 'unknown'. Третье значение — полноправный ответ, а не заглушка.
+    """-> 'equity' | 'fund' | 'commodity' | 'metal' | 'index' | 'unknown'.
 
-    'crypto' ЗДЕСЬ НЕТ НАРОЧНО. Объявить криптой всё, что не акция, — это вывод по остатку:
+    'unknown' - полноправный ответ, а не заглушка.
+    'crypto' ЗДЕСЬ НЕТ НАРОЧНО. Объявить криптой всё, что не акция, - это вывод по остатку:
     в том же списке живут металлы, нефть и индексы, и они попали бы в «крипту» молча. Класс,
     который мы не умеем доказать, называется 'unknown', и фильтр подписки по нему НЕ режет.
+    ИМЕНА ПЛОЩАДОК БЕЗ ИМЁН (Hyperliquid, Lighter отдают имя = тикер) получают 'unknown': по
+    тикеру класс не угадывается (замер: `A` - это Vaulta, `US` - Talus).
     """
-    nm = (listing.name or '').strip().lower()
+    tick = str(getattr(listing, 'ticker', '') or '').upper()
+    # ДРУГИЕ ПЛОЩАДКИ - КЛАССОМ VARIATIONAL ПО ТИКЕРУ (решение владельца 26.09): у Hyperliquid и
+    # Lighter имя равно тикеру, и по нему класс не определяется. Нет тикера в справочнике - дальше
+    # по имени, то есть почти всегда 'unknown' (Азию и pre-IPO не угадываем).
+    if (getattr(listing, 'venue', 'variational') or 'variational') != 'variational':
+        try:
+            from .assets import book_class
+            _bk = book_class(tick)
+        except Exception:                                  # noqa: BLE001
+            _bk = None
+        if _bk:
+            return _bk
+    nm = re.sub(r'\s+', ' ', (listing.name or '').strip().lower())
     if not nm:
         return 'unknown'
-    words = [w.strip('.,()') for w in nm.replace(',', ' ').split() if w.strip('.,()')]
+    if (tick, nm) in NAMED_CLASS:
+        return NAMED_CLASS[(tick, nm)]
+    if _FUND_RX.search(nm):
+        return 'fund'
+    if _SHARE_TAIL.search(nm):
+        return 'equity'
+    words = [w.replace('.', '').strip(',()') for w in nm.replace(',', ' ').split()]
+    words = [w for w in words if w]
     if words and words[-1] in _CORP:
         return 'equity'
-    if any(w in _FUND for w in words):
-        return 'fund'
     return 'unknown'

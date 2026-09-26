@@ -28,9 +28,20 @@ _LOCAL = threading.local()
 _ENSURED = set()
 
 
-def get_conn(key='main'):
+def get_conn(key='main', timeout=None, busy_timeout=None):
     """Соединение с базой. По одному на поток: sqlite3 не любит делиться между потоками,
-    а клиент Nansen синхронный и зовётся из `asyncio.to_thread`."""
+    а клиент Nansen синхронный и зовётся из `asyncio.to_thread`.
+
+    `timeout`/`busy_timeout` - ТА ЖЕ ПОДПИСЬ, ЧТО У ПРИВАТНОГО `db.get_conn`: их передаёт
+    `alert_log` (журнал отправок дозорного). Он берёт СВОЁ соединение и закрывает его сам,
+    поэтому с этими аргументами отдаётся НОВОЕ соединение, а не общее потоковое: закрыв общее,
+    журнал уронил бы всем остальным «Cannot operate on a closed database».
+    """
+    if timeout is not None or busy_timeout is not None:
+        own = sqlite3.connect(DB_PATH, timeout=float(timeout or 10))
+        if busy_timeout:
+            own.execute('PRAGMA busy_timeout=%d' % int(busy_timeout))
+        return own
     conn = getattr(_LOCAL, 'conn', None)
     if conn is None:
         conn = sqlite3.connect(DB_PATH, timeout=10)
