@@ -70,7 +70,7 @@ reading it.
 | `sentinel/clusters.py` | `b8d51761459c6dc0` | byte-for-byte from the bot |
 | `sentinel/config.py` | `3d7823fe83f2df1c` | byte-for-byte from the bot |
 | `sentinel/detector.py` | `9515f08e7fba85a1` | byte-for-byte from the bot |
-| `sentinel/engine.py` | `333ca025dbbf56b4` | byte-for-byte from the bot |
+| `sentinel/engine.py` | `791a55432d1613a4` | byte-for-byte from the bot |
 | `sentinel/enrichment.py` | `98864e27110d81f8` | byte-for-byte from the bot |
 | `sentinel/ignition.py` | `140934be614c996d` | byte-for-byte from the bot |
 | `sentinel/lab.py` | `e0736135e36216e4` | byte-for-byte from the bot |
@@ -78,11 +78,11 @@ reading it.
 | `sentinel/outbox.py` | `8290dd01b32fd774` | byte-for-byte from the bot |
 | `sentinel/predict.py` | `9d4808981b9dddb2` | byte-for-byte from the bot |
 | `sentinel/store.py` | `5154dd43b10da484` | byte-for-byte from the bot |
-| `sentinel/ui.py` | `088935dde538abb1` | byte-for-byte from the bot |
+| `sentinel/ui.py` | `66ba0fad25d85be4` | byte-for-byte from the bot |
 | `sentinel/variational_feed.py` | `bcc5bc71585fe0c5` | byte-for-byte from the bot |
 | `sentinel/venues.py` | `ae629063ac479017` | byte-for-byte from the bot |
 | `tests/test_public.py` | `221c07951d891077` | extract-only, this file does not exist in the bot |
-| `tests/test_sentinel.py` | `fd2c334fe6ce8f82` | byte-for-byte from the bot |
+| `tests/test_sentinel.py` | `fb817d59e52b8ab8` | byte-for-byte from the bot |
 | `tools/nansen_catalog.py` | `bc3a4ba352f49927` | byte-for-byte from the bot |
 | `tools/nansen_daily.py` | `699fd28d7d76437d` | byte-for-byte from the bot |
 | `tools/nansen_endpoint_sweep.py` | `10511b78461c253c` | byte-for-byte from the bot |
