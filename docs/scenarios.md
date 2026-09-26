@@ -526,22 +526,36 @@ Costs no credits: it reads our database, not the provider.
 ## Scenario 18. Sentinel: live perp alerts with Nansen in the card
 
 A subscription, not a one-off question. `sentinel BTC` or `sentinel all` puts instruments under
-watch (the first subscription sets the Beginner preset). The bot polls three public venues every
-30 seconds and rings only when a move is unusual for that instrument (1.2% in 15 min or 2.5% in an
-hour AND at least 2.5 sigma over 20+ points of its own history).
+watch (the first subscription sets the Beginner preset); by button: 🧠 Nansen → 🧠 What smart money
+is doing → 👁 Sentinel. The bot polls three public venues every 30 seconds (553 Variational
+instruments, 234 Hyperliquid perps, 210 live Lighter markets, measured 26.09) and rings only when
+a move is unusual for that instrument: 1.2% in 15 min or 2.5% in an hour **and** at least 2.5 sigma
+over 20+ points of its own history. No sigma, no event. Instruments under $50,000 of daily
+turnover are not watched.
 
-What arrives: one card per move (the ticker is a link to the instrument card, a class mark next to
-it), then the **same card is edited** with Nansen context: smart-money net over 3 h and who
-sold/bought (`tgm/who-bought-sold`), 24 h segments (`tgm/flow-intelligence`), leverage
+What arrives: one card per move (the ticker links to the instrument card, a class mark next to it),
+then only "strengthened" or "pulled back" as a reply to it, at most two per kind. The **same card
+is edited** with Nansen context: smart-money net over 3 h and who sold/bought
+(`tgm/who-bought-sold`), 24 h segments (`tgm/flow-intelligence`), whose leverage
 (`perp-positioning`), the two nearest liquidation clusters from $100k (`perp-positions`) and a
-verdict computed by code. Two events are born in Nansen itself: Smart Ignition (3+ smart
-addresses bought one token for $100k+ within 180 min, `smart-money/dex-trades`) and Smart Perp
-(2+ smart addresses opened one side for $250k+ within 30 min, `smart-money/perp-trades`).
+verdict computed by code. Two events are born in Nansen itself: Smart Ignition (3+ smart addresses
+bought one token for $100k+ within 180 min and at least 5 bps of market cap,
+`smart-money/dex-trades`) and Smart Perp (2+ smart addresses opened one side for $250k+ within
+30 min, `smart-money/perp-trades`).
 
-Honest parts: no hit rate on fewer than 20 samples (`sentinel report`); equities outside their
-exchange session arrive only in the digest; a line that does not change the trader's decision is
-not printed. Terminal: `python3 cli.py sentinel-card BTC hyperliquid`, `sentinel-demo`,
-`sentinel-presets`. Spec: `docs/SENTINEL_SPEC.md`.
+Presets Beginner, Trader, Quiet (and Firehose for the owner): a tap first shows what will change,
+in numbers. The fuse counts every Sentinel message, hard ceiling 12 per window.
+
+Before V2 the owner got 586 messages a day, the detector produced 2969 events, and 147 of 167
+delivered moves had a sigma from fewer than 20 points (measured on the production database,
+26.09). The measurement after a day of V2 will be added separately.
+
+Honest parts: no hit rate on fewer than 20 samples (`sentinel report`, horizons 60 minutes and
+24 hours); equities and funds outside their exchange session arrive only in the digest; a line
+that does not change the trader's decision is not printed. Price: by number of requests; the spend
+shows on the Sentinel screen as the "Nansen credits" figure. Terminal:
+`python3 cli.py sentinel-card BTC hyperliquid`, `sentinel-demo`, `sentinel-presets`. Spec:
+`docs/SENTINEL_SPEC.md`.
 
 # What exists in the client but has no door yet
 
@@ -556,7 +570,7 @@ has been voiced in the chat yet.
 | `tgm_dex_trades`, `tgm_transfers` | all trades and large transfers by token |
 | `tgm_price_ohlcv` | candles cheaper than beta (1 credit vs 5) |
 | `perp_pnl_leaderboard` | PnL by a specific perp token |
-| `sm_perp_trades` | what smart money trades on perps |
+| `sm_perp_trades` | what smart money trades on perps (the feed is already read by Sentinel for the 🐋 Smart Perp event, no separate command) |
 | `profiler_transactions`, `profiler_dex_trades`, `profiler_perp_trades` | operation history of an address |
 | `profiler_historical_balances` | how the portfolio changed over time |
 | `portfolio_positions` | DeFi positions; an alternative to paid DeBank on the same key |

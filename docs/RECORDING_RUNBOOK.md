@@ -44,7 +44,7 @@ type deploytest
 Independent verification from production (one complete shell line, including the closing quote):
 
 ```bash
-ssh -i <SSH_IDENTITY> root@5.129.237.130 'cd <STAND_DIR> && echo "HEAD=$(git rev-parse --short HEAD) $(git log -1 --pretty=%s)" && echo "SERVICE=$(systemctl is-active <TEST_SERVICE>)" && { tail -c 200K bot.log 2>/dev/null | grep -a -iE "traceback|dm route err|bad_bot_key|nansen.*(error|failed)" | tail -20 || true; }'
+ssh -i <SSH_IDENTITY> root@<SANDBOX_HOST> 'cd <STAND_DIR> && echo "HEAD=$(git rev-parse --short HEAD) $(git log -1 --pretty=%s)" && echo "SERVICE=$(systemctl is-active <TEST_SERVICE>)" && { tail -c 200K bot.log 2>/dev/null | grep -a -iE "traceback|dm route err|bad_bot_key|nansen.*(error|failed)" | tail -20 || true; }'
 ```
 
 Success means:
@@ -62,12 +62,12 @@ These are read-only Nansen calls. Primary and backup have already passed, but re
 final deploy because this verifies the deployed version, not just the repository:
 
 ```bash
-ssh -i <SSH_IDENTITY> root@5.129.237.130 '
+ssh -i <SSH_IDENTITY> root@<SANDBOX_HOST> '
   cd <STAND_DIR> &&
   ./venv/bin/python3 tools/nansen_live_smoke.py --run --market-id 1130012
 '
 
-ssh -i <SSH_IDENTITY> root@5.129.237.130 '
+ssh -i <SSH_IDENTITY> root@<SANDBOX_HOST> '
   cd <STAND_DIR> &&
   ./venv/bin/python3 tools/nansen_live_smoke.py --run --market-id 4323345
 '
