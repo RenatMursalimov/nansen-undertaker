@@ -462,6 +462,92 @@ def c_scenes(argv):
     return 0
 
 
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# ДОЗОРНЫЙ (sentinel/) ИЗ ТЕРМИНАЛА. Те же двери, что в боте: `sentinel.ui.card_link` (карточка
+# инструмента по тапу на тикер), `sentinel.cards.card` (алерт), `sentinel.ui.preset_preview_text`
+# (что изменит пресет). Площадки публичные, ключ Nansen для этих трёх команд не нужен.
+# ══════════════════════════════════════════════════════════════════════════════════════════
+def _sen_db():
+    """Своя временная база для дозорного: CLI не трогает рабочую базу и не оставляет следов.
+
+    Та же публичная дверь `db.set_path`, что у `tests/test_sentinel.py`.
+    """
+    # ОДИН РАЗ НА ПРОЦЕСС: `sentinel.store` держит своё соединение потока, и повторная
+    # перестановка пути закрыла бы его под ногами у следующей команды.
+    if _SEN_DB['done']:
+        return
+    import tempfile
+    import db
+    _d = tempfile.mkdtemp(prefix='sentinel_cli_')
+    for _k in ('onchain', 'main'):
+        db.set_path(_k, os.path.join(_d, '%s.db' % _k))
+    _SEN_DB['done'] = True
+
+
+_SEN_DB = {'done': False}
+
+
+def c_sentinel_card(argv):
+    """Живая карточка инструмента: опрос площадок (публичные ручки) -> тот же экран, что в боте."""
+    if not argv:
+        return _need('ТИКЕР [площадка]', 'sentinel-card BTC hyperliquid')
+    _sen_db()
+    import asyncio
+    from sentinel import assets, engine, ui, venues
+    rows, notes = asyncio.run(venues.fetch_all())
+    for v, n in notes.items():
+        if getattr(n, 'kind', None):
+            print(('[%s: not read - %s %s]' if LANG == 'en' else '[%s: не прочитана - %s %s]')
+                  % (v, n.kind, str(getattr(n, 'detail', ''))[:80]))
+    assets.book_update(rows)
+    import time as _t
+    now = int(_t.time())
+    for x in rows:
+        engine._hot_put(x, now)
+    print(_plain(asyncio.run(ui.card_link(argv[0], argv[1] if len(argv) > 1 else None, LANG))))
+    return 0
+
+
+def c_sentinel_demo(argv):
+    """Как выглядит алерт каждого вида: синтетическое событие -> тот же `cards.card`, что в боте.
+
+    ЧИСЛА УСЛОВНЫЕ, ФОРМАТ НАСТОЯЩИЙ - и это сказано первой строкой, чтобы пример не читался
+    как живой сигнал.
+    """
+    _sen_db()
+    from sentinel import cards
+    base = {'venue': 'hyperliquid', 'mark': 0.0418, 'volume_24h': 1.8e6, 'oi_usd': 1.7e6,
+            'oi_skew': 0.55, 'spread_bps': 4.2, 'funding_raw': 0.0000125,
+            'funding_interval_s': 3600, 'penalties': [], 'rules': 3, 'asset_class': 'unknown'}
+    evs = [
+        {'kind': 'move_up', 'ticker': 'SAGA', 'severity': 90,
+         'payload': dict(base, move_pct=4.2, window='15м', ret60_pct=6.1, z=3.1, sigma_pct=1.3,
+                         sigma_source='15m', address='ExampleMint111', chain='solana')},
+        {'kind': 'oi_surge', 'ticker': 'DASH', 'severity': 90,
+         'payload': dict(base, oi_change_pct=25.4, oi_change_usd=1.16e6, oi_threshold_usd=1.0e6,
+                         oi_threshold_src='3% оборота 24ч', absorption=True, ret60_pct=0.1)},
+        {'kind': 'sm_perp', 'ticker': 'NEAR', 'severity': 90,
+         'payload': {'venue': 'hyperliquid', 'side': 'long', 'wallets': 3, 'usd': 689000.0,
+                     'price': 2.41, 'labels': ['HL Perps Whale'], 'penalties': [], 'rules': 3}},
+    ]
+    print('Synthetic events, real formatter (sentinel/cards.py):' if LANG == 'en' else
+          'Синтетические события, настоящий форматтер (sentinel/cards.py):')
+    for ev in evs:
+        print('\n' + '-' * 60)
+        print(_plain(cards.card(ev, lang=LANG, bot_un='example')))
+    return 0
+
+
+def c_sentinel_presets(argv):
+    """Что поставит каждый пресет человеку с общими настройками - тот же предпросмотр, что в боте."""
+    _sen_db()
+    from sentinel import store, ui
+    uid = 1
+    for name in ('newbie', 'trader', 'quiet', 'flow'):
+        print(_plain(ui.preset_preview_text(uid, name, LANG)) + '\n')
+    return 0
+
+
 def _need(usage, example):
     print('нужны аргументы: %s\nпример: python3 cli.py %s' % (usage, example))
     return 1
@@ -511,6 +597,12 @@ CMDS = [
      'holder-segment flows as a CHART'),
     ('png-pm', c_png_pm, 'вероятность рынка во времени КАРТИНКОЙ',
      'market probability over time as a CHART'),
+    ('sentinel-card', c_sentinel_card, 'Дозорный: живая карточка инструмента (площадки публичные, ключ не нужен)',
+     'Sentinel: live instrument card (public venues, no key needed)'),
+    ('sentinel-demo', c_sentinel_demo, 'Дозорный: как выглядит алерт каждого вида (синтетика, настоящий форматтер)',
+     'Sentinel: what an alert of each kind looks like (synthetic data, real formatter)'),
+    ('sentinel-presets', c_sentinel_presets, 'Дозорный: что меняет каждый пресет',
+     'Sentinel: what each preset changes'),
     ('cost', c_cost, 'суточная сводка расхода кредитов по сценам',
      "today's credit spend, broken down by scene"),
     ('scenes', c_scenes, 'реестр сцен, по которым считается расход',

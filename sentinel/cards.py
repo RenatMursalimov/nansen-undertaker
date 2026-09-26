@@ -45,6 +45,7 @@ _KIND_TITLE = {
     'funding_extreme': '💸',
     'spread_shock': '⚠️',
     'ignition': '🔥',
+    'sm_perp': '🐋',
     'venue_gap': '⚖️',
     'crowded': '🧨',
     'absorption': '🧲',
@@ -61,7 +62,22 @@ _KIND_WORD = {
     'funding_extreme': 'ставка в хвосте',
     'spread_shock': 'котировка разъехалась',
     'ignition': 'смарт-зажигание',
+    'sm_perp': 'умные деньги на перпах',
 }
+
+
+#: ═══ ЗАКОН ЭТАПА 3: СТРОКА, КОТОРАЯ НЕ МЕНЯЕТ РЕШЕНИЕ ТРЕЙДЕРА, НЕ ПЕЧАТАЕТСЯ ═══
+#: Каждая подстрока - из живой карточки или сводки владельца 26.09 после деплоя #940.
+#: Реестр ЖИВОЙ и в одной копии (закон 40): его читают `tests/test_sentinel.py` и e2e-закон
+#: `tests/e2e/50_backend.py`. Новая служебная строка в карточке - сюда, и тест покраснеет.
+SERVICE_FORBIDDEN = (
+    'Чего не собрали', 'предсказательный рынок', 'кр Nansen', 'сожжено', 'суточный кап',
+    'Причину движения дозорный не читает', 'он не изменился', 'контекст был',
+    'Уверенность <b>', 'Вывод модели', '0.1095', 'funding_rate', 'Цену входа площадка не отдаёт',
+    'не показываю', 'Тап по тикеру ниже', 'Долю от капитализации проверить не вышло',
+    'Это не рекомендация', 'контракт сопоставлен по цене', 'у неё нет контракта в сети',
+    '—',
+)
 
 
 def esc(s):
@@ -147,6 +163,100 @@ def venue_title(venue):
         return (venue or '').capitalize()
 
 
+# ══════════════════════════════════════════════════════════════════════════════════════════
+# ТИКЕР - ССЫЛКОЙ ВЕЗДЕ (этап 3, требование владельца)
+#
+# «Тикер иногда выходит не маркированным, сразу же со ссылкой на карточку - чтобы лишние кнопки
+# не выводить». Ряд кнопок-тикеров под сводкой занимал пол-экрана и дублировал строки над ним.
+# Теперь сам тикер в тексте - deep-link `?start=sen_<площадка>_<ТИКЕР>`, и тап открывает ТУ ЖЕ
+# карточку инструмента, что кнопка `sen:card` (одна дверь - `ui.card_link`, закон 40).
+# ПАРАМЕТР /start У ТЕЛЕГРАМА - ТОЛЬКО [A-Za-z0-9_-] ДО 64 СИМВОЛОВ. Двоеточие (тикеры вида
+# `xyz:TSLA` у Hyperliquid) кодируется дефисом; тикер с другими знаками ссылкой не становится
+# и печатается жирным, как раньше: ссылка, которая откроется ошибкой, хуже её отсутствия.
+# БЕЗ ИМЕНИ БОТА ССЫЛКИ НЕТ: на тест-боте прод-имя увело бы человека в прод.
+# ══════════════════════════════════════════════════════════════════════════════════════════
+import re as _re
+
+_START_OK = _re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+
+
+def sen_start(venue, ticker):
+    """Параметр deep-link карточки инструмента. -> 'sen_<venue>_<TICKER>' | None."""
+    v = str(venue or 'variational').lower()
+    t = str(ticker or '').upper().replace(':', '-')
+    arg = 'sen_%s_%s' % (v, t)
+    return arg if (t and _START_OK.match(arg)) else None
+
+
+def parse_sen_start(arg):
+    """'sen_<venue>_<TICKER>' -> (venue, TICKER) | None. Обратная сторона `sen_start`."""
+    a = str(arg or '').strip()
+    if not a.startswith('sen_'):
+        return None
+    rest = a[4:]
+    v, _, t = rest.partition('_')
+    if not v or not t:
+        return None
+    return v.lower(), t.upper().replace('-', ':')
+
+
+def ev_class(ev):
+    """Класс актива события для маркера. -> str.
+
+    Зажигание - DEX-токен: 'meme' при капитализации меньше $100M, иначе 'token'. Остальное - из
+    события (класс ставит детектор), 'token' - если контракт сопоставлен, иначе справочник
+    Variational по тикеру (события до этапа 3) или 'unknown' (маркера нет).
+    """
+    p = ev.get('payload') or {}
+    if (ev.get('kind') or '') == 'ignition':
+        # DEX-ТОКЕН ИЗ ЛЕНТЫ СМАРТ-ДЕНЕГ: мем, если капитализация меньше $100M (признак ТЗ 3.2).
+        from .assets import MEME_MCAP_USD
+        try:
+            _mc = float(p.get('mcap')) if p.get('mcap') not in (None, '') else None
+        except (TypeError, ValueError):
+            _mc = None
+        return 'meme' if (_mc is not None and _mc < MEME_MCAP_USD) else 'token'
+    k = p.get('asset_class')
+    if k and k != 'unknown':
+        return k
+    if p.get('address'):
+        return 'token'                      # контракт сопоставлен (кэш или сводка) - токен
+    if k:
+        return k
+    # СПРАВОЧНИК ТОЛЬКО ИЗ ПАМЯТИ: карточке запрещены обращения к базе (шапка модуля).
+    try:
+        from .assets import book_peek
+        return book_peek(ev.get('ticker') or p.get('symbol')) or 'unknown'
+    except Exception:                                      # noqa: BLE001
+        return 'unknown'
+
+
+def tick_link(ticker, venue=None, bot_un=None, klass=None):
+    """Тикер жирным и ССЫЛКОЙ на карточку инструмента, с маркером класса. -> HTML."""
+    t = esc(str(ticker or '?').upper())
+    mark = ''
+    if klass:
+        try:
+            from .assets import class_mark
+            mark = class_mark(klass)
+        except Exception:                                  # noqa: BLE001
+            mark = ''
+    arg = sen_start(venue, ticker) if bot_un else None
+    if not arg:
+        return '%s<b>%s</b>' % (mark, t)
+    return '%s<a href="https://t.me/%s?start=%s"><b>%s</b></a>' % (mark, esc(bot_un), arg, t)
+
+
+def ev_tick(ev, bot_un=None, mark=True):
+    """Тикер события ссылкой с маркером. -> HTML. ОДНА дверь для карточки, сводки, нити."""
+    p = ev.get('payload') or {}
+    tk = ev.get('ticker') or p.get('symbol') or '?'
+    # У ЗАЖИГАНИЯ ПЛОЩАДКИ НЕТ (это DEX-токен): ссылка ведёт в карточку по тикеру без площадки,
+    # а та честно назовёт, есть ли такой инструмент на перп-площадках.
+    return tick_link(tk, p.get('venue') or 'variational', bot_un,
+                     ev_class(ev) if mark else None)
+
+
 def _links(ev, bot_un=None):
     """Ряд ссылок под карточкой. -> str | ''.
 
@@ -179,7 +289,7 @@ def _links(ev, bot_un=None):
             # у одного перехода читаются как два разных экрана, и человек тапает дважды, чтобы
             # убедиться. Отдельного адреса у Nansen-экрана по токену нет (там команда словами),
             # и выдумывать его нельзя.
-            out.append(_n.tok_link('Карточка токена', addr, bot_un))
+            out.append(_n.tok_link('🪪 Паспорт', addr, bot_un))
         except Exception as e:
             print('[sentinel] ссылка на токен не собралась: %s' % str(e)[:90])
     return '🔗 ' + ' · '.join(out)
@@ -200,7 +310,7 @@ def depth_or_spread(p):
     sp = p.get('spread_bps')
     if sp is not None:
         return 'Спред на размер: %.1f б.п.' % sp
-    return 'Цену входа площадка не отдаёт'
+    return None
 
 
 def funding_line(p):
@@ -226,12 +336,28 @@ def funding_line(p):
     except Exception:
         apr = None
     if apr is None:
-        # ЕДИНИЦА НЕ ИЗМЕРЕНА - ЧЕСТНО ГОВОРИМ ИМЕНЕМ ПОЛЯ, как и все девять кругов до замера.
-        return ('Фандинг (поле <code>funding_rate</code>): %.6g%s'
-                % (fr or 0, (' / %dч' % (iv // 3600)) if iv >= 3600 else ''))
-    who = 'платят лонги' if (fr or 0) > 0 else ('платят шорты' if (fr or 0) < 0 else 'ноль')
-    return ('Фандинг <b>%+.2f%% годовых</b> (%s) · <code>%.6g</code>%s'
-            % (apr, who, fr or 0, (' / %dч' % (iv // 3600)) if iv >= 3600 else ''))
+        # ЕДИНИЦА НЕ ИЗМЕРЕНА - ЧИСЛО БЕЗ ЕДИНИЦЫ РЕШЕНИЯ НЕ МЕНЯЕТ (этап 3): строки нет.
+        return None
+    try:
+        from .venues import funding_state as _fst
+        st = _fst(p.get('venue') or 'variational', apr)
+    except Exception:                                      # noqa: BLE001
+        st = None
+    # ═══ БАЗОВАЯ СТАВКА - ОДНИМ СЛОВОМ (этап 3) ═══
+    # 10.95% годовых на Variational и Hyperliquid - это то, что площадка берёт без всякого
+    # перекоса. «Фандинг +10.95% годовых (платят лонги) · 0.1095 / 8ч» читался как сигнал, хотя
+    # это устройство площадки. Сырое поле убрано отовсюду: сверять его с экраном площадки - наша
+    # работа, а не трейдера.
+    if st == 'base':
+        return 'Фандинг базовый'
+    if st == 'zero':
+        return None
+    who = 'платят лонги' if (fr or 0) > 0 else 'платят шорты'
+    if st == 'above':
+        return 'Фандинг <b>повышен</b>: %+.2f%% годовых, %s' % (apr, who)
+    if st == 'below':
+        return 'Фандинг ниже базового: %+.2f%% годовых, %s' % (apr, who)
+    return 'Фандинг <b>%+.2f%% годовых</b>, %s' % (apr, who)
 
 
 def card(ev, lang='ru', bot_un=None):
@@ -243,30 +369,32 @@ def card(ev, lang='ru', bot_un=None):
     p = ev.get('payload') or {}
     kind = ev.get('kind') or '?'
     icon = _KIND_TITLE.get(kind, '👁')
-    tick = esc(ev.get('ticker') or p.get('symbol') or '?')
+    _plain = esc(ev.get('ticker') or p.get('symbol') or '?')
+    # ТИКЕР ССЫЛКОЙ НА КАРТОЧКУ ИНСТРУМЕНТА И С МАРКЕРОМ КЛАССА (этап 3).
+    tick = ev_tick(ev, bot_un)
     name = esc(p.get('name') or '')
     lines = []
 
-    # ── ПЕРВАЯ СТРОКА: ТИКЕР И ВЕЛИЧИНА. Больше в ней нет ничего. ──────────────────────────
+    # ── ПЕРВАЯ СТРОКА: ТИКЕР, ВЕЛИЧИНА И УВЕРЕННОСТЬ ОДНИМ ЧИСЛОМ (этап 3). ─────────────────
     if kind in ('move_up', 'move_down'):
-        lines.append('%s <b>%s</b>  <b>%s</b> / %s'
+        lines.append('%s %s  <b>%s</b> / %s'
                      % (icon, tick, _pct(p.get('move_pct')), p.get('window') or '15м'))
     elif kind == 'oi_surge':
-        lines.append('%s <b>%s</b>  интерес <b>%s</b> за час (%s)'
+        lines.append('%s %s  интерес <b>%s</b> за час (%s)'
                      % (icon, tick, _pct(p.get('oi_change_pct')),
                         _usd(p.get('oi_change_usd'))))
     elif kind == 'vol_surge':
-        lines.append('%s <b>%s</b>  оборот <b>%s</b> за час (+%s)'
+        lines.append('%s %s  оборот <b>%s</b> за час (+%s)'
                      % (icon, tick, _pct(p.get('vol_change_pct')),
                         _usd(p.get('vol_change_usd'))))
     elif kind == 'crowded':
-        lines.append('%s <b>%s</b>  <b>%.0f%%</b> интереса в %s и платят по верхней ставке'
+        lines.append('%s %s  <b>%.0f%%</b> интереса в %s и платят по верхней ставке'
                      % (icon, tick, p.get('crowd_pct') or 0, p.get('crowd_side') or '?'))
     elif kind == 'absorption':
-        lines.append('%s <b>%s</b>  интерес <b>%s</b> за час, а цена стоит'
+        lines.append('%s %s  интерес <b>%s</b> за час, а цена стоит'
                      % (icon, tick, _pct(p.get('oi_change_pct'))))
     elif kind == 'venue_gap':
-        lines.append('%s <b>%s</b>  расхождение <b>%.0f б.п.</b> между площадками'
+        lines.append('%s %s  расхождение <b>%.0f б.п.</b> между площадками'
                      % (icon, tick, p.get('gap_bps') or 0))
     elif kind == 'ignition':
         # ═══ ВЕДЁМ ЧИСЛОМ УЧАСТНИКОВ, А НЕ ЧИСЛОМ АДРЕСОВ ═══
@@ -277,18 +405,23 @@ def card(ev, lang='ru', bot_un=None):
         # только про подсчёт людей.
         _ind, _n = p.get('independent'), int(p.get('wallets') or 0)
         if _ind and int(_ind) < _n:
-            lines.append('%s <b>%s</b>  <b>%d</b> независимых участника (адресов %d) купили '
+            lines.append('%s %s  <b>%d</b> независимых участника (адресов %d) купили '
                          'на <b>%s</b>' % (icon, tick, int(_ind), _n, _usd(p.get('usd'))))
         else:
-            lines.append('%s <b>%s</b>  %d умных адреса купили на <b>%s</b>'
+            lines.append('%s %s  %d умных адреса купили на <b>%s</b>'
                          % (icon, tick, _n, _usd(p.get('usd'))))
     elif kind == 'funding_extreme':
-        lines.append('%s <b>%s</b>  ставка в своём хвосте' % (icon, tick))
+        lines.append('%s %s  ставка в своём хвосте' % (icon, tick))
     elif kind == 'spread_shock':
-        lines.append('%s <b>%s</b>  спред <b>%.0f б.п.</b> (×%.1f к медиане)'
+        lines.append('%s %s  спред <b>%.0f б.п.</b> (×%.1f к медиане)'
                      % (icon, tick, p.get('spread_bps') or 0, p.get('spread_mult') or 0))
     else:
-        lines.append('%s <b>%s</b>' % (icon, tick))
+        lines.append('%s %s' % (icon, tick))
+    # УВЕРЕННОСТЬ - ЧИСЛОМ В КОНЦЕ ЗАГОЛОВКА, А НЕ ОТДЕЛЬНЫМ АБЗАЦЕМ (этап 3). Строка
+    # «Уверенность 80/100: вход на обеих сторонах...» стояла внизу каждой карточки и повторяла то,
+    # что человек уже прочёл выше.
+    sev = int(ev.get('severity') or 0)
+    lines[0] = '%s <i>· %d/100</i>' % (lines[0], sev)
     # ПОДЗАГОЛОВОК НЕ ПОВТОРЯЕТ ЗАГОЛОВОК. У движения вид события уже сказан иконкой и знаком
     # процента, и слово «вверх» рядом с «+4.50%» - это строка, которая ничего не добавляет.
     # Название вида пишем там, где заголовок его не называет.
@@ -296,7 +429,7 @@ def card(ev, lang='ru', bot_un=None):
     # «BTC +2%» без ответа «где» заставляет его угадывать; цена и спред у двух площадок
     # разные, так что угадывание стоит денег.
     _sub = [x for x in (venue_title(p.get('venue')),
-                        name if name != tick else '',
+                        name if name != _plain else '',
                         '' if kind in ('move_up', 'move_down') else _KIND_WORD.get(kind, ''))
             if x]
     if _sub:
@@ -313,12 +446,28 @@ def card(ev, lang='ru', bot_un=None):
                                               _price(p.get('rich_mark'))))
         lines.append('Вход на двух сторонах: %.0f б.п. · меньший оборот 24ч %s'
                      % (p.get('cost_bps') or 0, _usd(p.get('volume_24h'))))
+    elif kind == 'sm_perp':
+        # ═══ СМАРТ-ПЕРП: СТОРОНА - ГЛАВНОЕ ЧИСЛО КАРТОЧКИ (ТЗ 1.7) ═══
+        # «Двое умных зашли в лонг» и «двое зашли в шорт» - противоположные новости, и сторона
+        # обязана стоять рядом с суммой, а не в конце строки мелким текстом.
+        lines.append('Сторона: <b>%s</b> · %d %s на %s'
+                     % (('лонг' if p.get('side') == 'long' else 'шорт'),
+                        int(p.get('wallets') or 0),
+                        ('адреса' if int(p.get('wallets') or 0) < 5 else 'адресов'),
+                        _usd(p.get('usd'))))
+        if p.get('price'):
+            lines.append('Вход около <b>%s</b>' % _price(p.get('price')))
+        if p.get('labels'):
+            lines.append('Метки: %s' % esc(', '.join(list(p['labels'])[:4])))
     elif kind == 'ignition':
+        # МЕТКА НОВОГО ТОКЕНА - РЯДОМ С ДОЛЕЙ КАПИТАЛИЗАЦИИ, потому что вместе они и составляют
+        # ответ: «ноль дней истории» плюс «половина рынка» это одна новость, а порознь - две
+        # разные и обе неполные.
+        if p.get('is_new'):
+            lines.append('🌱 <b>Новый токен</b> (метка Nansen): истории у него нет')
         if p.get('mcap_bps') is not None:
             lines.append('Это <b>%.2f%%</b> капитализации (%s)'
                          % (p['mcap_bps'] / 100.0, _usd(p.get('mcap'))))
-        else:
-            lines.append('Долю от капитализации проверить не вышло: провайдер её не дал')
         _t = []
         if p.get('age_days') is not None:
             _t.append('токену %.0f дн' % p['age_days'])
@@ -348,32 +497,68 @@ def card(ev, lang='ru', bot_un=None):
             if p.get('ret60_pct') is not None:
                 _row.append('60м %s' % _pct(p['ret60_pct']))
             if p.get('z') is not None and p.get('sigma_pct'):
-                _row.append('необычность <b>%.1fσ</b>' % abs(p['z']))
+                # ОЦЕНКА ПОМЕЧАЕТСЯ ПРЯМО У ЧИСЛА. Часовая сигма, пересчитанная из 15-минутной
+                # (`detector`, sigma60 = sigma15 * 2), и измеренная часовая выглядят одинаково
+                # «7.1σ», а доверия заслуживают разного. Пометка стоит рядом, а не в сноске:
+                # человек читает число, и оговорка обязана быть там же.
+                _est = ''
+                if p.get('sigma_source') == '15m*sqrt4':
+                    _est = (' <i>(оценка по 15-мин)</i>' if lang != 'en'
+                            else ' <i>(estimated from 15-min)</i>')
+                _row.append('необычность <b>%.1fσ</b>%s' % (abs(p['z']), _est))
         lines.append(' · '.join(_row))
+        # ПОСЛЕ РЕСТАРТА ЧАС ПОСЧИТАН ПО ХОЛОДНОМУ КОЛЬЦУ (ТЗ 5.3): пометка у числа, а не в сноске -
+        # «за час +3.1%» с окном 45-75 минут и с окном ровно в час выглядят одинаково.
+        if p.get('p60_src') == 'cold15' and (kind in ('oi_surge', 'vol_surge')
+                                             or p.get('window') == '60м'
+                                             or p.get('ret60_pct') is not None):
+            lines.append('<i>после рестарта, точность часового окна 15 мин</i>' if lang != 'en'
+                         else '<i>after a restart, the hourly window is accurate to 15 min</i>')
         _mkt = ['оборот 24ч <b>%s</b>' % _usd(p.get('volume_24h'))]
-        oi = (p.get('oi_long') or 0) + (p.get('oi_short') or 0)
+        # ОИ - С ЕДИНИЦЕЙ (этап 3): «ОИ 4.27M» без знака доллара читался как контракты. Доллары
+        # ставит слой площадки (`oi_usd`); у событий до этапа 3 его нет, и тогда сумма сторон -
+        # только у Variational, где стороны приходят в долларах (замер 26.09).
+        oi = p.get('oi_usd')
+        if oi is None and (p.get('venue') or 'variational') == 'variational':
+            oi = ((p.get('oi_long') or 0) + (p.get('oi_short') or 0)) or None
         if oi:
             skew = p.get('oi_skew')
-            _mkt.append('ОИ %s%s' % (_num(oi),
+            _mkt.append('ОИ %s%s' % (_usd(oi),
                                      ('' if skew is None else ', лонгов %.0f%%' % (skew * 100))))
         lines.append(' · '.join(_mkt))
-        # ЦЕНА ВХОДА - ЕДИНСТВЕННОЕ, ЧТО ЧЕЛОВЕК ДЕЛАЕТ ПОСЛЕ АЛЕРТА, поэтому строка есть
-        # всегда. Базовый спред отдельной строкой не идёт: заходят на сумму, а не на копейку.
-        lines.append(depth_or_spread(p))
-        # ФАНДИНГ ТОЛЬКО ТАМ, ГДЕ ОН СОБЫТИЕ ИЛИ НЕ НУЛЕВОЙ: строка «funding_rate: 0» в каждом
-        # алерте - шум, а единица у поля всё равно не заявлена провайдером (долг №1 в спеке).
+        # ═══ ПОЧЕМУ ЭТО СОБЫТИЕ - ЧИСЛОМ ПОРОГА (ТЗ 2.4) ═══
+        # Порог у интереса и оборота теперь БОЛЬШЕЕ из нескольких чисел, и у каждого инструмента
+        # своё. Без строки порога «оборот +$1.2M за час» не отвечает на вопрос «это много для
+        # НЕГО?», а обычный час инструмента (медиана) и есть ответ.
+        _en = lang == 'en'
+        if kind == 'oi_surge' and p.get('oi_threshold_usd'):
+            lines.append(('Threshold %s (%s)' if _en else 'Порог прироста %s (%s)')
+                         % (_usd(p['oi_threshold_usd']), esc(p.get('oi_threshold_src') or '')))
+        if kind == 'vol_surge' and p.get('vol_threshold_usd'):
+            lines.append(('Threshold %s (%s) · usual hour %s over %d h' if _en else
+                          'Порог %s (%s) · обычный час %s по %d ч')
+                         % (_usd(p['vol_threshold_usd']), esc(p.get('vol_threshold_src') or ''),
+                            _usd(p.get('vol_median_usd')), int(p.get('vol_median_points') or 0)))
+        # ЦЕНА ВХОДА - ЕДИНСТВЕННОЕ, ЧТО ЧЕЛОВЕК ДЕЛАЕТ ПОСЛЕ АЛЕРТА. Нет её у площадки - строки
+        # нет (этап 3): «Цену входа площадка не отдаёт» решения не меняет.
+        _dp = depth_or_spread(p)
+        if _dp:
+            lines.append(_dp)
+        # ФАНДИНГ ТОЛЬКО ТАМ, ГДЕ ОН СОБЫТИЕ ИЛИ НЕ НУЛЕВОЙ; строка без измеренной единицы и
+        # нулевая ставка не печатаются (`funding_line` отдаёт None).
         fr = p.get('funding_raw')
         if kind == 'funding_extreme' or (fr not in (None, 0)):
-            lines.append(funding_line(p))
+            _fl = funding_line(p)
+            if _fl:
+                lines.append(_fl)
 
-    # ── УВЕРЕННОСТЬ: ЧИСЛО ВСЕГДА, ПРИЧИНЫ - ТОЛЬКО ЕСЛИ ОНИ ЕСТЬ ─────────────────────────
-    lines.append('')
-    sev = int(ev.get('severity') or 0)
+    # ── ПРИЧИНЫ ШТРАФОВ - ТОЛЬКО КОГДА ИХ БОЛЬШЕ ОДНОЙ (этап 3, решение владельца) ─────────
+    # Число уже стоит в заголовке. Одна причина («вход на обеих сторонах...») повторяла строку
+    # замера над ней; несколько - это уже ответ на вопрос «почему не сто».
     pen = p.get('penalties') or []
-    if pen:
-        lines.append('Уверенность <b>%d/100</b>: %s' % (sev, esc('; '.join(str(x) for x in pen))))
-    else:
-        lines.append('Уверенность <b>%d/100</b>' % sev)
+    if len(pen) > 1:
+        lines.append('')
+        lines.append('<i>Уверенность ниже: %s</i>' % esc('; '.join(str(x) for x in pen)))
     if kind == 'spread_shock':
         lines.append('<i>Это предостережение о цене входа, а не сигнал.</i>')
     elif kind == 'crowded':
@@ -382,13 +567,18 @@ def card(ev, lang='ru', bot_un=None):
         # дозорный не даёт.
         lines.append('<i>Это описание конструкции: каскад ликвидаций идёт против толпы. '
                      'Направление дозорный не предсказывает.</i>')
-    elif kind == 'absorption':
+    elif kind == 'absorption' or (kind == 'oi_surge' and p.get('absorption')):
+        # ПОГЛОЩЕНИЕ - СТРОКА КАРТОЧКИ СКАЧКА ИНТЕРЕСА (ТЗ 2.4), а у старых событий вида
+        # `absorption` - та же строка. Цена за час названа числом: «стоит» без числа - оценка.
+        if kind == 'oi_surge':
+            lines.append(('🧲 <b>Absorption</b>: price over the hour %s' if lang == 'en' else
+                          '🧲 <b>Поглощение</b>: цена за час %s') % _pct(p.get('ret60_pct')))
         lines.append('<i>Кто-то набирает против потока, и его пока хватает. '
-                     'Подтверждения направления здесь нет.</i>')
-    else:
-        # ОДНА СТРОКА ВМЕСТО ЧЕТЫРЁХ ПУНКТОВ: длинный дисклеймер в каждом алерте перестают
-        # читать на третьем, и тогда он не защищает никого.
-        lines.append('<i>Причину движения дозорный не читает: сверьте новость и свой риск.</i>')
+                     'Подтверждения направления здесь нет.</i>' if lang != 'en' else
+                     '<i>Someone is building against the flow and still holding. '
+                     'There is no confirmation of direction here.</i>')
+    # ДИСКЛЕЙМЕРА «ПРИЧИНУ ДВИЖЕНИЯ ДОЗОРНЫЙ НЕ ЧИТАЕТ» БОЛЬШЕ НЕТ (этап 3): он стоял в каждой
+    # карточке и решения не менял. Что дозорный делает и чего нет - в справке экрана.
     _l = _links(ev, bot_un)
     if _l:
         lines.append('')
@@ -396,8 +586,8 @@ def card(ev, lang='ru', bot_un=None):
     return '\n'.join(lines)
 
 
-def digest_line(ev):
-    """Одна строка сводки: тикер, величина, площадка. -> str.
+def digest_line(ev, bot_un=None):
+    """Одна строка сводки: тикер (ссылкой), величина, площадка. -> str.
 
     ОДНА СТРОКА НА СОБЫТИЕ, И В НЕЙ ОБЯЗАНА БЫТЬ ВЕЛИЧИНА. Сводка из тикеров («ENA, MSTR, XAU»)
     не даёт человеку решить ничего - ему придётся открыть все три. Величина в строке делает
@@ -406,11 +596,13 @@ def digest_line(ev):
     p = ev.get('payload') or {}
     kind = ev.get('kind') or '?'
     icon = _KIND_TITLE.get(kind, '👁')
-    tick = esc(ev.get('ticker') or p.get('symbol') or '?')
+    # ТИКЕР В КАЖДОЙ СТРОКЕ - ССЫЛКА НА КАРТОЧКУ (этап 3): ряд кнопок-тикеров под сводкой убран.
+    tick = ev_tick(ev, bot_un)
     if kind in ('move_up', 'move_down'):
         val = '%s / %s' % (_pct(p.get('move_pct')), p.get('window') or '15м')
     elif kind == 'oi_surge':
-        val = 'интерес %s (%s)' % (_pct(p.get('oi_change_pct')), _usd(p.get('oi_change_usd')))
+        val = 'интерес %s (%s)%s' % (_pct(p.get('oi_change_pct')), _usd(p.get('oi_change_usd')),
+                                     ', цена стоит' if p.get('absorption') else '')
     elif kind == 'vol_surge':
         val = 'оборот %s' % _pct(p.get('vol_change_pct'))
     elif kind == 'venue_gap':
@@ -425,12 +617,17 @@ def digest_line(ev):
         val = 'спред %.0f б.п.' % (p.get('spread_bps') or 0)
     else:
         val = _KIND_WORD.get(kind, kind)
-    return ('%s <b>%s</b>  %s <i>· %s · %d/100</i>'
-            % (icon, tick, val, esc(venue_title(p.get('venue'))),
-               int(ev.get('severity') or 0)))
+    # ПОМЕТКА «ПОЧЕМУ ТОЛЬКО В СВОДКЕ» - У СВОЕЙ СТРОКИ (ТЗ 2.5). Заголовок сводки называет одну
+    # причину на всё сообщение, а у акции вне сессии и у зажигания без капитализации причины
+    # разные и принадлежат событию: «биржа закрыта» рядом с DELL, а не над всем списком.
+    _mark = (' <i>· %s</i>' % esc(p['digest_only'])) if p.get('digest_only') else ''
+    # У ЗАЖИГАНИЯ ПЛОЩАДКИ НЕТ - ЭТО DEX-ТОКЕН: прежде здесь подставлялась Variational.
+    _ven = '' if kind == 'ignition' else ' · %s' % esc(venue_title(p.get('venue')))
+    return ('%s %s  %s <i>%s · %d/100</i>%s'
+            % (icon, tick, val, _ven, int(ev.get('severity') or 0), _mark))
 
 
-def digest_card(items, extra=0, window_min=10, lang='ru'):
+def digest_card(items, extra=0, window_min=10, lang='ru', bot_un=None):
     """СВОДКА ОТЛОЖЕННОГО — одним сообщением вместо потока. -> HTML-строка.
 
     ═══ ЗАЧЕМ СВОДКА СУЩЕСТВУЕТ ═══
@@ -458,74 +655,61 @@ def digest_card(items, extra=0, window_min=10, lang='ru'):
         out.append('<i>Не звонили: %s</i>' % esc(_why))
     out.append('')
     for it in items:
-        out.append(digest_line(it['ev']))
+        out.append(digest_line(it['ev'], bot_un=bot_un))
     if extra:
         out.append('')
-        out.append('<i>И ещё %d событий слабее — они не потеряны, лежат в базе.</i>' % int(extra))
-    out.append('')
-    out.append('<i>Тап по тикеру ниже — карточка инструмента. Настройки: «Дозорный».</i>')
+        out.append('<i>И ещё %d слабее.</i>' % int(extra))
+    # ПОДСКАЗКИ «ТАП ПО ТИКЕРУ НИЖЕ» БОЛЬШЕ НЕТ: тикеры сами ссылки, кнопок под сводкой нет.
     return '\n'.join(out)
 
 
 def digest_kb(items, limit=6):
-    """Кнопки-тикеры под сводкой. -> InlineKeyboardMarkup | None.
+    """Клавиатура под сводкой: ОДНА кнопка «Дозорный». -> InlineKeyboardMarkup | None.
 
-    СКВОЗНОЙ СЦЕНАРИЙ - ТРЕБОВАНИЕ ВЛАДЕЛЬЦА, ПОВТОРЁННОЕ ДВАЖДЫ: «у нас все сценарии сквозные,
-    чтобы сразу на карточку попасть и если что в избранное закинуть». Сводка без перехода
-    заставляла бы человека искать тикер руками - то есть сама создавала бы работу, ради экономии
-    которой она и написана.
-    ШЕСТЬ, А НЕ ВСЕ: клавиатура на двенадцать кнопок занимает пол-экрана и перестаёт быть
-    навигацией. Шесть сильнейших - ровно те, по которым человек пойдёт.
-    ПОВТОРЫ ТИКЕРА СКЛЕИВАЕМ: два события по одному инструменту дали бы две одинаковые кнопки.
+    ═══ РЯД КНОПОК-ТИКЕРОВ УБРАН (этап 3, требование владельца) ═══
+    Сквозной переход остался - он переехал в текст: каждый тикер в строке сводки теперь
+    deep-link на карточку инструмента (`digest_line` -> `ev_tick`). Шесть кнопок под двенадцатью
+    строками повторяли половину строк и занимали пол-экрана. `items` и `limit` оставлены в
+    подписи ради прежних вызывающих.
     """
     try:
         from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup
     except Exception:
         return None
-    seen, row, rows = set(), [], []
-    for it in items:
-        ev = it['ev']
-        t = ev.get('ticker') or ''
-        v = ((ev.get('payload') or {}).get('venue')) or 'variational'
-        if not t or t in seen:
-            continue
-        seen.add(t)
-        row.append(B('📊 %s' % t, callback_data='sen:card:%s:%s' % (v, t)))
-        if len(row) == 3:
-            rows.append(row)
-            row = []
-        if len(seen) >= int(limit):
-            break
-    if row:
-        rows.append(row)
-    if not rows:
-        return None
-    rows.append([B('⚙️ Дозорный', callback_data='sen:home')])
-    return InlineKeyboardMarkup(rows)
+    return InlineKeyboardMarkup([[B('⚙️ Дозорный', callback_data='sen:home')]])
 
 
-def enrich_card(ev, brief, lang='ru'):
-    """ВТОРОЕ сообщение: сводка вокруг события. -> HTML-строка.
+def enrich_card(ev, brief, lang='ru', owner=False, bot_un=None, standalone=True):
+    """Сводка вокруг события. -> HTML-строка | '' (добавить нечего - блок не печатается).
 
-    Отдельным сообщением, а не дописыванием в первое: правка уже отправленного незаметна
-    (телефон не звякнет второй раз), а ждать сводку внутри первого значило бы задержать цену
-    ради слов.
+    ДВА ВИДА. `standalone=False` - блок дописывается в первую карточку правкой (основной путь,
+    ТЗ 2.6): тикер там уже стоит в заголовке, и повторять его незачем. `standalone=True` - ответ
+    на карточку отдельным сообщением (правка не удалась): тогда тикер ссылкой.
+    `owner` ОСТАВЛЕН В ПОДПИСИ, НО НИЧЕГО НЕ МЕНЯЕТ (этап 3): строки расхода кредитов в сводке
+    больше нет ни у кого, она на экране дозорного.
+    ОТКАЗОВ («Чего не собрали: ...») ЗДЕСЬ НЕТ ПО ПОСТРОЕНИЮ: они в логе (`enrichment.build`).
     """
-    tick = esc(ev.get('ticker') or '?')
-    out = ['🧭 <b>%s</b> — что вокруг' % tick]
-    if brief.get('lines'):
+    body = list(brief.get('lines') or [])
+    verdict = list(brief.get('verdict') or [])
+    # ПЕРЕСКАЗ МОДЕЛИ - ТОЛЬКО ПРИ ВКЛЮЧЁННОМ ФЛАГЕ, И ПРОВЕРЯЕТСЯ ЭТО ЗДЕСЬ ТОЖЕ (этап 3, п.3).
+    # Сводку собирает один процесс, рисует - иногда другой; второй замок стоит у двери вывода,
+    # чтобы «Вывод модели» не приехал из сводки, собранной при включённом флаге.
+    summ = brief.get('summary') if config.llm_summary_on() else ''
+    if not body and not verdict and not summ:
+        return ''
+    out = (['🧭 %s <b>что вокруг</b>' % ev_tick(ev, bot_un, mark=False)] if standalone
+           else ['🧭 <b>Что вокруг</b>'])
+    if body:
         out.append('')
-        out += list(brief['lines'])
-    if brief.get('refused'):
-        # ОТКАЗ НАЗЫВАЕТ КЛАСС, А НЕ «НЕ УДАЛОСЬ»: «нет кредитов», «площадка молчит» и «тикер
-        # не сопоставлен контракту» требуют РАЗНЫХ действий от человека.
+        out += body
+    # ИТОГ КОДОМ - ПОСЛЕДНИМ СМЫСЛОВЫМ БЛОКОМ (ТЗ 2.8): его читают вместо всех строк выше, и
+    # каждое утверждение в нём посчитано из чисел этой же карточки (`enrichment.verdict_lines`).
+    if verdict:
         out.append('')
-        out.append('<i>Чего не собрали: %s</i>' % esc(brief['refused']))
-    if brief.get('summary'):
+        out.append('<b>Итог</b>')
+        out += ['• %s' % v for v in verdict]
+    if summ:
         out.append('')
         out.append('<b>Вывод модели</b> <i>(пересказ данных выше, не новые факты)</i>')
-        out.append(esc(brief['summary']))
-    if brief.get('cost_line'):
-        out.append('')
-        out.append('<i>%s</i>' % esc(brief['cost_line']))
+        out.append(esc(summ))
     return '\n'.join(out)

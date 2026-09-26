@@ -16,7 +16,7 @@
 import os
 import re
 
-from . import config, engine, outbox, store
+from . import config, detector, engine, outbox, store
 
 #: Инструмент на площадке пишется латиницей и цифрами (ЗАМЕР по живому списку: `US100S`,
 #: `XAU`, `HYPE`). Точку и дефис разрешаем — в списке есть `USDC.E`-подобные формы.
@@ -81,28 +81,44 @@ def parse(text):
 
 
 HELP = (
-    '👁 Дозорный — живые алерты по Variational Omni и смарт-деньгам.\n'
+    '👁 Дозорный - живые алерты по Variational Omni и смарт-деньгам.\n'
     '\n'
-    'дозор BTC — взять инструмент под дозор\n'
-    'дозор всё — вся площадка (553 инструмента)\n'
-    'дозор убрать BTC — снять\n'
-    'дозор — что под дозором и в каком состоянии\n'
-    'дозор порог 5 — молчать про движения слабее 5%\n'
-    'дозор тихо 22 8 — тихие часы (UTC), «дозор тихо выкл» — снять\n'
-    'дозор алерты выкл — пауза без потери списка\n'
-    'дозор предохранитель 3 / 10 — не больше 3 сообщений за 10 минут (остальное сводкой)\n'
-    'дозор звонок 75 — звонить только при уверенности от 75/100, слабее — сводкой\n'
-    'дозор сводки выкл — только цифры, без Нансена и твиттера\n'
-    'дозор отчёт — попадания за неделю (или честное «выборка мала»)\n'
+    'дозор BTC - взять инструмент под дозор\n'
+    'дозор всё - вся площадка (553 инструмента)\n'
+    'дозор убрать BTC - снять\n'
+    'дозор - что под дозором и в каком состоянии\n'
+    'дозор порог 5 - молчать про движения слабее 5%\n'
+    'дозор тихо 22 8 - тихие часы (UTC), «дозор тихо выкл» - снять\n'
+    'дозор алерты выкл - пауза без потери списка\n'
+    'дозор предохранитель 3 / 10 - не больше 3 сообщений за 10 минут (остальное сводкой)\n'
+    'дозор звонок 75 - звонить только при уверенности от 75/100, слабее - сводкой\n'
+    'дозор сводки выкл - только цифры, без Нансена и твиттера\n'
+    'дозор отчёт - попадания за неделю (или честное «выборка мала»)\n'
     '\n'
     'Что приходит: движение цены (с оценкой «необычно ли это ДЛЯ НЕГО»), скачок открытого '
-    'интереса, ставка в хвосте, разъехавшаяся котировка, смарт-зажигание (несколько разных '
-    'умных адресов купили один токен).\n'
+    'интереса (при стоящей цене карточка скажет «поглощение»), всплеск оборота (больше обычного '
+    'часа этого инструмента), ставка в хвосте, разъехавшаяся котировка, смарт-зажигание '
+    '(несколько разных умных адресов купили один токен) и смарт-перп (умные адреса открыли ОДНУ '
+    'сторону по одному инструменту).\n'
+    'Скачок интереса, который за 3 часа вернулся к исходному уровню, не звонит: это закрытие той '
+    'же позиции, а не новость.\n'
+    'Акции и фонды вне сессии NYSE (9:30-16:00 по Нью-Йорку, пн-пт) приходят только сводкой с '
+    'пометкой «биржа закрыта»: перп в это время торгуется на тонкой книге без базового рынка.\n'
+    'Ончейн-контекст в сводке считается за последние 3 часа, а не за сутки: контекст к '
+    'пятнадцатиминутному движению обязан быть свежим. По акциям, фондам, сырью, металлам, '
+    'индексам и нативным монетам сетей ончейн не показывается вовсе - там его нет или он не '
+    'про этот актив.\n'
+    'Тикер в карточке и сводке - ссылка на карточку инструмента. Значок у тикера: 🪙 токен с '
+    'контрактом, 🐸 мем (DEX-токен дешевле $100M), 📊 акция или фонд, 📈 индекс, 🛢 сырьё, '
+    '🥇 металл; без значка - класс не доказан. SK hynix живёт по часам корейской биржи.\n'
+    'Пресеты: Новичок (ставится при первой подписке), Трейдер, Тихий; перед применением '
+    'показывают, что изменится. Если опрос площадок остановился, владельцу приходит одно '
+    'сообщение, и одно - когда он вернулся.\n'
     'Дозорный НЕ торгует и НЕ советует. Вход руками на omni.variational.io.'
 )
 
 
-def fix_polling(uid, now=None):
+def fix_polling(uid, now=None, lang=None):
     """Проверить опрос и вернуть его, если он завис. -> HTML-строка с ЗАМЕРАМИ.
 
     ═══ ЗАЧЕМ КНОПКА И ПОЧЕМУ ОНА НЕ ЗОВЁТ systemctl ═══
@@ -126,49 +142,75 @@ def fix_polling(uid, now=None):
     """
     import time as _tm
     now = int(now if now is not None else _tm.time())
+    ru = (lang or 'ru') != 'en'
     owner, until = store.lease_owner('variational')
     alive = bool(owner) and until > now
     seen5 = len(store.tickers_seen(now - 300))
     seen60 = len(store.tickers_seen(now - 3600))
-    out = ['🩺 <b>Опрос площадок</b>', '']
-    out.append('Снимков за 5 минут: <b>%d</b> · за час: <b>%d</b>' % (seen5, seen60))
+    out = ['🩺 <b>%s</b>' % ('Опрос площадок' if ru else 'Venue polling'), '']
+    out.append(('Снимков за 5 минут: <b>%d</b> · за час: <b>%d</b>' if ru else
+                'Snapshots in 5 min: <b>%d</b> · in an hour: <b>%d</b>') % (seen5, seen60))
+    # КТО ИМЕННО ОПРАШИВАЕТ - СТРОКОЙ НА ЭКРАНЕ. До 26.09 ответить на это из интерфейса было
+    # нечем, и живой случай выглядел так: служба `active`, а кольцо пустое, потому что опрос вели
+    # два процесса по очереди, каждый считая работу чужой. Роль теперь едет в имени владельца
+    # аренды (`store.lease_role`), и человек видит «отдельный юнит» против «подхватил бот» - это
+    # разные новости: вторая означает, что юнит не работает, и смотреть надо его лог.
+    if owner:
+        _poll = store.lease_role(owner) == 'poller'
+        out.append(('Опрашивает: <b>%s</b>' if ru else 'Polling by: <b>%s</b>')
+                   % (('отдельный юнит' if _poll else 'бот (подхватил вместо юнита)') if ru else
+                      ('the standalone unit' if _poll else 'the bot (took over for the unit)')))
     if alive:
-        out.append('Аренда: жива, ещё %dс' % (until - now))
+        out.append(('Аренда: жива, ещё %dс' if ru else 'Lease: alive, %ds left')
+                   % (until - now))
     elif owner:
-        out.append('Аренда: <b>истекла %d мин назад</b> (опрашивающий не продлевает её)'
+        out.append(('Аренда: <b>истекла %d мин назад</b> (опрашивающий не продлевает её)' if ru
+                    else 'Lease: <b>expired %d min ago</b> (the poller is not renewing it)')
                    % ((now - until) // 60))
     else:
-        out.append('Аренду не брал никто')
+        out.append('Аренду не брал никто' if ru else 'Nobody has taken the lease')
     # ВЕДЁМ ВЕЛИЧИНОЙ: снимки за пять минут - это и есть метрика пользы. Живая аренда при нуле
     # снимков значит, что процесс жив и НЕ РАБОТАЕТ, и такое надо называть прямо.
     if seen5:
         out.append('')
-        out.append('✅ Опрос идёт: кольцо растёт. Если алертов нет — причина в настройках или '
-                   'в суточном потолке, смотрите экран дозорного.')
+        out.append('✅ Опрос идёт: кольцо растёт. Если алертов нет, причина в настройках или '
+                   'в суточном потолке, смотрите экран дозорного.' if ru else
+                   '✅ Polling works: the ring is growing. No alerts means settings or the daily '
+                   'cap, see the sentinel screen.')
         return '\n'.join(out)
     if alive:
         out.append('')
         out.append('⚠️ <b>Аренда жива, а снимков нет.</b> Значит процесс опроса запущен и НЕ '
-                   'РАБОТАЕТ — кнопка тут не поможет. На сервере:')
-        # ПУТЬ ОТНОСИТЕЛЬНЫЙ НАМЕРЕННО: абсолютная раскладка сервера (`/root/…`) — боевая
+                   'РАБОТАЕТ, кнопка тут не поможет. На сервере:' if ru else
+                   '⚠️ <b>The lease is alive but no snapshots.</b> The polling process is running '
+                   'and NOT WORKING; this button cannot help. On the server:')
+        # ПУТЬ ОТНОСИТЕЛЬНЫЙ НАМЕРЕННО: абсолютная раскладка сервера (`/root/…`) - боевая
         # топология, а этот файл уезжает в ПУБЛИЧНУЮ выжимку. Сторож выжимки её и поймал.
         # Польза подсказки при этом цела: важно не «где каталог бота» (это человек знает), а
         # ИМЯ файла и то, что искать надо не в journalctl.
-        out.append('В каталоге бота:')
+        out.append('В каталоге бота:' if ru else 'In the bot directory:')
         out.append('<code>tail -40 sentinel.log</code>')
         out.append('<code>systemctl restart sentinel</code>')
-        out.append('<i>Служба пишет НЕ в journalctl, а в sentinel.log — причина будет там.</i>')
+        out.append('<i>%s</i>' % ('Служба пишет НЕ в journalctl, а в sentinel.log, причина будет '
+                                  'там.' if ru else
+                                  'The unit writes to sentinel.log, NOT to journalctl; the reason '
+                                  'is there.'))
         return '\n'.join(out)
     # ЗАВИСШУЮ АРЕНДУ ОТДАЁМ - И ГОВОРИМ, ЧТО ИМЕННО СДЕЛАЛИ.
     try:
         store.lease_release('variational', owner=owner)
         out.append('')
-        out.append('🔧 Аренда отдана. Следующий круг (до минуты) подхватит опрос — бот сделает '
-                   'это сам, если отдельный юнит молчит.')
-        out.append('Нажмите ещё раз через минуту: снимки за 5 минут должны стать больше нуля.')
+        out.append('🔧 Аренда отдана. Следующий круг (до минуты) подхватит опрос, бот сделает '
+                   'это сам, если отдельный юнит молчит.' if ru else
+                   '🔧 Lease released. The next round (within a minute) picks polling up; the bot '
+                   'does it itself if the standalone unit stays silent.')
+        out.append('Нажмите ещё раз через минуту: снимки за 5 минут должны стать больше нуля.'
+                   if ru else
+                   'Tap again in a minute: snapshots in 5 min must become greater than zero.')
     except Exception as e:
         out.append('')
-        out.append('Аренду отдать не удалось: %s' % esc_ui(str(e)[:120]))
+        out.append(('Аренду отдать не удалось: %s' if ru else 'Could not release the lease: %s')
+                   % esc_ui(str(e)[:120]))
     return '\n'.join(out)
 
 
@@ -293,10 +335,11 @@ def status_text(uid):
     lines.append('')
     lines.append(outbox.status_line())
     lines.append('')
-    lines.append('Пороги сейчас: 15м %.1f%% · 60м %.1f%% · %.1f сигмы · интерес %.0f%% · '
-                 'зажигание %d адреса/$%.0fk'
+    _oi_t, _vol_t = surge_thresholds('ru')
+    lines.append('Пороги сейчас: 15м %.1f%% · 60м %.1f%% · %.1f сигмы · интерес %s · '
+                 'оборот %s · зажигание %d адреса/$%.0fk'
                  % (config.move_pct_15m(), config.move_pct_60m(), config.z_min(),
-                    config.oi_pct(), config.ign_wallets(), config.ign_usd() / 1000))
+                    _oi_t, _vol_t, config.ign_wallets(), config.ign_usd() / 1000))
     return '\n'.join(lines)
 
 
@@ -432,7 +475,10 @@ _T = {
     'brief_off': {'ru': '🧭 Сводки: выкл', 'en': '🧭 Briefs: off'},
     'all_on': {'ru': '🌍 Вся площадка: да', 'en': '🌍 Whole venue: yes'},
     'all_off': {'ru': '🌍 Вся площадка: нет', 'en': '🌍 Whole venue: no'},
-    'mp': {'ru': 'Порог движения: %s', 'en': 'Move threshold: %s'},
+    # «ТОЛЬКО 📈📉» (этап 4, ТЗ 4.2): порог режет ТОЛЬКО движения цены. Интерес, оборот и
+    # зажигание через него не фильтруются, и без пометки человек, поставивший 5%, ждал бы
+    # тишины от всех видов.
+    'mp': {'ru': 'Порог движения (только 📈📉): %s', 'en': 'Move threshold (📈📉 only): %s'},
     'mp_off': {'ru': 'как общий', 'en': 'the shared one'},
     'cd': {'ru': 'Пауза: %d мин', 'en': 'Cooldown: %d min'},
     'cap': {'ru': 'Потолок: %d в сутки', 'en': 'Cap: %d per day'},
@@ -440,17 +486,19 @@ _T = {
     'quiet_off': {'ru': 'нет', 'en': 'none'},
     'today': {'ru': 'Сегодня доставлено: %d из %d', 'en': 'Delivered today: %d of %d'},
     'shared': {'ru': 'Общие пороги (правятся в .env, одни на всех): 15м %.1f%% · 60м %.1f%% · '
-                     '%.1f сигмы · интерес %.0f%% · зажигание %d адреса/$%.0fk',
+                     '%.1f сигмы · интерес %s · оборот %s · зажигание %d адреса/$%.0fk',
                'en': 'Shared thresholds (edited in .env, same for everyone): 15m %.1f%% · '
-                     '60m %.1f%% · %.1f sigma · OI %.0f%% · ignition %d addresses/$%.0fk'},
+                     '60m %.1f%% · %.1f sigma · OI %s · turnover %s · ignition %d addresses/$%.0fk'},
     'btn_report': {'ru': '📊 Попадания', 'en': '📊 Hit rate'},
     'k_move': {'ru': 'Движения', 'en': 'Moves'},
     'k_oi': {'ru': 'Интерес', 'en': 'Open interest'},
     'k_vol': {'ru': 'Объём', 'en': 'Volume'},
     'k_gap': {'ru': 'Расхождение', 'en': 'Venue gap'},
     'k_crowd': {'ru': 'Толпа', 'en': 'Crowded'},
-    'k_absorb': {'ru': 'Поглощение', 'en': 'Absorption'},
     'k_ign': {'ru': 'Зажигание', 'en': 'Ignition'},
+    #: СМАРТ-ПЕРП (ТЗ 1.7): умные адреса открывают ОДНУ сторону по одному токену.
+    #: Подпись короткая нарочно - она стоит в ряду из трёх кнопок.
+    'k_smperp': {'ru': 'Смарт-перп', 'en': 'Smart perp'},
     'k_fund': {'ru': 'Фандинг', 'en': 'Funding'},
     'k_spread': {'ru': 'Спред', 'en': 'Spread'},
     'p_nansen': {'ru': 'Нансен', 'en': 'Nansen'},
@@ -460,11 +508,18 @@ _T = {
     'btn_refresh': {'ru': '🔄 Обновить', 'en': '🔄 Refresh'},
     'btn_now': {'ru': '📈 Что сейчас', 'en': '📈 Market now'},
     'venues': {'ru': 'Площадки:', 'en': 'Venues:'},
-    'preset': {'ru': '⚙️ Пресет: %s', 'en': '⚙️ Preset: %s'},
-    'p_test': {'ru': 'поток', 'en': 'firehose'},
-    'p_normal': {'ru': 'рабочий', 'en': 'normal'},
-    'p_quiet': {'ru': 'тихий', 'en': 'quiet'},
-    'day': {'ru': 'За сутки:', 'en': 'Last 24h:'},
+    'preset': {'ru': '⚙️ %s', 'en': '⚙️ %s'},
+    'pr_head': {'ru': '⚙️ <b>Пресет «%s»</b> - что изменится:',
+                'en': '⚙️ <b>Preset "%s"</b> - what will change:'},
+    'pr_same': {'ru': 'Ничего: у вас уже стоят эти настройки.',
+                'en': 'Nothing: these settings are already yours.'},
+    'pr_apply': {'ru': '✅ Применить', 'en': '✅ Apply'},
+    'pr_back': {'ru': '↩️ Не менять', 'en': '↩️ Keep mine'},
+    'pr_done': {'ru': '✅ Пресет «%s» применён.', 'en': '✅ Preset "%s" applied.'},
+    'pr_denied': {'ru': 'Пресет «Поток» - для владельца и тестировщиков.',
+                  'en': 'The Firehose preset is for the owner and testers.'},
+    'day': {'ru': 'За сутки: событий %d, доставлено %d, в сводках %d, кредитов Nansen %d',
+            'en': 'Last 24h: events %d, delivered %d, in digests %d, Nansen credits %d'},
     'nothing': {'ru': 'ничего', 'en': 'nothing'},
     'btn_help': {'ru': '❓ Как это работает', 'en': '❓ How it works'},
     'saved': {'ru': 'Готово', 'en': 'Saved'},
@@ -521,9 +576,13 @@ _T = {
                'en': 'Pace: how many messages and how often. The fuse is a hard per-person '
                      'boundary; cooldown is per instrument; the cap is per day.'},
     'h_power': {'ru': 'Сила: насколько крупным должно быть событие. Это про СОСТАВ, а не про '
-                      'количество — темп держит предохранитель.',
+                      'количество - темп держит предохранитель. Порог движения режет только '
+                      'движения цены 📈📉: интерес, оборот, зажигание и смарт-перп через него '
+                      'не фильтруются.',
                 'en': 'Strength: how big an event must be. This changes the MIX, not the '
-                      'volume — the pace is held by the fuse.'},
+                      'volume - the pace is held by the fuse. The move threshold filters only '
+                      'price moves 📈📉: open interest, turnover, ignition and smart perp are not '
+                      'filtered by it.'},
     'h_kinds': {'ru': 'Виды событий. Галочка — включено. Выключенное не приходит и в сводке '
                       'не появляется: это ваш выбор, а не отсрочка.',
                 'en': 'Event kinds. A tick means on. What is off does not arrive at all, not '
@@ -558,12 +617,8 @@ def _is_owner(uid):
     исчерпан» на своём экране.
     ПУСТОЙ СПИСОК = НИКОМУ, а не всем: ошибка в `.env` не имеет права открыть общий кошелёк.
     """
-    try:
-        raw = os.getenv('ADMIN_IDS') or ''
-        ids = {int(x) for x in re.findall(r'-?\d+', raw)}
-    except Exception:
-        ids = set()
-    return bool(ids) and int(uid) in ids
+    # ОДНА ДВЕРЬ В `config.is_owner`: её же зовёт отправка (строка расхода только владельцу).
+    return config.is_owner(uid)
 
 
 def _lang(uid):
@@ -600,6 +655,14 @@ def menu_text(uid, lang=None):
     s = store.settings(uid)
     subs = store.sub_list(uid)
     out = [_t('title', lang), '']
+    # ВЛАДЕЛЬЦУ - ПЕРВОЙ СТРОКОЙ, ЕСЛИ ЭТОТ ПРОЦЕСС РАБОТАЕТ НА КОДЕ СТАРШЕ ДИСКА (этап 3, п.3).
+    # После деплоя без рестарта карточки собирает старый код, и снаружи это не видно никак.
+    if _is_owner(uid) and engine.code_stale():
+        out.append(('⚠️ Bot process runs code older than the disk (%s): restart the service.'
+                    if lang == 'en' else
+                    '⚠️ Процесс бота работает на коде старше диска (%s): нужен рестарт службы.')
+                   % ', '.join(engine.code_stale()[:3]))
+        out.append('')
     if not subs:
         out.append(_t('watch_none', lang))
     elif store.ALL in subs:
@@ -616,9 +679,9 @@ def menu_text(uid, lang=None):
     _p = store.parts_for(uid)
     _kn = {'move_up': _t('k_move', lang), 'vol_surge': _t('k_vol', lang),
            'venue_gap': _t('k_gap', lang), 'crowded': _t('k_crowd', lang),
-           'absorption': _t('k_absorb', lang),
            'oi_surge': _t('k_oi', lang),
            'ignition': _t('k_ign', lang), 'funding_extreme': _t('k_fund', lang),
+           'sm_perp': _t('k_smperp', lang),
            'spread_shock': _t('k_spread', lang)}
     _on = [v for k, v in _kn.items() if k in _k]
     out.append('%s %s' % (_t('what_comes', lang),
@@ -649,15 +712,15 @@ def menu_text(uid, lang=None):
     # СОБЫТИЯ ЗА СУТКИ - РАЗРЕЗОМ ПО ВИДАМ. «Событий 12» не отвечает на вопрос «а движения-то
     # были?»: двенадцать спредов и ноль движений выглядят как двенадцать событий. Живой случай
     # 25.09 разобрался бы этой строкой за секунду.
+    # ═══ ЧЕТЫРЕ ЧИСЛА ВМЕСТО РАЗРЕЗА ПО ВИДАМ (ТЗ 3.8) ═══
+    # «Движения 949, ...» отвечал на вопрос «сколько насчитал детектор», а человеку нужно «сколько
+    # дошло до меня и чего это стоило». Разрез по видам остался в строке состояния владельца.
     try:
-        import time as _tm
-        _by = store.events_by_kind(int(_tm.time()) - 86400)
-        _parts = ['%s %d' % (_kn.get(k, k), v) for k, v in sorted(_by.items(), key=lambda x: -x[1])
-                  if k in _kn]
-        out.append('%s %s' % (_t('day', lang), ', '.join(_parts) if _parts
-                              else _t('nothing', lang)))
+        _d = store.day_totals(uid)
+        out.append(_t('day', lang) % (_d['events'], _d['delivered'], _d['digested'],
+                                      _d['credits']))
     except Exception as _e:
-        print('[sentinel] разрез событий не собрался: %s' % str(_e)[:90])
+        print('[sentinel] итог суток не собрался: %s' % str(_e)[:90])
     # ═══ НАСТРОЙКИ, ОЗНАЧАЮЩИЕ ТИШИНУ, НАЗЫВАЮТСЯ ВСЛУХ ═══
     # ЖИВОЙ СКРИНШОТ ВЛАДЕЛЬЦА 26.09: обе площадки ✗ и почти все виды ✗ - при таком наборе не
     # придёт НИ ОДНОГО алерта никогда, а экран об этом молчал и выглядел рабочим. Это тот самый
@@ -679,7 +742,8 @@ def menu_text(uid, lang=None):
     if _ADV.get(int(uid)):
         out.append('')
         out.append(_t('shared', lang) % (config.move_pct_15m(), config.move_pct_60m(),
-                                         config.z_min(), config.oi_pct(),
+                                         config.z_min(), surge_thresholds(lang)[0],
+                                         surge_thresholds(lang)[1],
                                          config.ign_wallets(), config.ign_usd() / 1000))
         # ПРО «БЕСПЛАТНО» ГОВОРИМ ВСЛУХ И ТОЛЬКО КОГДА ЭТО ПРАВДА: выключенный кап - решение
         # владельца, а не дефект, и человек, читающий «кап выключен», должен видеть, что так и
@@ -746,9 +810,10 @@ def menu_kb(uid, lang=None):
         # ПРЕСЕТЫ ВЫШЕ ОТДЕЛЬНЫХ ЧИСЕЛ, ПОТОМУ ЧТО ЭТО САМЫЙ ЧАСТЫЙ СПОСОБ НАСТРОИТЬ. Один тап
         # ставит порог, паузу, потолок и набор видов - четыре числа, которые иначе крутят
         # двенадцатью нажатиями.
-        [B(_t('preset', lang) % _t('p_test', lang), callback_data='sen:pr:test'),
-         B(_t('preset', lang) % _t('p_normal', lang), callback_data='sen:pr:normal'),
-         B(_t('preset', lang) % _t('p_quiet', lang), callback_data='sen:pr:quiet')],
+        # ПРЕСЕТЫ ЭТАПА 4: тап показывает, ЧТО ИЗМЕНИТСЯ, и только второй тап применяет.
+        [B(_t('preset', lang) % _preset_title('newbie', lang), callback_data='sen:pr:newbie'),
+         B(_t('preset', lang) % _preset_title('trader', lang), callback_data='sen:pr:trader'),
+         B(_t('preset', lang) % _preset_title('quiet', lang), callback_data='sen:pr:quiet')],
         [B(_t('btn_now', lang), callback_data='sen:now'),
          B(_t('btn_report', lang), callback_data='sen:rep')],
         # ═══ КНОПКА «ПОЧИНИТЬ ОПРОС» - ПРОСЬБА ВЛАДЕЛЬЦА 26.09 ═══
@@ -766,6 +831,11 @@ def menu_kb(uid, lang=None):
          B(_t('btn_help', lang), callback_data='sen:help')],
         [B(_t('btn_refresh', lang), callback_data='sen:home')],
     ]
+    # «ПОТОК» - ОТДЕЛЬНЫМ РЯДОМ И ТОЛЬКО ТЕМ, КОМУ ОН ПОЛОЖЕН: кнопка, которая всем отвечает
+    # «нельзя», это обещание, которого мы не держим.
+    if store.preset_allowed(uid, 'flow'):
+        rows.insert(3, [B(_t('preset', lang) % _preset_title('flow', lang),
+                          callback_data='sen:pr:flow')])
     if not adv:
         return InlineKeyboardMarkup(rows)
     # ── ПРОДВИНУТОЕ: ВСТАВЛЯЕМ ПЕРЕД РЯДОМ «ЕЩЁ», ЧТОБЫ ОН ОСТАЛСЯ ВНИЗУ КАК ВЫХОД ────────
@@ -802,9 +872,12 @@ def menu_kb(uid, lang=None):
         [B(_mark(_t('k_move', lang), 'move_up' in kinds), callback_data='sen:k:move'),
          B(_mark(_t('k_vol', lang), 'vol_surge' in kinds), callback_data='sen:k:vol'),
          B(_mark(_t('k_oi', lang), 'oi_surge' in kinds), callback_data='sen:k:oi')],
+        # «ПОГЛОЩЕНИЕ» УБРАНО (ТЗ 2.4): это строка карточки скачка интереса, а не свой вид, и
+        # тумблер, который ничего не включает, хуже отсутствующего. Освободившееся место занял
+        # смарт-перп - рядом с зажиганием: оба вида про умные деньги, и человек ищет их вместе.
         [B(_mark(_t('k_crowd', lang), 'crowded' in kinds), callback_data='sen:k:crowd'),
-         B(_mark(_t('k_absorb', lang), 'absorption' in kinds), callback_data='sen:k:absorb'),
-         B(_mark(_t('k_ign', lang), 'ignition' in kinds), callback_data='sen:k:ign')],
+         B(_mark(_t('k_ign', lang), 'ignition' in kinds), callback_data='sen:k:ign'),
+         B(_mark(_t('k_smperp', lang), 'sm_perp' in kinds), callback_data='sen:k:smperp')],
         [B(_mark(_t('k_gap', lang), 'venue_gap' in kinds), callback_data='sen:k:gap'),
          B(_mark(_t('k_fund', lang), 'funding_extreme' in kinds), callback_data='sen:k:fund'),
          B(_mark(_t('k_spread', lang), 'spread_shock' in kinds), callback_data='sen:k:spread')],
@@ -836,6 +909,57 @@ def menu_kb(uid, lang=None):
     # ПРОДВИНУТОЕ ВСТАВЛЯЕМ ПЕРЕД ДВУМЯ ПОСЛЕДНИМИ РЯДАМИ («Ещё/Справка» и «Обновить»), чтобы
     # выход из раздела остался на дне экрана - там, где человек его ищет после прокрутки.
     return InlineKeyboardMarkup(rows[:-2] + adv_rows + rows[-2:])
+
+
+def _preset_title(name, lang='ru'):
+    n = store.preset_name(name) or name
+    p = store.PRESETS.get(n) or {}
+    return (p.get('title_en') if lang == 'en' else p.get('title')) or n
+
+
+def _preset_val(field, v, lang='ru'):
+    """Значение поля пресета словами. -> str."""
+    if v is None:
+        return ('shared' if lang == 'en' else 'как общий')
+    if field == 'kinds':
+        names = {'move_up': 'k_move', 'move_down': None, 'oi_surge': 'k_oi', 'vol_surge': 'k_vol',
+                 'ignition': 'k_ign', 'sm_perp': 'k_smperp', 'crowded': 'k_crowd',
+                 'venue_gap': 'k_gap', 'spread_shock': 'k_spread', 'funding_extreme': 'k_fund'}
+        got = [(_t(names[k], lang) if names.get(k) else None)
+               for k in str(v).split(',') if k in names]
+        return ', '.join(sorted({g for g in got if g})) or ('none' if lang == 'en' else 'ничего')
+    if field == 'parts':
+        m = {'card': ('числа' if lang != 'en' else 'numbers'), 'nansen': _t('p_nansen', lang),
+             'news': _t('p_news', lang)}
+        return ', '.join(m.get(x, x) for x in str(v).split(',') if x)
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return str(v)
+
+
+def preset_preview_text(uid, name, lang='ru'):
+    """ЧТО ИЗМЕНИТСЯ, числами: «было -> станет» по каждому меняющемуся полю. -> HTML."""
+    rows = store.preset_preview(uid, name)
+    out = [_t('pr_head', lang) % esc_(_preset_title(name, lang))]
+    if not rows:
+        out.append(_t('pr_same', lang))
+    for f, ru, en, old, new in rows:
+        out.append('• %s: %s -> <b>%s</b>' % (en if lang == 'en' else ru,
+                                               esc_(_preset_val(f, old, lang)),
+                                               esc_(_preset_val(f, new, lang))))
+    return '\n'.join(out)
+
+
+def preset_preview_kb(uid, name, lang='ru'):
+    from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup
+    n = store.preset_name(name) or name
+    return InlineKeyboardMarkup([[B(_t('pr_apply', lang), callback_data='sen:pa:%s' % n),
+                                  B(_t('pr_back', lang), callback_data='sen:home')]])
+
+
+def esc_(s):
+    from .cards import esc
+    return esc(s)
 
 
 def _capw(v, lang='ru'):
@@ -961,7 +1085,7 @@ async def handle_callback(update, context):
                 store.settings_set(uid, burst_win_min=max(5, min(store._WIN_HARD_MIN,
                                                                  _cur + int(arg))))
         elif act == 'fix':
-            await _send(q, context, fix_polling(uid), menu_kb(uid, lang))
+            await _send(q, context, fix_polling(uid, lang=lang), menu_kb(uid, lang))
             return
         elif act == 'adv':
             # РАЗВЕРНУТЬ/СВЕРНУТЬ ПРОДВИНУТОЕ. Состояние в памяти процесса (см. `_ADV`): это
@@ -1005,8 +1129,9 @@ async def handle_callback(update, context):
             # хочет знать и о росте.
             _map = {'move': ('move_up', 'move_down'), 'oi': ('oi_surge',),
                     'vol': ('vol_surge',), 'gap': ('venue_gap',),
-                    'crowd': ('crowded',), 'absorb': ('absorption',),
+                    'crowd': ('crowded',),
                     'ign': ('ignition',), 'fund': ('funding_extreme',),
+                    'smperp': ('sm_perp',),
                     'spread': ('spread_shock',)}
             cur = store.kinds_for(uid)
             group = _map.get(arg) or ()
@@ -1020,15 +1145,27 @@ async def handle_callback(update, context):
         elif act == 'v':
             store.venue_toggle(uid, arg)
         elif act == 'pr':
+            # ПЕРВЫЙ ТАП - ПРЕДПРОСМОТР, А НЕ ПРИМЕНЕНИЕ (этап 4, ТЗ 4.1): пресет меняет до
+            # восьми настроек, и человек обязан увидеть числа ДО того, как их потеряет.
+            if not store.preset_allowed(uid, arg):
+                return await _send(q, context, _t('pr_denied', lang) if store.preset_name(arg)
+                                   else ('Не вышло: такого пресета нет' if lang != 'en'
+                                         else 'No such preset'))
+            return await _send(q, context, preset_preview_text(uid, arg, lang),
+                               preset_preview_kb(uid, arg, lang))
+        elif act == 'pa':
+            if not store.preset_allowed(uid, arg):
+                return await _send(q, context, _t('pr_denied', lang))
             _nm, _why = store.preset_apply(uid, arg)
-            await _send(q, context,
-                        ('⚙️ Пресет «%s»: %s' % (_nm, _why)) if _nm else
-                        ('Не вышло: %s' % _why))
+            if _nm:
+                await _send(q, context, _t('pr_done', lang) % _preset_title(_nm, lang))
+            else:
+                await _send(q, context, 'Не вышло: %s' % _why)
         elif act == 'q':
             f, t = _quiet_next(store.settings(uid))
             store.settings_set(uid, quiet_from=f, quiet_to=t)
         elif act == 'now':
-            return await _send(q, context, now_text(lang), now_kb(lang))
+            return await _send(q, context, now_text(lang, await outbox.bot_un()), now_kb(lang))
         elif act == 'card':
             _v, _tk = (arg, parts[3]) if len(parts) > 3 else ('', arg)
             return await _send(q, context, await card_link(_tk, _v, lang))
@@ -1120,41 +1257,34 @@ async def _send(q, context, text, kb=None):
 
 
 def now_kb(lang='ru'):
-    """Кнопки-тикеры под срезом рынка. -> InlineKeyboardMarkup | None.
+    """Клавиатура под срезом рынка: одна кнопка «Дозор». -> InlineKeyboardMarkup.
 
-    СКВОЗНОЙ СЦЕНАРИЙ: тап по тикеру ведёт в НАШУ карточку токена, откуда уже есть
-    график и избранное. Без этих кнопок экран был тупиком: человек читал «BR +8.37%»
-    и шёл набирать «BR» руками в другом окне - работу, которую мы умеем сделать сами.
+    РЯДЫ КНОПОК-ТИКЕРОВ УБРАНЫ (этап 3): тикер в строке среза - сам ссылка на карточку
+    инструмента (`cards.tick_link`), та же дверь, что была у кнопки `sen:card`.
     """
     from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup
-    m = engine.market_now()
-    seen, rows, cur = set(), [], []
-    for _a, t, _b, _c, _d, v in (m.get('moves') or []):
-        if t in seen:
-            continue
-        seen.add(t)
-        cur.append(B('📊 %s' % t, callback_data='sen:card:%s:%s' % (v, t)))
-        if len(cur) == 3:
-            rows.append(cur)
-            cur = []
-    for dv, t, _u, v in (m.get('vols') or []):
-        if t in seen or len(rows) >= 3:
-            continue
-        seen.add(t)
-        cur.append(B('📊 %s' % t, callback_data='sen:card:%s:%s' % (v, t)))
-        if len(cur) == 3:
-            rows.append(cur)
-            cur = []
-    if cur:
-        rows.append(cur)
-    if not rows:
-        return None
-    rows.append([B(_t('btn_home', lang) if 'btn_home' in _T else '👁 Дозор',
-                   callback_data='sen:home')])
-    return InlineKeyboardMarkup(rows)
+    return InlineKeyboardMarkup([[B(_t('btn_home', lang) if 'btn_home' in _T else '👁 Дозор',
+                                    callback_data='sen:home')]])
 
 
-def now_text(lang='ru'):
+def surge_thresholds(lang='ru'):
+    """Пороги интереса и оборота словами. -> (интерес, оборот). ОДНА ДВЕРЬ на два экрана.
+
+    С ТЗ 2.4 у обоих порог - БОЛЬШЕЕ из нескольких чисел, и строка «интерес 20 процентов»
+    стала бы неправдой: процент - только половина условия. Печатаем формулу целиком, с числами
+    из конфига, чтобы человек видел ровно то, по чему работает детектор.
+    """
+    en = lang == 'en'
+    oi = ('%.0f%% and max($%.0fk, %g%% of 24h turnover)' if en else
+          '%.0f%% и не меньше max($%.0fk, %g%% оборота 24ч)') % (
+        config.oi_pct(), config.oi_min_usd() / 1000, config.oi_vol_share_pct())
+    vol = ('max($%.0fk, %gx hourly median, %g%% of 24h) per hour' if en else
+           'за час не меньше max($%.0fk, %g x медиана часа, %g%% от 24ч)') % (
+        config.vol_min_usd() / 1000, config.vol_median_mult(), config.vol_share_pct())
+    return oi, vol
+
+
+def now_text(lang='ru', bot_un=None):
     """СРЕЗ РЫНКА ИЗ НАШЕГО КОЛЬЦА. -> str. Ни одного запроса к площадке, ни одного кредита.
 
     ГЛАВНАЯ СТРОКА ЗДЕСЬ - ПОСЛЕДНЯЯ: насколько лучший кандидат далёк от порога. Живой случай
@@ -1180,11 +1310,11 @@ def now_text(lang='ru'):
         for _a, t, best, p15, p60, _v in m['moves']:
             bits = []
             if p15 is not None:
-                bits.append('15м %+.2f%%' % p15)
+                bits.append(('15m %+.2f%%' if not ru else '15м %+.2f%%') % p15)
             if p60 is not None:
-                bits.append('60м %+.2f%%' % p60)
-            out.append('• <b>%s</b> <i>%s</i> %s'
-                       % (t, _vt(_v), ' · '.join(bits)))
+                bits.append(('1h %+.2f%%' if not ru else '60м %+.2f%%') % p60)
+            out.append('• %s <i>%s</i> %s'
+                       % (_tl(t, _v, bot_un), _vt(_v), ' · '.join(bits)))
     else:
         out.append('• %s' % ('движений не измерено (кольцо ещё набирается)' if ru
                              else 'no moves measured yet'))
@@ -1192,8 +1322,8 @@ def now_text(lang='ru'):
         out.append('')
         out.append('<b>%s</b>' % ('Растёт оборот' if ru else 'Turnover growing'))
         for dv, t, dusd, _v in m['vols']:
-            out.append('• <b>%s</b> <i>%s</i> +%.0f%% (+%s)'
-                       % (t, _vt(_v), dv, _money(dusd)))
+            out.append('• %s <i>%s</i> +%.0f%% (+%s)'
+                       % (_tl(t, _v, bot_un), _vt(_v), dv, _money(dusd)))
     out.append('')
     # ГЛАВНАЯ СТРОКА ТИХОГО ЧАСА - СКОЛЬКО ИНСТРУМЕНТОВ ВООБЩЕ СДВИНУЛОСЬ. «Сильнейшее движение
     # 0.00%» само по себе читается как сломанный счётчик; рядом с «из 192 измеренных сдвинулись
@@ -1204,16 +1334,22 @@ def now_text(lang='ru'):
                    % (m.get('stirred') or 0, m['measured']))
     if m.get('best') is not None:
         if m['best'] >= m['thr15']:
-            out.append('Сильнейшее движение <b>%.2f%%</b> — порог %.2f%% взят, событие записано '
+            out.append('Сильнейшее движение <b>%.2f%%</b> - порог %.2f%% взят, событие записано '
                        'или ждёт паузы и фильтров.' % (m['best'], m['thr15']) if ru else
-                       'Strongest move <b>%.2f%%</b> — the %.2f%% threshold is met; the event is '
+                       'Strongest move <b>%.2f%%</b> - the %.2f%% threshold is met; the event is '
                        'stored or waiting on cooldown and filters.' % (m['best'], m['thr15']))
         else:
-            out.append(('Сильнейшее движение <b>%.2f%%</b> против порога %.2f%% — тихо на рынке, '
+            out.append(('Сильнейшее движение <b>%.2f%%</b> против порога %.2f%% - тихо на рынке, '
                         'а не в дозорном.' if ru else
-                        'Strongest move <b>%.2f%%</b> against a %.2f%% threshold — the market is '
+                        'Strongest move <b>%.2f%%</b> against a %.2f%% threshold - the market is '
                         'quiet, not the sentinel.') % (m['best'], m['thr15']))
     return '\n'.join(out)
+
+
+def _tl(ticker, venue, bot_un):
+    """Тикер ссылкой на карточку инструмента. Одна дверь - `cards.tick_link`."""
+    from .cards import tick_link
+    return tick_link(ticker, venue, bot_un)
 
 
 def _vt(venue):
@@ -1228,36 +1364,131 @@ def _money(v):
 
 
 async def card_link(ticker, venue=None, lang='ru'):
-    """Тикер -> сообщение со ССЫЛКАМИ в наши экраны. -> HTML-строка.
+    """Тикер -> КАРТОЧКА ИНСТРУМЕНТА со ссылками дальше. -> HTML-строка.
 
-    ДВЕ ССЫЛКИ, А НЕ ОДНА: карточка токена (график, избранное) и экран Nansen по тому
-    же контракту - это разные вопросы, и человек в моменте хочет то один, то другой.
-    ОТКАЗ НАЗЫВАЕТ ПРИЧИНУ: «цены нет в кольце», «ни один контракт не совпал с ценой»
-    и «дверь упала» требуют разных действий, а «не получилось» - никаких.
+    ОДНА ДВЕРЬ НА ДВА ВХОДА (закон 40): кнопка `sen:card` и deep-link `?start=sen_<площадка>_
+    <ТИКЕР>`, которым с этапа 3 размечен тикер в каждой карточке, строке сводки и ответе нити.
+    ЧТО В НЕЙ. Цена, ход за час, оборот и интерес в долларах - из НАШЕГО кольца (горячего или, в
+    боте без своего опроса, холодного в базе), ни одного запроса к площадке. Ссылка на сам
+    инструмент на площадке. У токена с контрактом - «Паспорт»; контракт ищется сопоставлением по
+    цене, и только у тех, у кого он может быть: у акции, фонда, сырья, металла, индекса и
+    нативной монеты его нет, и искать его там значило бы найти однофамильца.
+    ОТКАЗ НАЗЫВАЕТ ПРИЧИНУ: «цены нет в кольце» и «контракт не совпал с ценой» - разные ответы.
     """
-    from .cards import esc
-    tk = esc(str(ticker or "?").upper())
-    addr, chain, why = await engine.resolve_ticker(ticker, venue or None)
-    if not addr:
-        return (('📊 <b>%s</b>\nКарточку открыть не вышло: %s' % (tk, esc(why or "?")))
+    from .cards import esc, _usd, _price, _pct, tick_link, venue_title
+    from . import assets as _as
+    tk = str(ticker or '?').upper()
+    got = engine.last_rows(tk, venue or None)
+    if not got:
+        why = 'цены нет в кольце: дозорный ещё не видел этот инструмент'
+        return (('📊 <b>%s</b>\nКарточку открыть не вышло: %s' % (esc(tk), esc(why)))
                 if lang != 'en' else
-                ('📊 <b>%s</b>\nCould not open the card: %s' % (tk, esc(why or "?"))))
+                ('📊 <b>%s</b>\nCould not open the card: the sentinel has not seen this '
+                 'instrument yet' % esc(tk)))
+    v, tk, rows = got
+    cur = rows[-1]
+    klass = _as.book_class(tk) or 'unknown'
+    name = _as.book_name(tk)
+    head = '📊 %s · %s' % (tick_link(tk, v, None, klass), esc(venue_title(v)))
+    if name and name.upper() != tk:
+        head += ' · %s' % esc(name)
+    out = [head]
+    r60 = detector.at(rows, int(cur[0]) - detector.W60, tol=detector.W15)
+    bits = ['%s <b>%s</b>' % ('Price' if lang == 'en' else 'Цена', _price(cur[1]))]
+    if r60 and r60[1]:
+        bits.append(('1h %s' if lang == 'en' else '60м %s') % _pct(detector.pct(cur[1], r60[1])))
+    if cur[2]:
+        bits.append(('24h turnover %s' if lang == 'en' else 'оборот 24ч %s') % _usd(cur[2]))
+    _oi = cur[8] if len(cur) > 8 else None
+    if _oi:
+        bits.append('%s %s' % ('OI' if lang == 'en' else 'ОИ', _usd(_oi)))
+    out.append(' · '.join(bits))
+    # ═══ РАСХОЖДЕНИЕ С ДРУГИМИ ПЛОЩАДКАМИ - СТРОКОЙ КАРТОЧКИ ИНСТРУМЕНТА (ТЗ 2.3) ═══
+    # Как событие расхождение осталось только в «Потоке»; как ФАКТ оно нужно тому, кто выбирает,
+    # где заходить: «на Hyperliquid дороже на 43 б.п.». Цены - из тех же колец, что карточка.
+    try:
+        from . import venues as _vv
+        for v2 in _vv.enabled():
+            if v2 == v:
+                continue
+            got2 = engine.last_rows(tk, v2)
+            if not got2 or not got2[2][-1][1] or not cur[1]:
+                continue
+            gap = (float(got2[2][-1][1]) - float(cur[1])) / float(cur[1]) * 10000.0
+            if abs(gap) > detector_gap_diff():
+                continue                    # разные инструменты под одним тикером (US500)
+            if abs(gap) < CARD_GAP_MIN_BPS:
+                continue                    # «дешевле на 0 б.п.» решения не меняет
+            out.append(('%s %s: %s by %.0f bps' if lang == 'en' else '%s %s: %s на %.0f б.п.')
+                       % (esc(venue_title(v2)), _price(got2[2][-1][1]),
+                          (('pricier' if gap > 0 else 'cheaper') if lang == 'en'
+                           else ('дороже' if gap > 0 else 'дешевле')), abs(gap)))
+    except Exception as e:                                 # noqa: BLE001
+        print('[sentinel] расхождение в карточке %s не посчитано: %s' % (tk, str(e)[:90]))
+    links = []
+    try:
+        from .venues import market_url, url
+        _u = market_url(v, tk) or url(v)
+        if _u:
+            links.append('<a href="%s">%s · %s</a>' % (_u, esc(venue_title(v)), esc(tk)))
+    except Exception:                                      # noqa: BLE001
+        pass
     un = await outbox.bot_un()
-    if not un:
-        # БЕЗ ИМЕНИ БОТА ССЫЛКИ НЕТ ВОВСЕ: на тест-боте прод-имя увело бы человека в
-        # прод. Отдаём контракт текстом - его можно скопировать тапом.
-        return '📊 <b>%s</b>\n<code>%s</code>\n<i>%s</i>' % (
-            tk, esc(addr), esc(chain or ''))
-    lines = ['📊 <b>%s</b> · <code>%s</code>' % (tk, esc(addr))]
-    if chain:
-        lines.append('<i>%s</i>' % esc(chain))
-    lines.append('')
-    lines.append('<a href="https://t.me/%s?start=tok_%s">Карточка токена</a> — '
-                 'график, паспорт, в избранное' % (un, addr)
-                 if lang != 'en' else
-                 '<a href="https://t.me/%s?start=tok_%s">Token card</a> — chart, '
-                 'passport, favourites' % (un, addr))
-    return '\n'.join(lines)
+    if klass not in _as.SESSION_CLASSES + ('commodity', 'metal', 'index') \
+            and not _as.onchain_refusal(tk, klass):
+        _cached = store.contract_get(v, tk)
+        if _cached:
+            chain, addr = _cached
+        else:
+            addr, chain, _why = await engine.resolve_ticker(tk, v)
+            if addr:
+                store.contract_put(v, tk, chain, addr)
+        if addr:
+            # КОНТРАКТ СОПОСТАВЛЕН - ЭТО ТОКЕН: маркер 🪙 в заголовке (ТЗ 3.2).
+            out[0] = out[0].replace(tick_link(tk, v, None, klass), tick_link(tk, v, None, 'token'), 1)
+            out.append('%s · <code>%s</code>' % (esc(chain or '?'), esc(addr)))
+            if un:
+                links.append('<a href="https://t.me/%s?start=tok_%s">%s</a>'
+                             % (esc(un), addr, '🪪 Passport' if lang == 'en' else '🪪 Паспорт'))
+    if links:
+        out.append('')
+        out.append('🔗 ' + ' · '.join(links))
+    return '\n'.join(out)
+
+
+#: Меньше этого расхождение в карточке инструмента не печатается, б.п.: вход на $100k у ликвидных
+#: инструментов стоит 1-12 б.п. (замер 25.09), и разница меньше пяти теряется в нём.
+CARD_GAP_MIN_BPS = 5.0
+
+
+def detector_gap_diff():
+    return config.gap_diff_bps()
+
+
+async def open_start(bot, uid, arg, lang=None):
+    """Deep-link `/start sen_<площадка>_<ТИКЕР>` -> карточка инструмента. -> True, если наш.
+
+    Зовёт его `dm_module` ДО онбординга (закон 6а: онбординг ловит любой «/start ...», и
+    обработчик ниже него был бы зелён в тестах и не выполнялся бы ни разу).
+    """
+    from .cards import parse_sen_start
+    got = parse_sen_start(arg)
+    if not got:
+        return False
+    lang = lang or _lang(uid)
+    v, tk = got
+    try:
+        txt = await card_link(tk, v, lang)
+    except Exception as e:                                 # noqa: BLE001
+        print('[sentinel] карточка по ссылке %s не собралась: %s' % (arg, str(e)[:120]))
+        txt = ('Карточку открыть не вышло: %s' % str(e)[:90]) if lang != 'en' else \
+            ('Could not open the card: %s' % str(e)[:90])
+    from telegram import InlineKeyboardButton as B, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup([[B('⚙️ Дозорный' if lang != 'en' else '⚙️ Sentinel',
+                                  callback_data='sen:home')]])
+    await bot.send_message(chat_id=uid, text=txt, reply_markup=kb, parse_mode='HTML',
+                           disable_web_page_preview=True)
+    return True
 
 
 def report_text(lang='ru'):
@@ -1292,8 +1523,25 @@ HELP_EN = (
     'sentinel report - hit rate, or an honest "sample too small"\n'
     '\n'
     'What arrives: a price move (with a measure of how unusual it is FOR THAT instrument), an '
-    'open-interest surge, funding in its own tail, a widened quote, and Smart Ignition '
-    '(several distinct smart-money addresses bought one token).\n'
+    'open-interest surge (with flat price the card says "absorption"), a turnover surge (above '
+    'the usual hour of that instrument), funding in its own tail, a widened quote, Smart '
+    'Ignition (several distinct smart-money addresses bought one token) and Smart Perp (smart '
+    'addresses opened ONE side on the same instrument).\n'
+    'An open-interest surge that returns to its starting level within 3 hours does not ring: '
+    'it is the same position being closed, not news.\n'
+    'Equities and ETFs outside the NYSE session (9:30-16:00 New York, Mon-Fri) arrive only in '
+    'the digest, marked "exchange closed": at that time the perp trades on a thin book with no '
+    'underlying market.\n'
+    'On-chain context in the brief covers the last 3 hours, not a day: context for a '
+    '15-minute move has to be fresh. For equities, ETFs, commodities, metals, indices and '
+    'native coins of other chains the on-chain block is not shown at all - it does not exist '
+    'there or is not about that asset.\n'
+    'A ticker in a card or digest is a link to the instrument card. The mark next to it: 🪙 token '
+    'with a contract, 🐸 meme (DEX token under $100M), 📊 equity or fund, 📈 index, 🛢 commodity, '
+    '🥇 metal; no mark - the class is not proven. SK hynix follows Korean exchange hours.\n'
+    'Presets: Beginner (set on the first subscription), Trader, Quiet; each shows what will '
+    'change before it is applied. If venue polling stops, the owner gets one message, and one '
+    'more when it is back.\n'
     'The sentinel does NOT trade and does NOT advise. You enter by hand on omni.variational.io.'
 )
 

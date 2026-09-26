@@ -361,7 +361,7 @@ SCENARIOS = [
              'how much of the commitment is still ahead.'},
     # ── ПОСЛЕДНЯЯ РУЧКА НАБОРА, У КОТОРОЙ ПОЯВИЛАСЬ СХЕМА (круг 4 живой пробы, 24.09) ───
     {'id': 'posintel', 'title': '⚖️ Чьё плечо стоит в токене: киты, смарт-трейдеры, фигуры',
-     'cmds': ['позиционирование 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', 'чьё плечо <адрес>'],
+     'cmds': ['позиционирование ETH', 'чьё плечо <тикер>'],
      'btns': ['🔍 Nansen по токену → кнопка «⚖️ Чьё плечо»',
               '🧠 Nansen → ⚔️ Чужое плечо → ⚖️ Чьё плечо стоит в токене'],
      'where': ('dm', 'group_btn'), 'gcb': 'hs:posi',
@@ -619,8 +619,8 @@ _EN = {
                        'price, realized and open',
               'why': 'reputation says how a holder did over a lifetime; this says how the same '
                      'holder is doing right here, and together they separate skill from luck'},
-    'posintel': {'cmds': ['positioning 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-                          'who is positioned <address>'],
+    'posintel': {'cmds': ['positioning ETH',
+                          'who is positioned <ticker>'],
                  'btns': ['🔍 Nansen on a token → the «⚖️ Who is positioned» button',
                           '🧠 Nansen → ⚔️ Other people\u2019s leverage → ⚖️ Who is positioned'],
                  'title': '⚖️ Who is positioned on a token: whales, smart traders, public figures',

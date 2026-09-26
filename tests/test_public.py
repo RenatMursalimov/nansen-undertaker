@@ -395,7 +395,12 @@ def t_cli_without_key_says_why():
         names = [c[0] for c in cli.CMDS]
         check('CLI: команд достаточно', len(names) >= 15, names)
         bad = []
+        # КОМАНДЫ ДОЗОРНОГО КЛЮЧ NANSEN НЕ ТРЕБУЮТ (площадки публичные), поэтому «причина - нет
+        # ключа» к ним неприменима; их проверка - отдельным блоком ниже, со своей подменой сети.
+        _SEN = {'sentinel-card', 'sentinel-demo', 'sentinel-presets'}
         for name, fn, _ru, _en in cli.CMDS:
+            if name in _SEN:
+                continue
             buf, old = io.StringIO(), sys.stdout
             sys.stdout = buf
             try:
@@ -420,6 +425,48 @@ def t_cli_without_key_says_why():
                 bad.append('%s: причина не «нет ключа», а %r' % (name, out.strip()[:90]))
         check('CLI: ни одна команда не упала, не промолчала и назвала ВЕРНУЮ причину',
               not bad, bad[:6])
+        # ── ДОЗОРНЫЙ ИЗ ТЕРМИНАЛА: те же форматтеры, ни одного запроса к Nansen ──
+        check('CLI: команды дозорного объявлены', _SEN <= set(names), names)
+        import asyncio as _aio
+        from sentinel import variational_feed as _vf, venues as _sv
+        _rows = _vf.parse({'listings': [{'ticker': 'BTC', 'name': 'Bitcoin', 'mark_price': '64000',
+                                         'volume_24h': '900000000',
+                                         'open_interest': {'long_open_interest': '1000000',
+                                                           'short_open_interest': '900000'},
+                                         'funding_rate': '0.1095', 'funding_interval_s': 28800,
+                                         'base_spread_bps': '1.0', 'quotes': {}}]})[0]
+
+        async def _fake_all(venues=None):
+            return list(_rows), {'variational': {'latency_ms': 1}}
+        _real_all = _sv.fetch_all
+        _sv.fetch_all = _fake_all
+        _sen_out = {}
+        try:
+            for _nm, _args in (('sentinel-card', ['BTC', 'variational']), ('sentinel-demo', []),
+                               ('sentinel-presets', [])):
+                _fn = [c[1] for c in cli.CMDS if c[0] == _nm][0]
+                buf, old = io.StringIO(), sys.stdout
+                sys.stdout = buf
+                try:
+                    _fn(_args)
+                except Exception as e:                          # noqa: BLE001
+                    print('УПАЛ: %s: %s' % (type(e).__name__, e))
+                finally:
+                    sys.stdout = old
+                _sen_out[_nm] = buf.getvalue()
+        finally:
+            _sv.fetch_all = _real_all
+        check('CLI: sentinel-card печатает карточку инструмента того же `ui.card_link`',
+              'BTC' in _sen_out['sentinel-card'] and 'Цена 64000' in _sen_out['sentinel-card']
+              and 'ОИ $1.90M' in _sen_out['sentinel-card'], _sen_out['sentinel-card'][:300])
+        check('CLI: sentinel-demo печатает алерты настоящим `cards.card`, помеченные синтетикой',
+              'Синтетические' in _sen_out['sentinel-demo'] and 'SAGA' in _sen_out['sentinel-demo']
+              and 'Фандинг базовый' in _sen_out['sentinel-demo'], _sen_out['sentinel-demo'][:300])
+        check('CLI: sentinel-presets - предпросмотр четырёх пресетов с числами',
+              all(t in _sen_out['sentinel-presets'] for t in ('Новичок', 'Трейдер', 'Тихий',
+                                                               'Поток')), _sen_out['sentinel-presets'][:300])
+        check('CLI: ни одна команда дозорного не упала',
+              not any('УПАЛ' in v for v in _sen_out.values()), _sen_out)
         buf, old = io.StringIO(), sys.stdout
         sys.stdout = buf
         try:

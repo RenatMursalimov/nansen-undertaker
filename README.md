@@ -200,6 +200,31 @@ separately — a visible “184 unpriced calls” is better than a tidy total bu
 
 ---
 
+## Sentinel: live perp alerts with Nansen context
+
+`sentinel/` watches **553** Variational Omni instruments, **234** Hyperliquid perps and **210** live
+Lighter markets and pings a Telegram chat only when a move is unusual *for that instrument* (no
+sigma over 20+ points, no event). Nansen context is written into the same card: smart-money net
+over 3 h (`tgm/who-bought-sold`), 24 h holder segments (`tgm/flow-intelligence`), whose leverage
+(`perp-positioning`), the nearest liquidation clusters (`perp-positions`), plus two Nansen-born
+events: Smart Ignition (`smart-money/dex-trades`) and Smart Perp (`smart-money/perp-trades`). The
+ticker is a link to the instrument card, presets show what they change before applying, and a
+line that does not change the trader's decision is not printed (a law test enforces it). Every
+alert is graded an hour and a day later; no hit rate is printed on fewer than 20 samples.
+
+Try it without any key (the venues are public):
+
+```
+python3 cli.py sentinel-card BTC hyperliquid   # live instrument card, the same screen as in the bot
+python3 cli.py sentinel-demo                   # what an alert of each kind looks like
+python3 cli.py sentinel-presets                # what each preset changes
+python3 tests/test_sentinel.py                 # 791 offline checks, no network
+```
+
+Full spec: [`docs/SENTINEL_SPEC.md`](docs/SENTINEL_SPEC.md) (section 17 is the V2 summary).
+
+---
+
 ## Factual inventory
 
 The generated catalog distinguishes **client capability** from **shipped workflow**:
@@ -240,7 +265,9 @@ output and one-line X hook.
 | `nansen_limits.py` | per-user daily limits and shared credit ceiling |
 | `oc_nansen_viz.py` | segment-flow, probability and liquidation-map visualizations |
 | `db.py` / `env_load.py` | standalone bridges for the production database/env contracts |
-| `cli.py` | terminal access to the same production formatters |
+| `cli.py` | terminal access to the same production formatters (incl. `sentinel-*`) |
+| `sentinel/` | live perp alerts: venues, detector, cards, delivery, Nansen context |
+| `tests/test_sentinel.py` | offline checks of the whole sentinel package |
 | `tools/nansen_live_smoke.py` | smallest reproducible live proof; explicit `--run` |
 | `tools/nansen_meridian_corpus.py` | resumable 7-day Smart Money corpus with a hard call cap |
 | `tools/nansen_endpoint_sweep.py` | fresh all-route registry, budgets and safe 12×/day profiles |

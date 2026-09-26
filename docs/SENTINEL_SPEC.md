@@ -3,7 +3,7 @@
 Live alerts on Variational Omni plus Smart Ignition on Nansen. What is built, on which
 measurements, where the limits are, and what comes next.
 
-Date: 2026-09-25. Package: `sentinel/`. Tests: `python3 tests/test_sentinel.py` (293 checks, no
+Date: 2026-09-25, V2 2026-09-27 (section 17). Package: `sentinel/`. Tests: `python3 tests/test_sentinel.py` (822 checks, no
 network needed) plus `t_live_watcher_has_its_own_cache_door` in `tests/test_nansen_contest.py`.
 Live proof: `python3 nansen/proofs/sentinel_live_proof.py MSTR 4.5`.
 
@@ -813,6 +813,70 @@ Also:
   red on a comment** that merely references the module. Guard `gt01` forbids exactly this: a test
   may be neither green because of a comment nor red because of one. It is now behavioural — we swap
   the network door for a throwing one and watch whether the judge reaches outside.
+
+## 17. Sentinel V2 (26-27.09): from a flood to alerts people act on
+
+The starting measurement, from the production database: the owner received **586** messages a
+day (peak 201 an hour); the detector produced **2969** events a day, **613** of them price gaps
+between venues; **118 of 139** open-interest events claimed growth larger than two days of
+turnover, that is, physically impossible. V2 went in six stages, one pull request each.
+
+### What changed, by stage
+
+| Stage | What it does now |
+|---|---|
+| 1 | One polling process by **role** (not by a flag), rings keyed by (venue, ticker), open interest in real dollars per venue, Nansen read by direction over 3 h, perp context (who holds leverage, where liquidations sit), a **smart perp** event (2+ smart addresses open one side for $250k+ in 30 min), outcome graded per kind |
+| 2 | **No sigma, no event** (20+ points; the hourly sigma is estimated as 15-min x 2 until hourly points exist and the card says so); one move = one card and at most two thread replies; a fuse that counts **every** message; turnover measured against the instrument's own usual hour; an open-interest round trip within 3 h is stored but does not ring; absorption is a line of the OI card, not a second card; asset class from live Variational names; equities outside their exchange session go to the digest only; the verdict is computed by code, the model summary is off by default |
+| 3 | The ticker is a link to the instrument card everywhere (`?start=sen_<venue>_<TICKER>`), a class mark next to it, a passport link for tokens with a contract; **a line that does not change the trader's decision is not printed** (a law test over a list of forbidden substrings); base funding is shown as one word; one thread per instrument for every kind; events from previous rules never reach a person |
+| 4 | Presets **Beginner** (set on the first subscription) / **Trader** / **Quiet** / **Firehose** (owner and testers only); a preset first shows what will change, in numbers; a personal digest period; the state screen says "events N, delivered M, in digests K, Nansen credits L" |
+| 5 | A watchdog thread exits the unit when no snapshot arrived for 3 x poll interval (systemd restarts it); a timeout on every venue, tick and brief; **one** owner message per polling incident and one on recovery; after a restart the hourly window comes from the cold ring for the first hour and the card marks its 15-minute precision |
+
+### Presets (numbers from the spec, checked by tests against the spec, not the code)
+
+| Preset | Kinds | Move threshold | Fuse | Daily cap | Cooldown | Digest |
+|---|---|---|---|---|---|---|
+| Beginner | moves, ignition, smart perp | 3% | 2 / 10 min | 12 | 120 min | 30 min |
+| Trader | + OI, turnover, crowd | 2% | 3 / 10 min | 25 | 60 min | 10 min |
+| Quiet | moves, ignition, smart perp | 5% | unchanged | 6 | 180 min | 60 min |
+| Firehose | all ten, incl. venue gap, spread, funding | shared | 5 / 10 min | 120 | 10 min | 10 min |
+
+A person who already touched their settings keeps them until they press a preset themselves.
+
+### What Nansen adds, all as an edit of the same card
+
+Smart money net over 3 h with who sold and bought (`tgm/who-bought-sold`, contract matched by
+price, majors and native coins excluded); 24 h segments (`tgm/flow-intelligence`: smart money,
+whales, fresh wallets, significant ones only); leverage (`perp-positioning`, keyed by the perp
+ticker: by contract the endpoint returns zeros for any token); the two nearest liquidation
+clusters from $100k (`perp-positions`); and two events: Smart Ignition (`smart-money/dex-trades`,
+the feed is accumulated in the database because one page covers 44 minutes and the window is
+180; 3+ addresses, $100k+, 5+ bps of market cap) and Smart Perp (`smart-money/perp-trades`, opens
+and adds only).
+
+### Measured defaults
+
+* Ignition threshold $100,000: the 99th percentile of the full 180-minute window (133 tokens,
+  p99 $113k, 3+ addresses on 12 tokens). Earlier partial windows gave $31.7k (44 min) and $43.2k
+  (128 min); $150k was above the whole feed and produced zero events a day.
+* Venue gap as an event: 150 bps, 3 ticks in a row, both quotes under 60 s, net edge 50+ bps,
+  the pair's 24 h median under 30 bps; above 2000 bps the pair is two different instruments.
+* Base funding per venue: 10.95% a year on Hyperliquid and Variational; two bases on Lighter,
+  10.51% for crypto and 3.50% for equities and commodities.
+* Asset class from one live Variational response (553 listings): 83 equities, 18 funds, 7 metals,
+  5 commodities, 3 indices, 437 tokens; no token lands in another class. Hyperliquid and Lighter
+  take the class from Variational by ticker.
+
+### Evidence
+
+`tests/test_sentinel.py`: 822 checks in 75 tests, 0 failures, no network. Every new rule was also
+run against a mutation (the mechanism switched off) to show its check goes red. The e2e law test
+for service lines finds 10 violations on the pre-stage-3 code and 0 now.
+
+### What is not claimed
+
+No hit rate on fewer than 20 samples. No "messages per day after V2" until it is measured from
+the database of a live day. Exchange holidays are not modelled. Nansen has no "meme" genre, so 🐸
+is "a DEX token under $100M", not a classification.
 
 ## 12. Limits, debts and refuted hypotheses
 

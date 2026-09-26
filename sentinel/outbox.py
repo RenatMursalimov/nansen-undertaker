@@ -116,6 +116,10 @@ def quiet_now(settings, now=None):
 #   * 'digest'  - хочет, но не сейчас (предохранитель темпа, слабое событие, пауза, потолок,
 #                 тихие часы). Едет сводкой одним сообщением - и это не то же, что выбросить.
 # ══════════════════════════════════════════════════════════════════════════════════════════
+#: ОНЧЕЙН-СОБЫТИЯ: у них есть сеть, но нет биржи, и фильтр площадки к ним не применяется.
+ONCHAIN_KINDS = ('ignition',)
+
+
 def mute_reason(uid, ev, now=None):
     """Можно ли отправить это событие этому человеку ПРЯМО СЕЙЧАС. -> (verdict, причина).
 
@@ -128,6 +132,13 @@ def mute_reason(uid, ev, now=None):
     # ── 'drop': ЧЕЛОВЕК СКАЗАЛ «НЕТ». Это уважается буквально и без дайджеста. ─────────────
     if not s.get('alerts_on'):
         return 'drop', 'алерты выключены'
+    # ═══ ОБРАТНАЯ НОГА ИНТЕРЕСА НЕ ЗВОНИТ И НЕ ИДЁТ В СВОДКУ (ТЗ 2.4) ═══
+    # Интерес вернулся к уровню начала прошлого скачка: это закрытие той же позиции, а не новость.
+    # Событие в базе остаётся (`round_trip=1`) ради отчёта; человеку - ни звонка, ни строки
+    # сводки, потому что о первой ноге он уже знает, а вторая только отменяет её.
+    if p.get('round_trip'):
+        return 'drop', ('обратная нога интереса: вернулся к уровню %s'
+                        % cards._usd(p.get('round_trip_from_oi')))
     # ВИД СОБЫТИЯ - ЛИЧНЫЙ ВЫБОР. Владелец просил именно так: «настраивать, что приходят алерты
     # движения плюс нансен движения существенные, или просто Нансен сигналы, или просто алерты
     # по объёму». Отсев стоит ЗДЕСЬ, а не в детекторе: событие одно на всех и пишется в базу
@@ -136,13 +147,24 @@ def mute_reason(uid, ev, now=None):
         return 'drop', 'вид %s выключен в настройках' % kind
     # ПЛОЩАДКА - ТОЖЕ ЛИЧНЫЙ ВЫБОР. Тот, кто торгует только на одной, не должен получать алерты
     # второй: цена и спред там другие, и зайти по такому алерту он не может.
-    _venue = p.get('venue') or 'variational'
-    if _venue not in store.venues_for(uid):
-        return 'drop', 'площадка %s выключена' % _venue
+    # ═══ ФИЛЬТР ПЛОЩАДКИ - ТОЛЬКО ДЛЯ СОБЫТИЙ ПЛОЩАДКИ ═══
+    # ЖИВОЙ ДЕФЕКТ 26.09: у зажигания поля `venue` нет вовсе (это ончейн-событие, у него сеть, а не
+    # биржа), и здесь подставлялось 'variational'. У владельца Variational выключена, включена
+    # только Hyperliquid - и первое живое зажигание (STONK, 5 адресов, $156k, 6.7 б.п.) до него не
+    # дошло. Подставлять площадку тому, у чего её нет, значит выдумывать поле.
+    # Зажигание фильтром площадки не режется вовсе; смарт-перп несёт свою площадку явно.
+    if kind not in ONCHAIN_KINDS:
+        _venue = p.get('venue') or 'variational'
+        if _venue not in store.venues_for(uid):
+            return 'drop', 'площадка %s выключена' % _venue
     mp, mv = s.get('min_pct'), p.get('move_pct')
     if mp is not None and mv is not None and abs(float(mv)) < float(mp):
         return 'drop', '%.2f%% ниже личного порога %.2f%%' % (abs(mv), mp)
     # ── 'digest': ХОЧЕТ, НО НЕ СЕЙЧАС ─────────────────────────────────────────────────────
+    # СОБЫТИЕ, У КОТОРОГО ОДИН ИЗ ПОРОГОВ НЕ ПРОВЕРЕН (зажигание без капитализации), не звонит
+    # ни при какой уверенности: причину ставит сам детектор, и она уезжает в сводку словами.
+    if p.get('digest_only'):
+        return 'digest', str(p['digest_only'])
     if quiet_now(s, now):
         return 'digest', 'тихие часы'
     # СЛАБОЕ СОБЫТИЕ НЕ ЗВОНИТ. Уверенность у нас считается со штрафами, и 40/100 - это событие,
@@ -171,6 +193,56 @@ def mute_reason(uid, ev, now=None):
         # или это норма».
         return 'digest', 'суточный потолок %d/%d' % (got, cap)
     return None, ''
+
+
+def with_contract(ev):
+    """Событие с контрактом из кэша (ТЗ 3.2) - для ссылки на паспорт в ПЕРВОЙ карточке. -> ev.
+
+    Копия, а не правка: событие в базе остаётся тем, что посчитал детектор. Акциям, фондам,
+    сырью, металлам и индексам контракт не подставляется никогда - у них его нет, и найденный
+    по цене «контракт» был бы однофамильцем.
+    """
+    p = ev.get('payload') or {}
+    if p.get('address') or (ev.get('kind') or '') == 'ignition':
+        return ev
+    try:
+        from .variational_feed import OFFCHAIN_CLASSES
+        if p.get('asset_class') in OFFCHAIN_CLASSES:
+            return ev
+        got = store.contract_get(p.get('venue') or 'variational', ev.get('ticker'))
+    except Exception as e:                                 # noqa: BLE001
+        print('[sentinel] кэш контрактов не прочитан: %s' % str(e)[:100])
+        return ev
+    if not got:
+        return ev
+    return dict(ev, payload=dict(p, chain=got[0], address=got[1]))
+
+
+def rules_reason(ev):
+    """Событие посчитано по правилам, которых больше нет? -> причина словами | ''.
+
+    ДВЕ ПРОВЕРКИ. (1) Штамп версии (`config.RULES_VERSION`, ставит `store.event_new`): событие
+    без штампа или со старым - записано до последней правки порогов. (2) Расхождение площадок -
+    ещё и по живым порогам 2.3 (`gap_bps`, измеренная медиана пары): владелец просил, чтобы
+    правило стояло именно на пути к человеку, а не только в детекторе.
+    Проверка у ДВЕРИ (доставка, сводка), а не в `mute_reason`: туда ходят и свежие события
+    тика, штамп у которых есть всегда.
+    """
+    p = ev.get('payload') or {}
+    try:
+        _r = int(p.get('rules') or 0)
+    except (TypeError, ValueError):
+        _r = 0
+    if _r < int(config.RULES_VERSION):
+        return ('событие по прежним правилам (версия %s, сейчас %s) - человеку не отдаю'
+                % (_r or 'до штампа', config.RULES_VERSION))
+    if (ev.get('kind') or '') == 'venue_gap':
+        if float(p.get('gap_bps') or 0) < config.gap_bps():
+            return ('расхождение %.0f б.п. ниже порога %.0f'
+                    % (float(p.get('gap_bps') or 0), config.gap_bps()))
+        if p.get('median_24h_bps') is None:
+            return 'расхождение без измеренной медианы пары за сутки'
+    return ''
 
 
 def plan(ev):
@@ -212,7 +284,35 @@ def _cd_kind(ev):
     return '%s:%d' % (ev.get('kind') or '?', int(p.get('step') or 1))
 
 
-async def _send(uid, text, label='', kb=None):
+async def _edit(uid, msg_id, text, kb=None):
+    """Переписать УЖЕ ОТПРАВЛЕННОЕ сообщение. -> True | False. Никогда не бросает.
+
+    ═══ ПОЧЕМУ ОБОГАЩЕНИЕ ТЕПЕРЬ РЕДАКТИРУЕТ, А НЕ ПРИСЫЛАЕТ ВТОРОЕ (ТЗ 2.6) ═══
+    ЗАМЕР ПРОДА 26.09: 280 алертов и 279 обогащений за сутки. То есть КАЖДЫЙ алерт приходил
+    дважды, и вторая половина потока была не событиями, а контекстом к ним. Правка уже
+    доставленного сообщения телефон НЕ БУДИТ: человек видит дополненную карточку там же, где
+    читал первую, и в окно предохранителя она не входит - потому что уведомления не было.
+    ОТКАЗ ЗДЕСЬ НЕ ФАТАЛЕН И НЕ МОЛЧАЛИВ: сообщение могло быть слишком старым или удалённым, и
+    тогда зовущий шлёт ответ обычным сообщением (и тот в окно уже входит).
+    """
+    b = _bot()
+    if b is None or not msg_id:
+        return False
+    try:
+        await b.edit_message_text(chat_id=uid, message_id=int(msg_id), text=text,
+                                  parse_mode='HTML', disable_web_page_preview=True,
+                                  reply_markup=kb)
+        return True
+    except Exception as e:
+        # «Message is not modified» - не отказ: текст тот же, значит контекст уже на месте.
+        _m = str(e)[:150]
+        if 'not modified' in _m.lower():
+            return True
+        print('[sentinel] правка карточки uid=%s msg=%s не удалась: %s' % (uid, msg_id, _m))
+        return False
+
+
+async def _send(uid, text, label='', kb=None, reply_to=None):
     """-> объект сообщения | False. Никогда не бросает (это дверь рассылки).
 
     `kb` НЕОБЯЗАТЕЛЕН И ПО УМОЛЧАНИЮ ПУСТ: клавиатура нужна только сводке (сквозной переход в
@@ -243,13 +343,131 @@ async def _send(uid, text, label='', kb=None):
     # экранируются одной дверью (`cards.esc`).
     # ПРЕВЬЮ ВЫКЛЮЧЕНО: иначе под каждым алертом Telegram разворачивает картинку площадки, и
     # три алерта подряд превращаются в простыню.
+    # ОТВЕТ НА ПЕРВУЮ КАРТОЧКУ (`reply_to`) - ЭТО И ЕСТЬ НИТЬ В ИНТЕРФЕЙСЕ ТЕЛЕГРАМА: продолжение
+    # движения видно там, где человек читал начало, и не притворяется новым событием.
+    # `allow_sending_without_reply` НЕ СТАВИМ ЗДЕСЬ ЯВНО: если исходное сообщение удалено,
+    # Telegram откажет, зовущий получит отказ и пришлёт обычным сообщением - это честнее, чем
+    # тихо превратить ответ в новый алерт.
+    _kw = {}
+    if reply_to:
+        _kw['reply_to_message_id'] = int(reply_to)
     res = await tg_send.safe_send(
         lambda: b.send_message(chat_id=uid, text=text, parse_mode='HTML',
-                               disable_web_page_preview=True, reply_markup=kb),
+                               disable_web_page_preview=True, reply_markup=kb, **_kw),
         chat_key=uid, label=label or 'sentinel', on_fail=_fail)
     if not res and err.get('e'):
         return ('err', err['e'])
     return res
+
+
+#: КАКИЕ ВИДЫ ИМЕЮТ «ОТКАТ». Только движения: у них есть направление и пик.
+#: ═══ НИТЬ ТЕПЕРЬ ОДНА НА ИНСТРУМЕНТ ДЛЯ ВСЕХ ВИДОВ (этап 3, живая карточка ACE) ═══
+#: Два всплеска оборота ACE за две минуты пришли ДВУМЯ полными карточками: нить была только у
+#: движений, а ступень оборота менялась от тика к тику, и каждая новая ступень законно открывала
+#: себе паузу заново. Это одна новость про один инструмент. Теперь любое событие по инструменту с
+#: живой нитью - это ОДНА СТРОКА ОТВЕТОМ на первую карточку, и только если его ступень выше уже
+#: сказанной для ЭТОГО вида; потолок ответов - на каждый вид свой (`THREAD_MAX_REPLIES`).
+#: Смарт-зажигание в нить не входит: у него нет площадки, а тикер DEX-токена совпадает с
+#: перп-тикером по случайности (реестр - `NO_THREAD_KINDS`).
+THREAD_KINDS = ('move_up', 'move_down')
+NO_THREAD_KINDS = ('ignition',)
+
+
+def _family(kind):
+    """Семейство вида для нити: вверх и вниз - одно движение. -> str."""
+    return 'move' if kind in THREAD_KINDS else (kind or '?')
+
+#: СКОЛЬКО ПРОДОЛЖЕНИЙ РАЗРЕШЕНО НА ОДНУ НИТЬ. Два - это требование приёмки из ТЗ («12 событий
+#: SAGA за 70 минут дают 1 карточку и не больше 2 ответов»), и оно осмысленно: нить это ОДНО
+#: движение, у которого человеку нужны начало и пара реперов, а не протокол наблюдений.
+#: ЧТО ПРОИСХОДИТ ПОСЛЕ ПОТОЛКА: события продолжают писаться в базу (отчёт попаданий их
+#: увидит), но человеку не идут. Движение, которое живёт дальше шести часов, откроет новую нить.
+#: ПОЧЕМУ ПОТОЛОК, А НЕ ПАУЗА МЕЖДУ ОТВЕТАМИ. Паузу пришлось бы подбирать под темп событий
+#: (5 минут на проде, 30 секунд при опросе чаще), и любое её значение оказывалось бы подгонкой
+#: под конкретный день. Потолок отвечает на вопрос «сколько раз об одном движении», и ответ на
+#: него от темпа не зависит.
+THREAD_MAX_REPLIES = 2
+
+
+def _thread_decide(uid, ev, now=None, bot_un=None):
+    """Первое это сообщение в нити, продолжение или лишнее. -> dict {act, text, reply_to, why}.
+
+    `act`: 'first' (полная карточка) | 'reply' (одна строка ответом) | 'skip' (в базу, не человеку).
+
+    ═══ ЗАЧЕМ ЭТО ЗАВЕДЕНО: 12 АЛЕРТОВ ПО SAGA ЗА 70 МИНУТ (ЗАМЕР 26.09) ═══
+    Причина была не в пороге, а в КЛЮЧЕ события: в него входит ступень силы (|ход| // порог). При
+    часовом пороге 2.5% ход +15% давал ступень 6, +18% - 7, +21% - 8; откат тоже давал новую
+    ступень, «вверх» и «вниз» были разными видами, а пауза по инструменту включала ступень - то
+    есть каждая новая ступень законно открывала себе окно заново. Механизм работал как написан, и
+    поэтому «покрутить порог» ничего бы не изменило.
+    ТЕПЕРЬ ГОВОРИМ ОДИН РАЗ, А ДАЛЬШЕ ТОЛЬКО ЕСЛИ ЧИСЛО СТАЛО БОЛЬШЕ ПРЕЖНЕГО, и говорим ОДНОЙ
+    СТРОКОЙ ОТВЕТОМ на первую карточку. Ответ несёт и текущее значение, и пик: «усилилось до
+    +21% (пик +23%)» отвечает на оба вопроса сразу, а два сообщения подряд - ни на один.
+    ЧИСТАЯ ОТ СЕТИ: только база и арифметика, поэтому поведение проверяется тестом без Telegram.
+    """
+    p = ev.get('payload') or {}
+    kind = ev.get('kind') or ''
+    tick = ev.get('ticker') or ''
+    venue = p.get('venue') or 'variational'
+    if kind in NO_THREAD_KINDS:
+        return {'act': 'first', 'text': None, 'reply_to': None, 'why': ''}
+    t = store.thread_get(venue, tick, uid, now=now)
+    if not t:
+        return {'act': 'first', 'text': None, 'reply_to': None, 'why': ''}
+    _tl = cards.ev_tick(ev, bot_un, mark=False)
+    step = int(p.get('step') or 1)
+    fam = _family(kind)
+    kinds = t.get('kinds') or {}
+    # НИТЬ ДО ЭТАПА 3 (колонки `kinds` не было): её открыло движение, и его ступень - `max_step`.
+    if not kinds and t.get('max_step'):
+        kinds = {'move': [int(t['max_step']), int(t.get('replies') or 0)]}
+    said_step, said_n = (kinds.get(fam) or [0, 0])[:2]
+    if int(said_n or 0) >= THREAD_MAX_REPLIES:
+        return {'act': 'skip', 'text': None, 'reply_to': None,
+                'why': ('нить: по виду %s уже %d продолжения, дальше только в базу'
+                        % (fam, int(said_n or 0)))}
+    if fam != 'move':
+        # ═══ НЕ ДВИЖЕНИЕ: ОДНА СТРОКА ОТВЕТОМ, ТОЛЬКО ЕСЛИ ВИД НОВЫЙ ДЛЯ НИТИ ИЛИ СТАЛ СИЛЬНЕЕ ═══
+        if said_step and step <= int(said_step):
+            return {'act': 'skip', 'text': None, 'reply_to': None,
+                    'why': ('нить: %s ступень %d не выше сказанной %d - в базу без доставки'
+                            % (fam, step, int(said_step)))}
+        return {'act': 'reply', 'text': '↳ ' + cards.digest_line(ev, bot_un=bot_un),
+                'reply_to': t.get('first_msg_id'), 'why': ''}
+    mv = p.get('move_pct')
+    peak = t.get('peak_pct')
+    if not said_step:
+        # ДВИЖЕНИЕ В НИТИ, ОТКРЫТОЙ ДРУГИМ ВИДОМ (оборот, интерес): первая строка про ход цены.
+        return {'act': 'reply', 'text': '↳ ' + cards.digest_line(ev, bot_un=bot_un),
+                'reply_to': t.get('first_msg_id'), 'why': ''}
+    # ── ОТКАТ: ДВИЖЕНИЕ РАЗВЕРНУЛОСЬ ОТНОСИТЕЛЬНО ПИКА ────────────────────────────────────
+    # Считаем от ПИКА, а не от нуля: человек вошёл где-то по ходу движения, и ему важно, сколько
+    # оно отдало от максимума. Порог отката - половина ступени: мельче это дыхание, а не новость.
+    if mv is not None and peak is not None and peak != 0:
+        _same_dir = (mv >= 0) == (peak >= 0)
+        _give = abs(peak) - abs(mv)
+        if not _same_dir or _give >= abs(p.get('threshold_pct') or 1.0) / 2.0:
+            if t.get('last_at') and (int(now or time.time()) - int(t['last_at'])) < 300:
+                return {'act': 'skip', 'text': None, 'reply_to': None,
+                        'why': 'нить: ответ был меньше 5 минут назад'}
+            return {'act': 'reply',
+                    'text': ('↩️ %s откат: <b>%+.1f%%</b> от пика %+.1f%%'
+                             % (_tl, mv, peak)),
+                    'reply_to': t.get('first_msg_id'),
+                    'why': ''}
+    # ── УСИЛЕНИЕ: ТОЛЬКО ЕСЛИ СТУПЕНЬ СТРОГО ВЫШЕ ВЗЯТОЙ ──────────────────────────────────
+    if step <= int(said_step or 0):
+        return {'act': 'skip', 'text': None, 'reply_to': None,
+                'why': ('нить: ступень %d не выше взятой %d - в базу без доставки'
+                        % (step, int(said_step or 0)))}
+    _pk = ('' if peak is None or (mv is not None and abs(mv) >= abs(peak))
+           else ' (пик %+.1f%%)' % peak)
+    return {'act': 'reply',
+            'text': ('📈 %s усилилось: <b>%+.1f%%</b> за %s%s'
+                     % (_tl, (mv if mv is not None else 0.0),
+                        (p.get('window') or '?'), _pk)),
+            'reply_to': t.get('first_msg_id'),
+            'why': ''}
 
 
 async def deliver_due(limit=25):
@@ -276,6 +494,13 @@ async def deliver_due(limit=25):
             store.delivery_fail(event_key, uid, 'событие пропало из базы')
             bad += 1
             continue
+        # СОБЫТИЕ ПО ПРЕЖНИМ ПРАВИЛАМ ЧЕЛОВЕКУ НЕ ИДЁТ (этап 3, п.6): см. `rules_reason`.
+        _stale = rules_reason(ev)
+        if _stale:
+            store.delivery_cancel(event_key, uid, _stale)
+            print('[sentinel] не шлю uid=%s %s/%s: %s'
+                  % (uid, ev.get('kind'), ev.get('ticker'), _stale))
+            continue
         # ПЕРЕПРОВЕРКА ПРАВА ГОВОРИТЬ - ТОЙ ЖЕ ДВЕРЬЮ, ЧТО РЕШАЛА ПРИ ПЛАНИРОВАНИИ.
         verdict, why = mute_reason(uid, ev)
         if verdict is not None:
@@ -293,8 +518,21 @@ async def deliver_due(limit=25):
         # полминуты. Замер и разбор - в докстринге `store.delivery_claim`.
         if not store.delivery_claim(event_key, uid):
             continue
-        text = cards.card(ev, bot_un=await bot_un())
-        res = await _send(uid, text, label='sentinel:%s' % ev.get('kind'))
+        # ═══ НИТЬ: ОДНО ДВИЖЕНИЕ - ОДНА ПЕРЕПИСКА (ТЗ 2.2) ═══
+        # Развилка одна и здесь: первая карточка, короткий ответ или тишина. Решение принимается
+        # ПЕРЕД отправкой, потому что от него зависит и текст, и то, будет ли вообще сообщение.
+        _un = await bot_un()
+        _thr = _thread_decide(uid, ev, bot_un=_un)
+        if _thr['act'] == 'skip':
+            # В БАЗУ - ДА, ЧЕЛОВЕКУ - НЕТ. Событие уже записано (оно нужно отчёту попаданий), а
+            # доставка отменяется с причиной: «почему мне это не пришло» обязано иметь ответ.
+            store.delivery_cancel(event_key, uid, _thr['why'])
+            print('[sentinel] нить uid=%s %s: %s' % (uid, ev.get('ticker'), _thr['why']))
+            continue
+        text = (cards.card(with_contract(ev), bot_un=_un) if _thr['act'] == 'first'
+                else _thr['text'])
+        res = await _send(uid, text, label='sentinel:%s' % ev.get('kind'),
+                          reply_to=_thr.get('reply_to'))
         if isinstance(res, tuple) and res and res[0] == 'err':
             state = store.delivery_fail(event_key, uid, res[1])
             print('[sentinel] не доставлено uid=%s %s (%s, попытка %d -> %s)'
@@ -307,7 +545,22 @@ async def deliver_due(limit=25):
             print('[sentinel] не доставлено uid=%s %s (попытка %d -> %s)'
                   % (uid, ev.get('ticker'), attempts + 1, state))
             continue
-        store.delivery_ok(event_key, uid, getattr(res, 'message_id', None))
+        _mid = getattr(res, 'message_id', None)
+        store.delivery_ok(event_key, uid, _mid)
+        # ЖУРНАЛ И НИТЬ ОБНОВЛЯЕМ ТОЛЬКО ПОСЛЕ ОТВЕТА ТЕЛЕГРАМА: отметка до подтверждения
+        # превращает сетевой сбой в «предохранитель сработал», то есть в тишину по нашей вине.
+        _p = ev.get('payload') or {}
+        _venue = _p.get('venue') or 'variational'
+        _fam = _family(ev.get('kind') or '')
+        if _thr['act'] == 'first':
+            if (ev.get('kind') or '') not in NO_THREAD_KINDS:
+                store.thread_open(_venue, ev.get('ticker') or '', uid, event_key, _mid,
+                                  _p.get('step') or 1, _p.get('move_pct'), family=_fam)
+            store.sent_log(uid, 'alert', event_key, _mid)
+        else:
+            store.thread_bump(_venue, ev.get('ticker') or '', uid,
+                              _p.get('step') or 1, _p.get('move_pct'), family=_fam)
+            store.sent_log(uid, 'thread', event_key, _mid)
         store.cooldown_mark(uid, ev.get('ticker') or '', _cd_kind(ev))
         # ПОДПИСКА И ПОЛУЧАТЕЛЬ — ОДНО И ТО ЖЕ ЧИСЛО, И ПЕРЕДАЁМ МЫ ИХ ОТДЕЛЬНО НАРОЧНО:
         # общий формат лога сам кричит при расхождении, а расхождение и есть утечка.
@@ -329,9 +582,19 @@ async def deliver_enrichment(event_key, brief, limit=25):
         return 0
     if not config.deliver_on():
         return 0
-    text = cards.enrich_card(ev, brief)
     n = 0
+    _un = await bot_un()
+    # КОНТРАКТ ИЗ СВОДКИ - В ПЕРВУЮ КАРТОЧКУ (этап 3): у токена с контрактом в правке появляется
+    # ссылка «Паспорт». Событие в базе не меняется - адрес живёт только в тексте правки.
+    ev_c = ev
+    if brief.get('address') and not (ev.get('payload') or {}).get('address'):
+        ev_c = dict(ev, payload=dict(ev.get('payload') or {}, address=brief['address'],
+                                     chain=brief.get('chain')))
     for uid in store.delivered_users(event_key)[:limit]:
+        text = cards.enrich_card(ev, brief, bot_un=_un, standalone=False)
+        if not text:
+            # ДОБАВИТЬ НЕЧЕГО - НИ ПРАВКИ, НИ ВТОРОГО СООБЩЕНИЯ (этап 3).
+            continue
         _s = store.settings(uid)
         if not _s.get('enrich_on'):
             continue
@@ -345,8 +608,24 @@ async def deliver_enrichment(event_key, brief, limit=25):
         # сообщение значило бы прислать шум там, где он попросил тишины.
         if not ({'nansen', 'news'} & store.parts_for(uid)):
             continue
-        res = await _send(uid, text, label='sentinel:brief')
+        # ═══ ОСНОВНОЙ ПУТЬ - ПРАВКА ПЕРВОЙ КАРТОЧКИ, А НЕ ВТОРОЕ СООБЩЕНИЕ (ТЗ 2.6) ═══
+        # Замер прода: 280 алертов и 279 обогащений за сутки, то есть каждый алерт приходил
+        # дважды. Правка телефон не будит и в окно предохранителя не входит; человек видит
+        # дополненную карточку там же, где читал первую.
+        _mid = store.delivery_msg_id(event_key, uid)
+        if _mid:
+            _full = '%s\n\n%s' % (cards.card(ev_c, bot_un=_un), text)
+            if await _edit(uid, _mid, _full):
+                alert_log.sent('sentinel_brief_edit', uid, sub=uid,
+                               obj='%s/%s' % (ev.get('kind'), ev.get('ticker')))
+                n += 1
+                continue
+        # ОТКАЗ ПРАВКИ - НЕ ПОТЕРЯ КОНТЕКСТА: шлём ответом на карточку. И вот ЭТО в окно входит,
+        # потому что уведомление человек получает.
+        text = cards.enrich_card(ev, brief, bot_un=_un, standalone=True)
+        res = await _send(uid, text, label='sentinel:brief', reply_to=_mid)
         if res and not (isinstance(res, tuple) and res[0] == 'err'):
+            store.sent_log(uid, 'brief', event_key, getattr(res, 'message_id', None))
             alert_log.sent('sentinel_brief', uid, sub=uid,
                            obj='%s/%s' % (ev.get('kind'), ev.get('ticker')))
             n += 1
@@ -368,8 +647,15 @@ async def deliver_digest(limit_users=50, now=None):
     """
     if not config.deliver_on():
         return 0, 0
+    # ОДИН ОТПРАВИТЕЛЬ СВОДОК НА КРУГ (этап 4). Сводку теперь проверяют раз в минуту ОБА процесса
+    # (бот и юнит): период личный, и ждать общего 10-минутного круга значило бы задержать
+    # 10-минутную сводку «Трейдера» почти вдвое. Без аренды два процесса могли бы собрать одну и
+    # ту же сводку одновременно и прислать её дважды.
+    if not store.lease('digest', ttl=50):
+        return 0, 0
     people = rows = 0
-    for uid in store.digest_users(config.digest_sec(), now=now)[:limit_users]:
+    # ЛИЧНЫЙ ПЕРИОД СВОДКИ (этап 4): у «Новичка» 30 мин, у «Трейдера» 10, у «Тихого» 60.
+    for uid in store.digest_due(now=now)[:limit_users]:
         s = store.settings(uid)
         # ВЫКЛЮЧЕННЫЕ АЛЕРТЫ ГЛУШАТ И СВОДКУ: иначе выключатель оставил бы лазейку, и человек,
         # нажавший «выключить», получал бы вместо потока сводку того же потока.
@@ -379,32 +665,64 @@ async def deliver_digest(limit_users=50, now=None):
         if not pend:
             continue
         cut = config.digest_max_rows()
-        items, keys = [], []
-        for key, sev, why, _ts in pend[:cut]:
-            ev = store.event(key)
+        # ═══ ОДНА СТРОКА НА ТИКЕР, И ЭТО МАКСИМАЛЬНАЯ ВЕЛИЧИНА (ТЗ 2.2) ═══
+        # Без дедупликации сводка повторяла ровно тот дефект, от которого мы уходим в алертах:
+        # развивающееся движение по одному инструменту давало десяток строк про один и тот же
+        # SAGA, и «сводка» становилась тем же потоком, только собранным в одно сообщение.
+        # ВЕДЁМ ВЕЛИЧИНОЙ: из нескольких событий по тикеру остаётся то, у которого больше ход
+        # (а при равном - выше уверенность). Человеку нужен ответ «насколько сильно», а не
+        # история наших замеров.
+        keys, best = [], {}
+        for key, sev, why, _ts in pend:
             keys.append(key)
-            if ev is not None:
-                items.append({'ev': ev, 'why': why})
-        # ХВОСТ ТОЖЕ ОТМЕЧАЕМ ОТПРАВЛЕННЫМ, ПОТОМУ ЧТО О НЁМ СКАЗАНО ЧИСЛОМ («и ещё 34 слабее»).
-        # Оставить его в очереди значило бы прислать те же события следующей сводкой - и человек
-        # читал бы один и тот же хвост до конца суток.
-        tail = [r[0] for r in pend[cut:]]
+            ev = store.event(key)
+            if ev is None:
+                continue
+            # ═══ ПРАВИЛО СТОИТ И НА ПУТИ СВОДКИ (этап 3, п.6) ═══
+            # Строка лежала в очереди сводки с момента постановки, а правила и настройки с тех
+            # пор могли смениться: расхождения 43-95 б.п. из прежних правил приехали в сводку
+            # после деплоя. Сверяем у двери: прежние правила, выключенный вид или площадка -
+            # строки нет, причина в лог. Ключ всё равно отмечается отправленным (ниже).
+            _drop = rules_reason(ev)
+            if not _drop:
+                _v, _w = mute_reason(uid, ev, now=now)
+                _drop = _w if _v == 'drop' else ''
+            if _drop:
+                print('[sentinel] сводка uid=%s без %s/%s: %s'
+                      % (uid, ev.get('kind'), ev.get('ticker'), _drop))
+                continue
+            _p = ev.get('payload') or {}
+            _t = '%s:%s' % (_p.get('venue') or 'variational', ev.get('ticker') or '?')
+            _w = (abs(float(_p.get('move_pct') or 0.0)), int(sev or 0))
+            if _t not in best or _w > best[_t][0]:
+                best[_t] = (_w, {'ev': ev, 'why': why})
+        items = [v[1] for v in sorted(best.values(), key=lambda p: -p[0][0])][:cut]
+        # ХВОСТ СЧИТАЕМ ПО ТИКЕРАМ, А НЕ ПО СОБЫТИЯМ: «и ещё 34 слабее» про 34 события по трём
+        # инструментам было бы обещанием новостей, которых нет.
+        tail_n = max(0, len(best) - len(items))
+        # ВСЕ КЛЮЧИ ОТМЕЧАЕМ ОТПРАВЛЕННЫМИ, включая свёрнутые дубликаты: о них сказано числом
+        # («и ещё N инструментов слабее»), а оставить их в очереди значило бы прислать те же
+        # события следующей сводкой - и человек читал бы один и тот же хвост до конца суток.
         if not items:
-            store.digest_mark(uid, keys + tail, now=now)
+            store.digest_mark(uid, keys, now=now)
             continue
-        text = cards.digest_card(items, extra=len(tail),
-                                 window_min=max(1, config.digest_sec() // 60))
+        text = cards.digest_card(items, extra=tail_n,
+                                 window_min=max(1, store.digest_sec_for(uid) // 60),
+                                 bot_un=await bot_un())
         res = await _send(uid, text, label='sentinel:digest', kb=cards.digest_kb(items))
         if not res or (isinstance(res, tuple) and res and res[0] == 'err'):
             # НЕ ОТМЕЧАЕМ: сводка, потерянная из-за сети, обязана уехать следующим кругом.
             print('[sentinel] сводка не ушла uid=%s (%s)'
                   % (uid, str(res[1])[:90] if isinstance(res, tuple) else 'отказ без причины'))
             continue
-        store.digest_mark(uid, keys + tail, now=now)
+        store.digest_mark(uid, keys, now=now)
+        # СВОДКА - ТОЖЕ СООБЩЕНИЕ, И ПРЕДОХРАНИТЕЛЬ ЕЁ СЧИТАЕТ (ТЗ 2.6): она будит телефон так
+        # же, как алерт, и не считать её значило бы оставить ограничителю слепое пятно.
+        store.sent_log(uid, 'digest', None, getattr(res, 'message_id', None))
         alert_log.sent('sentinel_digest', uid, sub=uid,
-                       obj='сводка %d событий' % (len(items) + len(tail)))
+                       obj='сводка %d инструментов' % len(items))
         people += 1
-        rows += len(items) + len(tail)
+        rows += len(items)
     return people, rows
 
 

@@ -523,6 +523,26 @@ Costs no credits: it reads our database, not the provider.
 
 ---
 
+## Scenario 18. Sentinel: live perp alerts with Nansen in the card
+
+A subscription, not a one-off question. `sentinel BTC` or `sentinel all` puts instruments under
+watch (the first subscription sets the Beginner preset). The bot polls three public venues every
+30 seconds and rings only when a move is unusual for that instrument (1.2% in 15 min or 2.5% in an
+hour AND at least 2.5 sigma over 20+ points of its own history).
+
+What arrives: one card per move (the ticker is a link to the instrument card, a class mark next to
+it), then the **same card is edited** with Nansen context: smart-money net over 3 h and who
+sold/bought (`tgm/who-bought-sold`), 24 h segments (`tgm/flow-intelligence`), leverage
+(`perp-positioning`), the two nearest liquidation clusters from $100k (`perp-positions`) and a
+verdict computed by code. Two events are born in Nansen itself: Smart Ignition (3+ smart
+addresses bought one token for $100k+ within 180 min, `smart-money/dex-trades`) and Smart Perp
+(2+ smart addresses opened one side for $250k+ within 30 min, `smart-money/perp-trades`).
+
+Honest parts: no hit rate on fewer than 20 samples (`sentinel report`); equities outside their
+exchange session arrive only in the digest; a line that does not change the trader's decision is
+not printed. Terminal: `python3 cli.py sentinel-card BTC hyperliquid`, `sentinel-demo`,
+`sentinel-presets`. Spec: `docs/SENTINEL_SPEC.md`.
+
 # What exists in the client but has no door yet
 
 **This is not "we forgot", it is a decision.** An endpoint with no command is the same thing the
