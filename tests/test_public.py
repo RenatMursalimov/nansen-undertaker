@@ -605,6 +605,21 @@ def t_public_hygiene_and_live_tools_are_safe_by_default():
         S.HERE = old_here
         shutil.rmtree(temp, ignore_errors=True)
 
+    # IPv4 машины - раскладка сервера: ловится в тех формах, в каких адрес пишут (ssh-цель, URL
+    # с портом, голый в конце фразы). Подсадка собирается в рантайме: литерал адреса в этом
+    # файле скруббер поймал бы в самом тесте. Обратная сторона - петля, «все интерфейсы», сеть
+    # для документации и версия продукта в User-Agent адресом машины не считаются.
+    import re
+    ip = '.'.join(['9'] * 4)
+    plant = 'ssh root@%s\nhttp://%s:8080/webapp\nserver %s.\n' % (ip, ip, ip)
+    safe = ('Chrome/131.0.0.0 Safari/537.36\nhttp://127.0.0.1:8080/webapp\n0.0.0.0:8080\n'
+            '192.0.2.10\nv1.2.3.4.5\n')
+    found = lambda t: [m.group(0) for rx, _why in S.CLASSES for m in re.finditer(rx, t)]
+    check('PUBLIC: scrubber ловит IPv4 машины (ssh, URL, голый адрес)',
+          found(plant) == [ip] * 3, found(plant))
+    check('PUBLIC: петля, 0.0.0.0, RFC 5737 и версия в User-Agent - не адрес машины',
+          found(safe) == [], found(safe))
+
     # Live tools: без --run только plan. Провод подменён на взрыв — если вызов уйдёт, тест
     # упадёт, а не поверит напечатанному «nothing sent».
     import httpx

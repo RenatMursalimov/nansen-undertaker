@@ -25,7 +25,7 @@ reading it.
 | `docs/JUDGE.md` | `e5c94cb4cd1d1fd8` | from the bot, private paths/services substituted (see below) |
 | `docs/MINIAPP_DECISIONS.md` | `c21d902a9bd96bec` | from the bot, private paths/services substituted (see below) |
 | `docs/PROJECT_STATUS.md` | `359abe24b5ba10f9` | from the bot, private paths/services substituted (see below) |
-| `docs/RECORDING_RUNBOOK.md` | `f897c1d05a2244e0` | from the bot, private paths/services substituted (see below) |
+| `docs/RECORDING_RUNBOOK.md` | `e4f15957855bc935` | from the bot, private paths/services substituted (see below) |
 | `docs/SENTINEL_SPEC.md` | `1be06bab8a4af23d` | from the bot, private paths/services substituted (see below) |
 | `docs/SENTINEL_SPEC_ru.md` | `fe242f92d5127e66` | from the bot, private paths/services substituted (see below) |
 | `docs/VIDEO.md` | `b090b36fa4aaed7a` | from the bot, private paths/services substituted (see below) |
@@ -36,8 +36,8 @@ reading it.
 | `docs/proofs/LIVE_HERO_2026-09-20.md` | `4751606545e5d3c5` | from the bot, private paths/services substituted (see below) |
 | `docs/proofs/LIVE_MARKET_SELECTION_2026-09-20.md` | `5b366b993a727a33` | from the bot, private paths/services substituted (see below) |
 | `docs/proofs/MERIDIAN_CORPUS_2026-09-20.md` | `a5bc4f78fbc8c2a0` | from the bot, private paths/services substituted (see below) |
-| `docs/scenarios.md` | `294e132b09b914bf` | from the bot, private paths/services substituted (see below) |
-| `docs/scenarios_ru.md` | `8d4f6c79defde5fe` | from the bot, private paths/services substituted (see below) |
+| `docs/scenarios.md` | `1d1ccee53c7b83c0` | from the bot, private paths/services substituted (see below) |
+| `docs/scenarios_ru.md` | `79624fd01e5f6579` | from the bot, private paths/services substituted (see below) |
 | `docs/submission-checklist.md` | `81063c00ce1cc4ba` | from the bot, private paths/services substituted (see below) |
 | `docs/submission-checklist_ru.md` | `eace87c7f42bc24a` | from the bot, private paths/services substituted (see below) |
 | `docs/submission.md` | `d5e44a4aba63b562` | from the bot, private paths/services substituted (see below) |
@@ -68,7 +68,7 @@ reading it.
 | `onchain/oc_perps.py` | `c7eed1e3b68d59e6` | byte-for-byte from the bot |
 | `proofs/sentinel_live_proof.py` | `d0f25d0b304672a3` | byte-for-byte from the bot |
 | `requirements.txt` | `56dbb14aff00e3cd` | extract-only, this file does not exist in the bot |
-| `scrub.py` | `fe3310aab093362c` | extract-only, this file does not exist in the bot |
+| `scrub.py` | `6a1205b278bb2a7a` | extract-only, this file does not exist in the bot |
 | `sentinel/__init__.py` | `45318e500abc283f` | byte-for-byte from the bot |
 | `sentinel/assets.py` | `e04bd6c50248efc5` | byte-for-byte from the bot |
 | `sentinel/cards.py` | `c85ef789b32398d8` | byte-for-byte from the bot |
@@ -88,7 +88,7 @@ reading it.
 | `sentinel/venues.py` | `0cdd5f8c58e8f6f4` | byte-for-byte from the bot |
 | `tests/fixtures/variational_names_20260926.json` | `d640bbd349f2304b` | byte-for-byte from the bot |
 | `tests/guard_text.py` | `8dbb7014d7fd073c` | byte-for-byte from the bot |
-| `tests/test_public.py` | `fff5861d3d921b39` | extract-only, this file does not exist in the bot |
+| `tests/test_public.py` | `ddf9488054d6d995` | extract-only, this file does not exist in the bot |
 | `tests/test_sentinel.py` | `d192dc8d23b6f01a` | byte-for-byte from the bot |
 | `tools/nansen_catalog.py` | `0fb1984bc5b4dca2` | byte-for-byte from the bot |
 | `tools/nansen_daily.py` | `699fd28d7d76437d` | byte-for-byte from the bot |
@@ -105,16 +105,17 @@ reading it.
 
 ## The one declared sanitary substitution
 
-The documents are instructions for the bot owner, and they contain absolute paths
-and systemd service names of the live server. Those must not travel: they are the
-machine's layout. Every such identifier is mechanically replaced by a placeholder,
-and only the placeholders appear in the extract:
+The documents are instructions for the bot owner, and they contain absolute paths,
+a host address and systemd service names of the live servers. Those must not travel:
+they are the machines' layout. Every such identifier is mechanically replaced by a
+placeholder, and only the placeholders appear in the extract:
 
 * `<SWEEP_LOG>`
 * `<STAND_DIR>`
 * `<BOT_DIR>`
 * `<KEYS_DIR>`
 * `<SSH_IDENTITY>`
+* `<SANDBOX_HOST>`
 * `<TEST_SERVICE>`
 * `<BOT_SERVICE>`
 
