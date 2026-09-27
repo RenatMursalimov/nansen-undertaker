@@ -700,6 +700,7 @@ _EP_HUMAN = {
     'tgm/pnl-leaderboard': ('топ по PnL', 'top PnL'),
     'tgm/who-bought-sold': ('сделки', 'trades'),
     'tgm/token-information': ('справка по токену', 'token information'),
+    'search/general': ('поиск токена по имени', 'token search by name'),
     'prediction-market/trades-by-market': ('сделки рынка', 'market trades'),
 }
 
