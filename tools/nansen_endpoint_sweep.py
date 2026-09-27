@@ -164,6 +164,8 @@ def registry():
         _case('smart-money/pnl-leaderboard',
               {'chains': ['ethereum', 'solana', 'base'], 'timeframe': 7, 'filters': {},
                'pagination': _pg()}, estimate=5),
+        # ПРОБА 27.09: тело как у официального CLI - `limit` и необязательный `market_cap_group`.
+        _case('nansen-score/top-tokens', {'limit': 5}, estimate=1),
         _case('profiler/address/labels',
               {'address': WALLET, 'chain': 'ethereum', 'pagination': _pg(100)}),
         _case('profiler/address/premium-labels',
@@ -422,8 +424,8 @@ def main(argv=None):
     # документ не обновили» обязано ломать прогон, а не обнаруживаться читателем. 55 - после
     # живой пробы схем 24.09 (`smart-money/dcas`, `chains/chain-rank`); 60 - с первым
     # отправителем адреса (27.09); 61 - со сводкой PnL на перпах (27.09).
-    if len(cases) != 62:
-        print('REGISTRY DRIFT: expected 62 routes, got %d' % len(cases))
+    if len(cases) != 63:
+        print('REGISTRY DRIFT: expected 63 routes, got %d' % len(cases))
         return 2
     if args.max_wire < 1 or args.daily_wire_cap < 1 or args.daily_credit_cap < 1:
         print('Caps must be positive. Nothing sent.')
