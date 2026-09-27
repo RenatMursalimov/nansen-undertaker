@@ -10,7 +10,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 | Scenarios | Endpoints used | Telemetry scenes |
 |---|---|---|
-| 34: 32 user-facing on Nansen + 1 background + 1 local | 35 | 31 of 38 in registry |
+| 35: 33 user-facing on Nansen + 1 background + 1 local | 36 | 32 of 39 in registry |
 
 ## Three doors: where Nansen can be asked at all
 
@@ -54,6 +54,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [🔍 Free-form question to the Nansen agent](#agent) | — | exchange card → 🔍 Nansen<br>a question in DM or chat | 💬 👥🔘 👥🤖 | 200 credits (fast) or 750 (expert) — the MOST expensive path |
 | [🧊 Who buys on a schedule (smart money DCA)](#dca) | `dca` | 🧠 Nansen → 🧠 Smart money → 🧊 Buying on a schedule | 💬 | price not named in the official list · 1 request |
 | [🌐 Chain ranking: TVL, DEX volume, active addresses](#chains) | `chain rank` | 🧠 Nansen → 🌐 Chains and tally → 🌐 Chain ranking | 💬 | price not named in the official list · 1 request |
+| [🥇 Most profitable smart money: realized and open apart](#smpnl) | `most profitable smart money` | 🧠 Nansen → 🧠 What smart money is doing → 🥇 Most profitable smart money | 💬 | 5 credits (printed on the screen) |
 | [💠 The DeFi part of a wallet: assets MINUS debts](#defi) | `defi 0x…` | 🧠 Nansen → 🔎 Wallet and token → 💠 DeFi part | 💬 | price not named in the official list · 1 request |
 | [🧾 Who is in a Polymarket market, and their PnL](#pmpos) | `market positions 654412` | 🎲 Trending markets → the market → 🧾 Who is in it now<br>🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL | 💬 | price not named in the official list · 1 request |
 | [🧊 Jupiter DCA by token (Solana)](#jupdca) | `jup dca <mint>` | 🧠 Nansen → 🧠 Smart money → 🧊 Jupiter DCA by token | 💬 | price not named in the official list · 1 request |
@@ -693,6 +694,30 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ---
 
+<a name="smpnl"></a>
+
+## 🥇 Most profitable smart money: realized and open apart
+
+**Say to the bot:** `most profitable smart money`
+**By button:** 🧠 Nansen → 🧠 What smart money is doing → 🥇 Most profitable smart money
+**Where:** in DM · **not in a group**: the word command is parsed only by the DM router
+
+**What you get:** smart money addresses with the highest PnL over 7 days: total, realized and open apart, win rate, trade count, what they traded; tap an address to open its dossier
+
+**Price:** 5 credits (printed on the screen)
+
+**Why:** a total hides whether the money is earned: +$5.66M with realized -$40K is still open positions, not profit
+
+**Endpoints:** `smart-money/pnl-leaderboard`
+
+**Telemetry scene:** `sm_pnl_leaders` — this screen's spend is counted under it.
+
+**For a tweet (EN):**
+
+> The most profitable smart money of the week, realized and open PnL apart, one tap to the wallet dossier.
+
+---
+
 <a name="defi"></a>
 
 ## 💠 The DeFi part of a wallet: assets MINUS debts
@@ -887,7 +912,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## Client routes with no ordinary user scenario
 
-The catalog above has 34 workflows that use 35 unique API routes. The client contains **59** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
+The catalog above has 35 workflows that use 36 unique API routes. The client contains **60** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
 
 This is not a claim that all work end-to-end: having a client is not the same as a ready scenario. The list is broken out precisely so as not to pass API coverage off as user-available functionality.
 
