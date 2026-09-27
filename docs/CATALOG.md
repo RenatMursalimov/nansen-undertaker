@@ -10,7 +10,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 | Scenarios | Endpoints used | Telemetry scenes |
 |---|---|---|
-| 35: 33 user-facing on Nansen + 1 background + 1 local | 38 | 32 of 39 in registry |
+| 34: 32 user-facing on Nansen + 1 background + 1 local | 37 | 31 of 38 in registry |
 
 ## Three doors: where Nansen can be asked at all
 
@@ -912,7 +912,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## Client routes with no ordinary user scenario
 
-The catalog above has 35 workflows that use 38 unique API routes. The client contains **62** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
+The catalog above has 34 workflows that use 37 unique API routes. The client contains **61** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
 
 This is not a claim that all work end-to-end: having a client is not the same as a ready scenario. The list is broken out precisely so as not to pass API coverage off as user-available functionality.
 
