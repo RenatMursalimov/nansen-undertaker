@@ -75,6 +75,13 @@ production: [`docs/MINIAPP_DECISIONS.md`](docs/MINIAPP_DECISIONS.md).
   [`docs/VIDEO_SCRIPT.md`](docs/VIDEO_SCRIPT.md); the older silent plan:
   [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md)
 - Ready X thread: [`docs/X_THREAD.md`](docs/X_THREAD.md)
+- User guide, every Nansen screen by taps and by command, with its limit and cost:
+  [`docs/ARTICLE_USER_GUIDE.md`](docs/ARTICLE_USER_GUIDE.md)
+- Technical guide, Nansen routes, fields and the traps we measured:
+  [`docs/ARTICLE_TECH_GUIDE.md`](docs/ARTICLE_TECH_GUIDE.md)
+- Sentinel thread with a frame list (Russian, EN tweets inside):
+  [`docs/POST_SENTINEL_X_ru.md`](docs/POST_SENTINEL_X_ru.md); every Sentinel number with its source:
+  [`docs/BRIEF_SENTINEL_ru.md`](docs/BRIEF_SENTINEL_ru.md)
 - Submission draft and eligibility gate: [`docs/submission.md`](docs/submission.md)
 - Roadmap and competitor analysis: [`docs/WINNER_PLAN.md`](docs/WINNER_PLAN.md)
 

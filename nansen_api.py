@@ -3907,6 +3907,41 @@ def wallet_perp_block(d, address, lang='ru'):
                        ('unrealized +$' if float(pnl) >= 0 else 'unrealized -$') + _usd(abs(float(pnl))))
         except (TypeError, ValueError):
             pass
+    # ═══ ПУСТОЙ СЧЁТ - ЭТО ОТВЕТ СЛОВАМИ, А НЕ СТРОКА НУЛЕЙ (живой случай Ren 27.09) ═══
+    # На два адреса экран отдал «equity $0 · margin $0 · withdrawable $0» - и это выглядело
+    # как сломанный сценарий, хотя числа верны: сверка напрямую с Hyperliquid
+    # (`clearinghouseState`, `userFills`) показала ноль и НИ ОДНОЙ сделки у обоих. Три нуля
+    # подряд - признак наличия ответа, а не польза: человеку нужно «здесь пусто и почему».
+    _open = []
+    for p in pos:
+        if not isinstance(p, dict):
+            continue
+        # ЗАКРЫТОЙ считаем позицию, только если размер ИЗМЕРЕН и равен нулю: строка без поля
+        # размера остаётся на экране, как и раньше (неизвестное не выдаём за пустое).
+        _szv = _first(p, ('szi', 'size', 'position_size'))
+        try:
+            if _szv not in (None, '') and abs(float(_szv)) == 0:
+                continue
+        except (TypeError, ValueError):
+            pass
+        _open.append(p)
+
+    def _zero(v):
+        try:
+            return v in (None, '') or abs(float(v)) < 0.005
+        except (TypeError, ValueError):
+            return False
+    if not _open and _zero(eq) and _zero(mar) and _zero(free):
+        L.append('Hyperliquid perp account is <b>empty</b> right now: equity $0, no open '
+                 'positions. This screen looks at Hyperliquid only; an account on another venue '
+                 'or behind an agent wallet is not visible here. For an address with a live '
+                 'account, open «🏆 Top perp traders» and tap a trader.' if lang == 'en' else
+                 'Счёт на перпах Hyperliquid сейчас <b>пуст</b>: капитал $0, открытых позиций '
+                 'нет. Экран смотрит только Hyperliquid; счёт на другой площадке или за '
+                 'агент-кошельком здесь не виден. Адрес с живым счётом: «🏆 Топ перп-трейдеры» '
+                 '→ тап по трейдеру.')
+        return with_source('\n'.join(L), lang)
+    pos = _open
     if seg:
         L.append('📈 ' + ' · '.join(seg))
     if health not in (None, ''):
