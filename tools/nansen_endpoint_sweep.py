@@ -160,6 +160,8 @@ def registry():
               {'token_symbol': 'BTC', 'date': _dr(7), 'pagination': _pg(),
                'order_by': [{'field': 'pnl_usd_total', 'direction': 'DESC'}]}),
 
+        # ПРОБА 27.09: тело как у официального CLI - `limit` и необязательный `market_cap_group`.
+        _case('nansen-score/top-tokens', {'limit': 5}, estimate=1),
         _case('profiler/address/labels',
               {'address': WALLET, 'chain': 'ethereum', 'pagination': _pg(100)}),
         _case('profiler/address/premium-labels',
@@ -411,8 +413,8 @@ def main(argv=None):
     # ЧИСЛО ЖЁСТКОЕ НАРОЧНО: оно напечатано в судейских документах, и «маршрут добавили, а
     # документ не обновили» обязано ломать прогон, а не обнаруживаться читателем. 55 - после
     # живой пробы схем 24.09 (`smart-money/dcas`, `chains/chain-rank`).
-    if len(cases) != 59:
-        print('REGISTRY DRIFT: expected 59 routes, got %d' % len(cases))
+    if len(cases) != 60:
+        print('REGISTRY DRIFT: expected 60 routes, got %d' % len(cases))
         return 2
     if args.max_wire < 1 or args.daily_wire_cap < 1 or args.daily_credit_cap < 1:
         print('Caps must be positive. Nothing sent.')
