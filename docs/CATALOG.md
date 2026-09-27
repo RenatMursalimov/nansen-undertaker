@@ -36,7 +36,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [💥 Leveraged positions and the LIQUIDATION PRICE by token](#perppos) | `perp positions BTC`<br>`liquidations BTC` | token card (e.g. BTC) → 💥 Liq. | 💬 👥🔘 | 5 credits |
 | [🗺 Liquidation map: where other people's leverage hangs](#liqmap) | `liquidation map BTC`<br>`liq map BTC` | token card → 💥 Liq. → 🗺 Liquidation map<br>mini-app → 🗺 Liquidations → a ticker button or your own input | 💬 👥🔘 | 5 credits (the same request as the position list) |
 | [🩺 A wallet's perp account and room to liquidation](#walletperps) | `nansen perp 0x…` | 🧠 Nansen → ⚔️ Leverage → 🩺 Wallet perp account | 💬 | price not named in the official list |
-| [🧠 Token breakdown: flows, Nansen Score, holder labels](#tokencheck) | `passport 0x… deep` | token/meme card → 🧠 | 💬 👥🔘 | 4 requests, about 12 credits |
+| [🧠 Token breakdown: flows, Nansen Score, holder labels](#tokencheck) | `passport 0x… deep` | token/meme card → 🧠 | 💬 👥🔘 | 4 requests, about 16 credits |
 | [🔄 Who net-bought and who sold a token](#wbs) | `who bought 0x… 7`<br>`who bought sold 0x…` | token card → 🧠 → 🔄 Who bought and sold | 💬 👥🔘 | 1 credit per side |
 | [🪪 Token info sheet from Nansen](#tinfo) | `token info 0x…` | 🧠 Nansen → 🔎 Wallet and token → 🪪 Token information | 💬 | 1 credit |
 | [📊 Holder-segment flows AS A CHART](#flowpng) | `flows chart 0x…` | token card → 🧠 → 📊 Flows chart | 💬 👥🔘 | 1 credit |
@@ -58,7 +58,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [🧾 Who is in a Polymarket market, and their PnL](#pmpos) | `market positions 654412` | 🎲 Trending markets → the market → 🧾 Who is in it now<br>🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL | 💬 | price not named in the official list · 1 request |
 | [🧊 Jupiter DCA by token (Solana)](#jupdca) | `jup dca <mint>` | 🧠 Nansen → 🧠 Smart money → 🧊 Jupiter DCA by token | 💬 | price not named in the official list · 1 request |
 | [⚖️ Who is positioned on a token: whales, smart traders, public figures](#posintel) | `positioning ETH`<br>`who is positioned <ticker>` | 🔍 Nansen on a token → the «⚖️ Who is positioned» button<br>🧠 Nansen → ⚔️ Other people’s leverage → ⚖️ Who is positioned | 💬 👥🔘 | price not named in the official list · 1 request |
-| [🎯 Where the money on Polymarket is sharp (market comparison)](#sharpmarkets) | `sharp money` | 🧠 Nansen → 🎲 Polymarket → 🎯 Where money is sharp | 💬 | price not named in the official list · 1 + N + N×H requests (13 by default) |
+| [🎯 Where the money on Polymarket is sharp (market comparison)](#sharpmarkets) | `sharp money` | 🧠 Nansen → 🎲 Polymarket → 🎯 Where money is sharp | 💬 | price not named in the official list · 1 + N + N×H requests (17 by default) |
 | [⚔️ Risk board: whose leverage is closest to the edge](#perprisk) | `risk board` | 🧠 Nansen → ⚔️ Leverage → ⚔️ Perp risk board<br>liquidation map → ⚔️ Compare all four | 💬 👥🔘 | price not named in the official list · one request per token (4) |
 | [🧮 My contest tally](#tally) | `nansen stats` | 🧠 Nansen → 🌐 Chains and tally → 🧮 My contest tally | 💬 | free, reads its own log |
 | [📰 Morning digest and tweet jobs](#digest) | — | on a schedule, no human | 💬 | counted separately from people: a job has no person and does not go into the tally |
@@ -268,7 +268,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 **What you get:** net flows by holder segment, Nansen Score, top-holder labels, top by PnL
 
-**Price:** 4 requests, about 12 credits
+**Price:** 4 requests, about 16 credits
 
 **Why:** one screen answers "who is in this token" in four different ways
 
@@ -801,7 +801,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 **What you get:** four heated markets side by side: how much money sits with wallets whose win rate is at or above 60% against the money of those below 40%, plus the biggest sharp holder
 
-**Price:** price not named in the official list · 1 + N + N×H requests (13 by default)
+**Price:** price not named in the official list · 1 + N + N×H requests (17 by default)
 
 **Why:** a single-market breakdown does not answer the question of choice: out of ten heated markets you want the one where the other side is not random people, and that only shows up side by side
 
