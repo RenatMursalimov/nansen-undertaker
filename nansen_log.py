@@ -110,6 +110,8 @@ SCENES = (
     'smart_dca',               # «dca»: кто покупает по расписанию (smart-money/dcas)
     'chain_rank',              # «рейтинг сетей» (chains/chain-rank)
     # СЦЕНА ПРОБЫ 27.09: появилась вместе с дверью (кнопка, команда, каталог), а не заранее.
+    'sm_pnl_leaders',          # «самые прибыльные» (smart-money/pnl-leaderboard)
+    # СЦЕНА ПРОБЫ 27.09: появилась вместе с дверью (кнопка, команда, каталог), а не заранее.
     'score_top',               # «лучшие по score» (nansen-score/top-tokens)
     'defi_holdings',           # «дефи 0x…» (portfolio/defi-holdings)
     'pm_positions',            # «позиции рынка <id>» (prediction-market/position-detail)
@@ -159,6 +161,7 @@ _EP_EST = {
     'smart-money/holdings': 3,                     # в overview числа нет, докстринг «1-5»
     # ЦЕНА ИЗ ЗАГОЛОВКА `x-credit-cost` ДОКУМЕНТА openapi (проба 27.09, probe_new.py): там она
     # названа площадкой для этой ручки, а живой вызов списал ровно столько же.
+    'smart-money/pnl-leaderboard': 5,
     'nansen-score/top-tokens': 1,
     'profiler/perp-pnl-summary': 1,
     'profiler/address/first-funder': 1,
