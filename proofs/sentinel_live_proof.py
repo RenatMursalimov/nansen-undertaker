@@ -14,27 +14,64 @@
   3. карточка называет свежесть котировки и ёмкость — то есть то, что определяет, можно ли
      по этому алерту вообще зайти руками.
 
-Запуск:  python3 nansen/proofs/sentinel_live_proof.py [ТИКЕР] [ПРОЦЕНТ]
-Пример:  python3 nansen/proofs/sentinel_live_proof.py BTC 4.5
+Запуск:  python3 proofs/sentinel_live_proof.py [ТИКЕР] [ПРОЦЕНТ]   (в боте: nansen/proofs/...)
+Пример:  python3 proofs/sentinel_live_proof.py BTC 4.5
+
+ПЛЮС ЧИСЛО ИНСТРУМЕНТОВ НА КАЖДОЙ ПЛОЩАДКЕ, ЖИВЬЁМ. В README стояли «553 / 234 / 210», и
+только у первого числа был механизм (датированная фикстура). Число, которое нельзя повторить,
+хуже отсутствия числа (закон №22), поэтому здесь его печатает тот же `venues.fetch_all`, по
+которому работает дозорный: ровно те инструменты, что попадают в кольцо (у Lighter - активные
+и не замороженные).
 Сеть нужна (только Variational, без ключей и без Nansen — кредиты не тратятся).
 """
 import os
 import sys
 import time
 
-BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# КОРЕНЬ - ТАМ, ГДЕ ЛЕЖИТ ПАКЕТ `sentinel`, а не на фиксированной глубине. В боте файл лежит в
+# `nansen/proofs/` (корень тремя уровнями выше), в публичной выжимке - в `proofs/` (двумя), и
+# фиксированная глубина роняла выжимку `ModuleNotFoundError: sentinel` (аудит 27.09, A3).
+BASE = os.path.dirname(os.path.abspath(__file__))
+while not os.path.isdir(os.path.join(BASE, 'sentinel')) and os.path.dirname(BASE) != BASE:
+    BASE = os.path.dirname(BASE)
 sys.path.insert(0, BASE)
 
 from sentinel import cards, detector                      # noqa: E402
 from sentinel import variational_feed as feed             # noqa: E402
+from sentinel import venues                               # noqa: E402
 
 TICKER = (sys.argv[1] if len(sys.argv) > 1 else 'BTC').upper()
 SHIFT = float(sys.argv[2]) if len(sys.argv) > 2 else 4.5
 
 
+def venue_counts():
+    """Сколько инструментов дозорный видит на каждой площадке сейчас. -> {площадка: int|отказ}."""
+    import asyncio
+    # ВСЕ ПЛОЩАДКИ С ЧТЕНИЕМ ИЗ РЕЕСТРА, а не `enabled()`: доказательство меряет площадки, а не
+    # то, что включено в окружении этой машины.
+    _all = tuple(v for v, d in venues.VENUES.items() if d.get('fetch'))
+    rows, notes = asyncio.run(venues.fetch_all(_all))
+    out = {}
+    for v in _all:
+        n = notes.get(v)
+        out[v] = (sum(1 for r in rows if getattr(r, 'venue', None) == v)
+                  if not isinstance(n, Exception) else 'не прочитана: %s' % n)
+    return out
+
+
 def main():
     t0 = time.time()
-    rows, meta = feed.fetch()
+    print('ПЛОЩАДКИ СЕЙЧАС (%s UTC):' % time.strftime('%Y-%m-%d %H:%M', time.gmtime()))
+    for v, n in venue_counts().items():
+        print('  %-12s %s' % (venues.title(v), ('%d инструментов в дозоре' % n)
+                                                 if isinstance(n, int) else n))
+    try:
+        rows, meta = feed.fetch()
+    except feed.FeedError as e:
+        # БЕЗ СЕТИ - ПРИЧИНА СЛОВАМИ, А НЕ ТРЕЙСБЕК: «площадка не ответила» и «доказательство
+        # сломано» - разные новости.
+        print('\nVariational не ответила (%s): живую карточку собрать не из чего.' % e)
+        return 2
     print('ЖИВОЙ ОТВЕТ: %d инструментов, %d байт, %d мс' %
           (len(rows), meta.get('bytes') or 0, meta.get('latency_ms') or 0))
     print('Площадка целиком: объём 24ч $%.2fB · открытый интерес $%.2fB · TVL $%.0fM' %
