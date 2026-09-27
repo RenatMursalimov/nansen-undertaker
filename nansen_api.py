@@ -700,6 +700,7 @@ _EP_HUMAN = {
     'tgm/pnl-leaderboard': ('топ по PnL', 'top PnL'),
     'tgm/who-bought-sold': ('сделки', 'trades'),
     'tgm/token-information': ('справка по токену', 'token information'),
+    'prediction-market/trades-by-market': ('сделки рынка', 'market trades'),
 }
 
 
@@ -2899,12 +2900,72 @@ def pm_ohlcv(market_id, outcome_index=0):
 
 
 def pm_market_trades(market_id, per_page=20):
-    """Недавние сделки рынка. -> [dict]."""
+    """Недавние сделки рынка. -> [dict].
+
+    Проба 27.09 (`probe_new.py`): тело `market_id` + `pagination`, строка - `timestamp` (UTC без
+    зоны), `side` (имя исхода), `taker_action`, `price` (0-1), `size`, `usdc_value`, `buyer`,
+    `seller`, `tx_hash`. Цена по заголовку openapi и по живому списанию - 1 кредит."""
     # ПУТЬ `prediction-market/trades-by-market` (проба №6 27.09): `…/trades` - 404.
     return _rows(_post_fix("prediction-market/trades-by-market",
                        {"market_id": str(market_id),
                         "pagination": {"page": 1, "per_page": per_page}},
                        ckey=f"pmtr:{market_id}:{per_page}"))
+
+
+def pm_trades_block(rows, market_id='', lang='ru', top=10):
+    """🔁 ПОСЛЕДНИЕ СДЕЛКИ РЫНКА - текстом. -> str | None.
+
+    ЗАЧЕМ, ЕСЛИ НА КАРТОЧКЕ УЖЕ ЕСТЬ ЦЕНА: «45%» - это итог, а сделки - кто его сейчас двигает.
+    Пять продаж по $5 и одна покупка на $5K дают ту же цену, но разное «куда идёт рынок».
+
+    ЗОВЁТСЯ ТОЛЬКО ТАПОМ (решение владельца 27.09): ручка стоит 1 кредит, и платить его на каждое
+    открытие карточки - платить за то, что человек мог и не спросить (закон №17).
+
+    ВРЕМЯ - МСК (закон №42): площадка отдаёт UTC без зоны, и «13:19» без подписи читался бы как
+    местное. Сумма «покупки / продажи» - ТОЛЬКО ПО ПОКАЗАННЫМ сделкам и так и подписана: это не
+    объём рынка за период, и выдать её за объём значило бы подменить сигнал (закон №41)."""
+    _all = [r for r in (rows or ()) if isinstance(r, dict)]
+    if not _all:
+        return None
+    _shape('pm-trade', _all[0])
+    en = (lang == 'en')
+    _msk = _dt.timezone(_dt.timedelta(hours=3))
+    L = ['🔁 <b>Latest trades in this market</b>' if en else '🔁 <b>Последние сделки рынка</b>']
+    _buy = _sell = 0.0
+    for r in _all[:int(top)]:
+        ts = str(r.get('timestamp') or '')
+        try:
+            when = _dt.datetime.strptime(ts[:19], '%Y-%m-%dT%H:%M:%S').replace(
+                tzinfo=_dt.timezone.utc).astimezone(_msk).strftime('%d.%m %H:%M')
+        except ValueError:
+            when = '?'
+        act = str(r.get('taker_action') or '').lower()
+        usd = _num_or_none(r.get('usdc_value'))
+        if usd is not None:
+            if act == 'buy':
+                _buy += usd
+            elif act == 'sell':
+                _sell += usd
+        verb = ({'buy': 'buy', 'sell': 'sell'} if en else
+                {'buy': 'покупка', 'sell': 'продажа'}).get(act, act or '?')
+        seg = ['%s %s' % (when, 'MSK' if en else 'МСК'),
+               '%s «%s»' % (verb, _esc(str(r.get('side') or '?')[:40]))]
+        pr = _num_or_none(r.get('price'))
+        if pr is not None:
+            seg.append('%.0f%%' % (pr * 100 if pr <= 1 else pr))
+        if usd is not None:
+            seg.append('$%s' % _usd(usd))
+        L.append(' · '.join(seg))
+    _n = min(len(_all), int(top))
+    L.append('')
+    L.append(('Over these %d trades: buys $%s · sells $%s (taker side; not the market volume).'
+              if en else
+              'По этим %d сделкам: покупки $%s · продажи $%s (сторона того, кто взял заявку; '
+              'это не объём рынка).') % (_n, _usd(_buy), _usd(_sell)))
+    if market_id:
+        L.append('🆔 <code>%s</code>' % _esc(str(market_id)[:80]))
+    L.append('Screen price: 1 Nansen credit.' if en else 'Цена экрана: 1 кредит Nansen.')
+    return with_source('\n'.join(L), lang)
 
 
 def pm_wallet_trades(address, per_page=20):
@@ -4669,9 +4730,9 @@ def pm_markets_block(query="", top=10, lang='ru', rows=None):
         L.append('\n' + schema_gap_note(rows[0], 'ID рынка' if lang != 'en' else 'Market ID',
                                         lang))
     L.append(('\n<i>Тапни рынок кнопкой ниже — открою его карточку: цена, объём, '
-              'идентификатор для команд и четыре разбора по этому рынку.</i>' if not en else
+              'идентификатор для команд и пять разборов по этому рынку.</i>' if not en else
               '\n<i>Tap a market below — I will open its card: price, volume, the id the '
-              'commands take, and four breakdowns of that market.</i>'))
+              'commands take, and five breakdowns of that market.</i>'))
     L.append("Разбор трейдера: «полимаркет профиль 0x…»." if not en
              else "Trader breakdown: «polymarket profile 0x…».")
     return with_source("\n".join(L), lang)
@@ -4730,12 +4791,13 @@ def pm_market_card_block(row, lang='ru'):
                   '🆔 <code>%s</code> — тапни, чтобы скопировать (его принимают команды «топ '
                   'рынка &lt;id&gt;», «полимаркет график &lt;id&gt;»).') % _esc(str(mid)[:80]))
     L.append('')
-    L.append(('<i>Buttons below: probability over time, the orderbook, who holds this market '
-              'and how they guessed before, and who is in it now with what PnL. All four are '
-              'about THIS market — no number to keep in your head.</i>' if en else
-              '<i>Кнопки ниже: вероятность во времени, стакан, кто держит этот рынок и как '
-              'угадывал раньше, кто в нём сейчас и с каким PnL. Все четыре - про ЭТОТ рынок, '
-              'номер держать в голове не нужно.</i>'))
+    L.append(('<i>Buttons below: probability over time, the orderbook, the latest trades, who '
+              'holds this market and how they guessed before, and who is in it now with what '
+              'PnL. All five are about THIS market — no number to keep in your head.</i>' if en
+              else
+              '<i>Кнопки ниже: вероятность во времени, стакан, последние сделки, кто держит этот '
+              'рынок и как угадывал раньше, кто в нём сейчас и с каким PnL. Все пять - про ЭТОТ '
+              'рынок, номер держать в голове не нужно.</i>'))
     return with_source('\n'.join(L), lang)
 
 

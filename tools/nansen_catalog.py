@@ -238,11 +238,11 @@ SCENARIOS = [
      'eps': ['prediction-market/market-screener'], 'scene': 'pm_markets',
      'menu': 'pm_markets',
      'price': 'цена не названа в официальном списке · 0 запросов при живом списке (кэш-хит)',
-     'gives': 'вопрос, цену рынка, объём, копируемый market_id и четыре разбора ЭТОГО рынка '
+     'gives': 'вопрос, цену рынка, объём, копируемый market_id и пять разборов ЭТОГО рынка '
               'кнопками',
      'why': 'это точка сборки: из списка, из мини-аппа и командой попадаешь в одно место, где '
             'номер рынка уже не нужен человеку - он уже в кнопках',
-     'hook': 'One market, one card: the question, the price, the id to copy, and four '
+     'hook': 'One market, one card: the question, the price, the id to copy, and five '
              'breakdowns of that market - reachable from the list, from the mini app, or by '
              'command.'},
     {'id': 'pmchart', 'title': '📈 График вероятности рынка во времени',
@@ -264,6 +264,17 @@ SCENARIOS = [
             'верят, стакан - сколько стоит это проверить деньгами',
      'hook': 'Price says what people believe. The order book says what it costs to test that '
              'belief with money.'},
+    {'id': 'pmtrades', 'title': '🔁 Последние сделки рынка Polymarket',
+     # БЕЗ КОМАНДЫ НАМЕРЕННО: решение владельца 27.09 - «по тапу, не при каждом открытии».
+     'cmds': [], 'btns': ['карточка рынка → 🔁 Последние сделки'],
+     'eps': ['prediction-market/trades-by-market'], 'scene': 'pm_trades', 'menu': None,
+     'price': '1 кредит',
+     'gives': 'десять последних сделок рынка: время МСК, покупка или продажа какого исхода, '
+              'цена, сумма; итог покупок и продаж по этим сделкам',
+     'why': 'цена - итог, сделки - кто его двигает сейчас: пять продаж по $5 и одна покупка на '
+            '$5K дают одну цену и разное направление',
+     'hook': 'The price is the result; the tape is who is moving it. Last trades of a '
+             'Polymarket market, one tap from its card, 1 credit.'},
     {'id': 'pmrep', 'app': True, 'title': '🎭 Кто держит рынок и как угадывал раньше',
      'cmds': ['репутация рынка 654412', 'кто держит рынок 654412',
               'market reputation 654412', 'who holds market 654412'],
@@ -652,11 +663,18 @@ _EN = {
                         'mini app: 🎭 Whose % → 📲 open in the bot'],
                'title': '🎲 The card of one Polymarket market',
                'price': 'price not named in the official list · 0 requests on a warm list',
-               'gives': 'the question, the market price, 24h volume, the id to copy and four '
+               'gives': 'the question, the market price, 24h volume, the id to copy and five '
                         'breakdowns of THAT market as buttons',
                'why': 'a grid of numbered buttons made the reader carry a row number; a button '
                       'carrying the question carries itself, and the card is where the list, the '
                       'mini app and the command all arrive'},
+    'pmtrades': {'cmds': [], 'btns': ['market card → 🔁 Latest trades'],
+                 'title': '🔁 Latest trades of a Polymarket market',
+                 'price': '1 credit',
+                 'gives': 'the last ten trades of the market: time in MSK, buy or sell of which '
+                          'outcome, price, amount; buys and sells summed over those trades',
+                 'why': 'the price is the result, the trades are who is moving it now: five sells '
+                        'of $5 and one buy of $5K print the same price and a different direction'},
     'pmpos': {'cmds': ['market positions 654412'],
               'btns': ['🎲 Trending markets → the market → 🧾 Who is in it now',
                        '🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL'],
