@@ -525,8 +525,8 @@ def t_docs_are_here_and_name_prices():
         # Without the fixtures the 60-second judge path does not exist: the screen could only
         # be opened with a live key, and that is exactly what a judge does not have.
         'webapp/index.html', 'nansen_scene.py', 'nansen_gate.py',
-        'fixtures/pm_markets.json', 'fixtures/pm_reputation.json', 'fixtures/liq_map.json',
-        'fixtures/smart_trades.json',
+        'webapp/fixtures/pm_markets.json', 'webapp/fixtures/pm_reputation.json',
+        'webapp/fixtures/liq_map.json', 'webapp/fixtures/smart_trades.json',
         'docs/JUDGE.md', 'docs/MINIAPP_DECISIONS.md',
     )
     for rel in required:
