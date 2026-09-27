@@ -10,7 +10,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 | Scenarios | Endpoints used | Telemetry scenes |
 |---|---|---|
-| 37: 35 user-facing on Nansen + 1 background + 1 local | 40 | 34 of 41 in registry |
+| 37: 35 user-facing on Nansen + 1 background + 1 local | 41 | 34 of 42 in registry |
 
 ## Three doors: where Nansen can be asked at all
 
@@ -37,8 +37,8 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [🗺 Liquidation map: where other people's leverage hangs](#liqmap) | `liquidation map BTC`<br>`liq map BTC` | token card → 💥 Liq. → 🗺 Liquidation map<br>mini-app → 🗺 Liquidations → a ticker button or your own input | 💬 👥🔘 | 5 credits (the same request as the position list) |
 | [🩺 A wallet's perp account and room to liquidation](#walletperps) | `nansen perp 0x…` | 🧠 Nansen → ⚔️ Leverage → 🩺 Wallet perp account | 💬 | positions: price not named in the official list; plus the 30-day summary, 1 credit |
 | [🧠 Token breakdown: flows, Nansen Score, holder labels](#tokencheck) | `passport 0x… deep` | token/meme card → 🧠 | 💬 👥🔘 | 4 requests, about 16 credits |
-| [🔄 Who net-bought and who sold a token](#wbs) | `who bought 0x… 7`<br>`who bought sold 0x…` | token card → 🧠 → 🔄 Who bought and sold | 💬 👥🔘 | 1 credit per side |
-| [🪪 Token info sheet from Nansen](#tinfo) | `token info 0x…` | 🧠 Nansen → 🔎 Wallet and token → 🪪 Token information | 💬 | 1 credit |
+| [🔄 Who net-bought and who sold a token](#wbs) | `who bought 0x… 7`<br>`who bought sold 0x…`<br>`who bought PEPE` | token card → 🧠 → 🔄 Who bought and sold | 💬 👥🔘 | 1 credit per side |
+| [🪪 Token info sheet from Nansen](#tinfo) | `token info 0x…`<br>`token info PEPE` | 🧠 Nansen → 🔎 Wallet and token → 🪪 Token information | 💬 | 1 credit |
 | [📊 Holder-segment flows AS A CHART](#flowpng) | `flows chart 0x…` | token card → 🧠 → 📊 Flows chart | 💬 👥🔘 | 1 credit |
 | [🧪 Backtest on onchain candles](#backtest) | — | meme card → 🧪 Backtest | 💬 | 5 credits for 89 daily candles |
 | [👤 Wallet profile: labels, PnL, related](#profile) | `profile 0x…`<br>`profile 0x… deep` | bare address in DM → 🕵 Dossier | 💬 | 3 requests, 4 for a 0x address (first funder, 1 credit); "deeper" adds premium labels for 150 credits |
@@ -289,17 +289,17 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🔄 Who net-bought and who sold a token
 
-**Say to the bot:** `who bought 0x… 7` · `who bought sold 0x…`
+**Say to the bot:** `who bought 0x… 7` · `who bought sold 0x…` · `who bought PEPE`
 **By button:** token card → 🧠 → 🔄 Who bought and sold
 **Where:** in DM · in a group — by the button on a card the bot itself posted (`hs:wbs`)
 
-**What you get:** a label or address and the $ volume for each side over the period
+**What you get:** a label or address and the $ volume for each side over the period; a ticker works instead of an address, with chain buttons when several tokens share it
 
 **Price:** 1 credit per side
 
 **Why:** net flow is the total; here you see WHO made it
 
-**Endpoints:** `tgm/who-bought-sold`
+**Endpoints:** `tgm/who-bought-sold`, `search/general`
 
 **Telemetry scene:** `who_bought_sold` — this screen's spend is counted under it.
 
@@ -313,17 +313,17 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## 🪪 Token info sheet from Nansen
 
-**Say to the bot:** `token info 0x…`
+**Say to the bot:** `token info 0x…` · `token info PEPE`
 **By button:** 🧠 Nansen → 🔎 Wallet and token → 🪪 Token information
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
-**What you get:** market cap, volume, liquidity, holder count
+**What you get:** market cap, volume, liquidity, holder count; a ticker works instead of an address (Nansen search, 0 credits, a button choice when several tokens match)
 
 **Price:** 1 credit
 
 **Why:** basic metrics from the same source as everything else — no second vendor
 
-**Endpoints:** `tgm/token-information`
+**Endpoints:** `tgm/token-information`, `search/general`
 
 **Telemetry scene:** `token_info` — this screen's spend is counted under it.
 
@@ -961,7 +961,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## Client routes with no ordinary user scenario
 
-The catalog above has 37 workflows that use 40 unique API routes. The client contains **63** routes in total; another 23 have no ordinary user door (some service/owner-only, some client groundwork).
+The catalog above has 37 workflows that use 41 unique API routes. The client contains **64** routes in total; another 23 have no ordinary user door (some service/owner-only, some client groundwork).
 
 This is not a claim that all work end-to-end: having a client is not the same as a ready scenario. The list is broken out precisely so as not to pass API coverage off as user-available functionality.
 
