@@ -87,7 +87,7 @@ reading it.
 | `tests/fixtures/variational_names_20260926.json` | `d640bbd349f2304b` | byte-for-byte from the bot |
 | `tests/guard_text.py` | `8dbb7014d7fd073c` | byte-for-byte from the bot |
 | `tests/test_public.py` | `da36801d7c48452b` | extract-only, this file does not exist in the bot |
-| `tests/test_sentinel.py` | `c0de4ed4487600c2` | byte-for-byte from the bot |
+| `tests/test_sentinel.py` | `73525f520d80c61d` | byte-for-byte from the bot |
 | `tools/nansen_catalog.py` | `1824150d749723f5` | byte-for-byte from the bot |
 | `tools/nansen_daily.py` | `699fd28d7d76437d` | byte-for-byte from the bot |
 | `tools/nansen_endpoint_sweep.py` | `ac243751eb38b441` | byte-for-byte from the bot |
