@@ -845,7 +845,9 @@ A person who already touched their settings keeps them until they press a preset
 ### What Nansen adds, all as an edit of the same card
 
 Large addresses over 3 h, net and who sold and bought (`tgm/who-bought-sold`, contract matched
-by price, majors and native coins excluded; the request carries no smart-money label filter, so
+by price; equities, funds, commodities, metals, indices and native coins without a DEX trace of
+their own are excluded, BTC included since its "wrapper" WBTC is a bridge, while ETH and SOL go
+through WETH/wSOL in their home chains; the request carries no smart-money label filter, so
 the card does not call them smart money, and a provider refusal reads "on-chain not read" with
 the reason instead of silence); 24 h segments (`tgm/flow-intelligence`: smart money,
 whales, fresh wallets, significant ones only); leverage (`tgm/position-intelligence`, keyed by the perp

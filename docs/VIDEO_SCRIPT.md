@@ -117,6 +117,7 @@ the voiceover changes with it.
   probe round closed it: the body is exactly one field, `token_address`, and the response carries
   leverage split by segment — whales, smart traders, public figures, longs against shorts. It is now
   a working screen (`⚖️ Who is positioned`, reachable by a button under the Nansen answer for a
-  token), so the honest version of this line is: **every route in the client has a measured
-  schema.** The claim that replaced it is the stronger one, and it is checked by the route test
-  rather than by this file.
+  token), so the honest version of this line is: **every route in the client is registered with
+  a declared body, and every registered path answers 200 on the live probe of 27 September.**
+  A schema is *measured* only where a live answer is on record; the claim is checked by the
+  route test rather than by this file.

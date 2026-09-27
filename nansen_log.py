@@ -545,7 +545,7 @@ def flight_end(rem=None):
 
 
 def record(ep, ms=0, http=0, ok=False, empty=False, cache=False, rem=None, used=None,
-           rem_before=None, parallel=1, sig=None, cls=None, overlap=False):
+           rem_before=None, parallel=1, sig=None, cls=None, overlap=False, cost=None):
     """Одна строка на один вызов. -> dict записанных полей (для тестов и сводки).
 
     `ok` и `empty` — РАЗНЫЕ вопросы, и склеивать их нельзя: `ok=0,empty=0` (сбой) и
@@ -568,10 +568,14 @@ def record(ep, ms=0, http=0, ok=False, empty=False, cache=False, rem=None, used=
             d = None
         if d is not None and (d < 0 or d > 5000):
             d = None                 # чужой вызов между замерами: выдуманная дельта хуже пустой
-    # ЦЕНА: три состояния, а не два. 0 - замер (дельта остатка), 1 - оценка по таблице,
-    # 2 - ЦЕНА НЕИЗВЕСТНА, и в сводке такие вызовы идут отдельной строкой.
+    # ЦЕНА: три состояния, а не два. 0 - замер (заголовок `x-nansen-credits-cost` площадки,
+    # либо дельта остатка), 1 - оценка по таблице, 2 - ЦЕНА НЕИЗВЕСТНА, и в сводке такие вызовы
+    # идут отдельной строкой. ЗАГОЛОВОК СТАРШЕ ДЕЛЬТЫ: дельта ломается параллельным вызовом, а
+    # заголовок приходит с каждым ответом, включая отказы (Д6, пробы 27.09).
     if cache:
         est, credits = 0, 0
+    elif isinstance(cost, int) and cost >= 0:
+        est, credits = 0, cost
     elif d is not None:
         est, credits = 0, d
     elif price_known(ep):

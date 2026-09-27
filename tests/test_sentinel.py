@@ -848,6 +848,83 @@ def t_budget_is_a_quantity_and_stops_spending():
     os.environ['SENTINEL_NANSEN_DAY_CREDITS'] = '0'
 
 
+def t_sentinel_spend_is_the_providers_price_not_a_constant_d6():
+    """«КРЕДИТОВ СОЖЖЕНО СЕГОДНЯ» - ПО ЗАГОЛОВКУ ПЛОЩАДКИ (Д6, пробы 27.09).
+
+    Дозорный копил 5 за опрос ленты и 10 за `confirm` при любом исходе: при 402 площадка не
+    списала ничего, при ответе из кэша сети не было вовсе. Площадка отдаёт
+    `x-nansen-credits-cost` на каждый сетевой ответ, и расход обязан быть этим числом.
+    Провод подменён `httpx.post`; `ignition.scan` -> `nansen_api` -> телеметрия боевые.
+    """
+    import json as _json
+    import shutil as _sh
+    import httpx as _hx
+    import nansen_api as N
+    import nansen_log as NL
+    _tmp = tempfile.mkdtemp(prefix='sentinel_d6_')
+    _keep = (N._CACHE, N.SCHEMA_FILE, NL.TELE_DIR, NL.CREDITS_FILE,
+             os.environ.get('NANSEN_API_KEY'), getattr(_hx, 'post', None))
+    N._CACHE = os.path.join(_tmp, 'c.json')
+    N.SCHEMA_FILE = os.path.join(_tmp, 's.json')
+    NL.TELE_DIR = os.path.join(_tmp, 'tele')
+    NL.CREDITS_FILE = os.path.join(_tmp, 'cr.json')
+    os.environ['NANSEN_API_KEY'] = 'test-placeholder-not-a-key'
+    COST = {'v': '3', 'http': 200}
+
+    class _R(object):
+        def __init__(self, status, body):
+            self.status_code, self._b, self.text = status, body, _json.dumps(body)
+            self.headers = {'x-nansen-credits-cost': COST['v']} if COST['v'] else {}
+
+        def json(self):
+            return self._b
+
+    def _post(url, headers=None, json=None, timeout=None):
+        if COST['http'] == 402:
+            return _R(402, {'code': 'insufficient_credits', 'message': 'no credits'})
+        return _R(200, {'data': [{'transaction_hash': '0x' + '1' * 64, 'chain': 'base',
+                                  'token_bought_symbol': 'AAA', 'trade_value_usd': 100,
+                                  'block_timestamp': '2026-09-27T04:00:00Z',
+                                  'trader_address': '0x' + 'a' * 40}]})
+    _hx.post = _post
+    try:
+        before = store.spend_today()[0]
+        ignition.scan(now=int(time.time()))
+        check('D6: опрос ленты списал цену заголовка (3), а не константу (5)',
+              store.spend_today()[0] - before == 3, store.spend_today()[0] - before)
+        before = store.spend_today()[0]
+        ignition.scan(now=int(time.time()) + 1)
+        check('D6: ответ из кэша (сети не было) не стоит ничего',
+              store.spend_today()[0] - before == 0, store.spend_today()[0] - before)
+        os.remove(N._CACHE)
+        COST['v'], COST['http'] = '0', 402
+        before = store.spend_today()[0]
+        ignition.scan(now=int(time.time()) + 2)
+        check('D6: отказ 402 с cost=0 в заголовке списывает ноль, а не константу',
+              store.spend_today()[0] - before == 0, store.spend_today()[0] - before)
+        COST['v'], COST['http'] = '', 200
+        try:
+            os.remove(N._CACHE)
+        except OSError:
+            pass
+        before = store.spend_today()[0]
+        ignition.scan(now=int(time.time()) + 3)
+        check('D6: 200 без заголовка - верхняя оценка, не ноль',
+              store.spend_today()[0] - before == ignition._credits_guess(),
+              store.spend_today()[0] - before)
+    finally:
+        (N._CACHE, N.SCHEMA_FILE, NL.TELE_DIR, NL.CREDITS_FILE, _key, _p) = _keep
+        if _key is None:
+            os.environ.pop('NANSEN_API_KEY', None)
+        else:
+            os.environ['NANSEN_API_KEY'] = _key
+        if _p is None:
+            del _hx.post
+        else:
+            _hx.post = _p
+        _sh.rmtree(_tmp, ignore_errors=True)
+
+
 def t_lease_keeps_one_poller():
     """АРЕНДА: два процесса не опрашивают площадку одновременно."""
     check('LEASE: первый берёт', store.lease('t1', ttl=60, owner='A') is True)
@@ -4915,6 +4992,25 @@ def t_onchain_refusal_is_not_silence_d2_d4_d5():
         _sh.rmtree(_tmp, ignore_errors=True)
 
 
+def t_btc_is_native_and_never_goes_to_a_bridged_wrapper():
+    """BTC - НАТИВ, И ОНЧЕЙН ПО НЕМУ НЕ ПОКУПАЕТСЯ (проба 27.09, решение владельца).
+
+    Спека и бриф обещали «мейджоры и нативы исключены», а `NATIVE_L1` не знал BTC: движение BTC
+    уходило в `confirm`, тот сопоставлял тикер с WBTC на Ethereum - мостовой обёрткой, поток по
+    которой отвечает «сколько перевезли через мост». ETH и SOL живут в своих сетях (WETH/wSOL там
+    же), для них DEX-след осмыслен - они в `NATIVE_L1` не попадают.
+    """
+    from sentinel import assets
+    check('BTC: нативный актив', assets.is_native('BTC') == 'bitcoin', assets.is_native('BTC'))
+    _r = assets.onchain_refusal('BTC')
+    check('BTC: отказ от ончейна назван сетью', _r and 'bitcoin' in _r, _r)
+    check('BTC: с меткой нового токена и в нижнем регистре - тоже',
+          assets.is_native('🌱 btc') == 'bitcoin')
+    for sym in ('ETH', 'SOL', 'WBTC'):
+        check('BTC: %s не стал нативом заодно' % sym, assets.is_native(sym) is None,
+              assets.is_native(sym))
+
+
 def t_hyperliquid_without_sides_has_no_skew_d3():
     """У HYPERLIQUID СТОРОН ИНТЕРЕСА НЕТ - И ПЕРЕКОСА НЕТ, А НЕ «100% В ШОРТЫ» (Д3, ревью 27.09).
 
@@ -4976,6 +5072,7 @@ def main():
                t_quiet_hours_cross_midnight,
                t_enrichment_never_blocks_the_numbers,
                t_budget_is_a_quantity_and_stops_spending,
+               t_sentinel_spend_is_the_providers_price_not_a_constant_d6,
                t_lease_keeps_one_poller,
                t_rings_and_outcome_are_measured_not_told,
                t_commands_are_parsed_exactly_and_refuse_with_words,
@@ -5057,7 +5154,8 @@ def main():
                t_bot_takes_over_a_dead_poller,
                # ── ревью 27.09: отказ площадки не тишина, стороны интереса не выдумываются ──
                t_onchain_refusal_is_not_silence_d2_d4_d5,
-               t_hyperliquid_without_sides_has_no_skew_d3):
+               t_hyperliquid_without_sides_has_no_skew_d3,
+               t_btc_is_native_and_never_goes_to_a_bridged_wrapper):
         print('\n== %s' % fn.__name__)
         try:
             fn()

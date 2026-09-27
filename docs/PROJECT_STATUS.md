@@ -8,7 +8,7 @@
 
 | Area | Status | Evidence / next action |
 |---|---|---|
-| Core Nansen integration | ✅ Complete | 59 API routes in one client; 34 documented workflows; **no route left without a measured schema** |
+| Core Nansen integration | ✅ Complete | 59 API routes in one client; 34 documented workflows; **every route registered with a declared body, every registered path answers 200 on the live probe of 27 September** (a schema counts as measured only where a live answer is on record) |
 | Server endpoint sweep | ✅ Ready | all 59 routes declared; 53 structural reads + safe trade reads, Agent tier, hard budgets |
 | Hero: Polymarket holder reputation | ✅ Live PASS | primary `1130012`, backup `4323345`; 3 known histories, 0 failures each |
 | Liquidation map | ✅ Complete | button + command + visualization + honest missing-data handling |

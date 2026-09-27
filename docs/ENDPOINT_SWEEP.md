@@ -24,7 +24,14 @@ The registry is checked against `nansen_api.py` on every start:
 >
 > The newest entry is `tgm/position-intelligence`: the last route in the client without a measured
 > schema until 24 September, when the fourth probe round found the body is exactly one field
-> (`token_address`). **Every route in the client now has a schema taken from a live answer.**
+> (`token_address`). **Every route in the client is registered here with a declared body;** a schema
+> is called *measured* only where a live answer is on record (`CATALOG.md` names the probe per route).
+> The live probe of 27 September (review, §3.4) found seven registered paths answering 404 and
+> the working paths next to them (`tgm/transfers`, `tgm/token-ohlcv`, `profiler/perp-trades`,
+> `profiler/address/historical-balances`, `prediction-market/event-screener`,
+> `prediction-market/trades-by-market`, `prediction-market/trades-by-address`); the registry
+> now carries those. `tgm/position-intelligence` is keyed by the perp ticker (`ETH`), not by a
+> contract: by contract the route answers zeros (probe №3).
 
 Every structural call bypasses the 30-minute response cache but still passes through the normal
 Nansen telemetry throat. The final line reconciles logical attempts against fresh network rows;
