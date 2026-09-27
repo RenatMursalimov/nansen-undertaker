@@ -2186,9 +2186,12 @@ function show(which) {
     document.getElementById(TABS[i][1]).style.display = on ? '' : 'none';
   }
   if (FEED.timer) { clearInterval(FEED.timer); FEED.timer = null; }
-  if (which === 't_feed' && !REHEARSAL) {
+  /* В РЕПЕТИЦИИ ТАБ ТОЖЕ ЗОВЁТ `feedLoad`, НО БЕЗ ТАЙМЕРА: там он рисует объяснение, почему
+     живого потока нет. Раньше условие `!REHEARSAL` стояло здесь, и объяснение не рисовалось
+     никогда - судья видел пустой таб (аудит 27.09, D4). */
+  if (which === 't_feed') {
     feedLoad();
-    FEED.timer = setInterval(feedLoad, 1000);   /* раз в секунду, как просит ТЗ */
+    if (!REHEARSAL) FEED.timer = setInterval(feedLoad, 1000);   /* раз в секунду, как просит ТЗ */
   }
   if (which === 't_liq' && !LIQ.env && !LIQ.busy) liqLoad();
   /* ОБА ЭКРАНА ТАБА «ЕЩЁ» СТОЯТ ПО ОДНОМУ ЗАПРОСУ, поэтому грузятся сами и ровно один раз:
