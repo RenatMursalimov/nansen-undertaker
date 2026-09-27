@@ -11,7 +11,7 @@ reading it.
 | `.github/workflows/tests.yml` | `2a6e3eb9b0193aa0` | extract-only, this file does not exist in the bot |
 | `.gitignore` | `62e03de43434737b` | extract-only, this file does not exist in the bot |
 | `LICENSE` | `6bc57942e4f8d266` | extract-only, this file does not exist in the bot |
-| `README.md` | `7ddb6d1f45a8d7f2` | extract-only, this file does not exist in the bot |
+| `README.md` | `05e0a6be76c4ac6a` | extract-only, this file does not exist in the bot |
 | `alert_log.py` | `1ac751d2999a3368` | byte-for-byte from the bot |
 | `assets/social-preview.png` | `2e02bc4b7b3180d0` | extract-only, this file does not exist in the bot |
 | `bip39_en.txt` | `2f5eed53a4727b4b` | byte-for-byte from the bot |
@@ -27,6 +27,7 @@ reading it.
 | `docs/CATALOG_ru.md` | `8fe31b62eb2fc78f` | from the bot, private paths/services substituted (see below) |
 | `docs/DEMO_SCRIPT.md` | `1aeb7dffe6ba17d8` | from the bot, private paths/services substituted (see below) |
 | `docs/ENDPOINT_SWEEP.md` | `22a63ba29ec94bfc` | from the bot, private paths/services substituted (see below) |
+| `docs/FULL_GUIDE.md` | `9ffce41f908f5079` | byte-for-byte from the bot |
 | `docs/JUDGE.md` | `30326535aeb71804` | from the bot, private paths/services substituted (see below) |
 | `docs/MINIAPP_DECISIONS.md` | `c21d902a9bd96bec` | from the bot, private paths/services substituted (see below) |
 | `docs/POST_SENTINEL_X_ru.md` | `05e4f221f42bdefe` | from the bot, private paths/services substituted (see below) |
@@ -66,7 +67,7 @@ reading it.
 | `onchain/oc_perps.py` | `c7eed1e3b68d59e6` | byte-for-byte from the bot |
 | `proofs/sentinel_live_proof.py` | `e91faa9e69eb9fb2` | byte-for-byte from the bot |
 | `requirements.txt` | `56dbb14aff00e3cd` | extract-only, this file does not exist in the bot |
-| `scrub.py` | `b352edc004327163` | extract-only, this file does not exist in the bot |
+| `scrub.py` | `d1e3f182a250ee02` | extract-only, this file does not exist in the bot |
 | `sentinel/__init__.py` | `45318e500abc283f` | byte-for-byte from the bot |
 | `sentinel/assets.py` | `8cdfa7dca1e5af34` | byte-for-byte from the bot |
 | `sentinel/cards.py` | `c85ef789b32398d8` | byte-for-byte from the bot |

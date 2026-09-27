@@ -77,6 +77,8 @@ production: [`docs/MINIAPP_DECISIONS.md`](docs/MINIAPP_DECISIONS.md).
 - Ready X thread: [`docs/X_THREAD.md`](docs/X_THREAD.md)
 - User guide, every Nansen screen by taps and by command, with its limit and cost:
   [`docs/ARTICLE_USER_GUIDE.md`](docs/ARTICLE_USER_GUIDE.md)
+- The full guide as published on X on 27.09 (verbatim; current numbers are in the catalog):
+  [`docs/FULL_GUIDE.md`](docs/FULL_GUIDE.md)
 - Technical guide, Nansen routes, fields and the traps we measured:
   [`docs/ARTICLE_TECH_GUIDE.md`](docs/ARTICLE_TECH_GUIDE.md)
 - Sentinel thread with a frame list (Russian, EN tweets inside):
