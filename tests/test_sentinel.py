@@ -1099,6 +1099,32 @@ def t_live_proof_runs_from_either_layout_and_counts_venues():
           got.get('variational') == 3 and got.get('hyperliquid') == 2, got)
     check('PROOF: отказ площадки назван словами, а не нулём (закон №22)',
           isinstance(got.get('lighter'), str) and 'нет сети' in got['lighter'], got)
+def t_english_commands_parse_through_the_bots_registry():
+    """АНГЛИЙСКИЕ КОМАНДЫ ИЗ ГАЙДА РАЗБИРАЮТСЯ САМИМ `parse` (аудит 27.09, A2).
+
+    ЗУБЫ: гайд и HELP_EN обещали `sentinel BTC`, `sentinel report`, а `ui.parse('sentinel')`
+    возвращал None: английский переписывал только `_route` бота. В публичной выжимке `_route`
+    нет, и в ончейн-режиме бота фраза приходила в `parse` раньше `_route` («Не понял команду»).
+    Сверяем с РУССКИМ двойником, а не с ожидаемым кортежем: правило одно (реестр
+    `en_triggers`), и тест не держит его вторую копию (закон №40)."""
+    from sentinel import ui
+    pairs = [('sentinel', 'дозор'), ('sentinel BTC', 'дозор btc'), ('watch ETH', 'дозор eth'),
+             ('sentinel all', 'дозор всё'), ('sentinel remove BTC', 'дозор убрать BTC'),
+             ('sentinel off', 'дозор алерты выкл'), ('sentinel on', 'дозор алерты вкл'),
+             ('sentinel threshold 5', 'дозор порог 5'), ('sentinel quiet 22 8', 'дозор тихо 22 8'),
+             ('sentinel quiet off', 'дозор тихо выкл'), ('sentinel report', 'дозор отчёт'),
+             ('Sentinel Report', 'дозор отчёт')]
+    for en, ru in pairs:
+        got, want = ui.parse(en), ui.parse(ru)
+        check('EN: %r разобран как %r' % (en, ru), got is not None and got == want, (got, want))
+    check('EN: `sentinel off` - выключатель, а не инструмент OFF',
+          ui.parse('sentinel off') == ('alerts', {'on': False}), ui.parse('sentinel off'))
+    check('EN: слово не в голове команды - не команда (закон №11)',
+          ui.parse('my sentinel is great') is None and ui.parse('please sentinel BTC') is None,
+          (ui.parse('my sentinel is great'), ui.parse('please sentinel BTC')))
+    check('EN: материал после первой строки не читается (закон №6)',
+          ui.parse('sentinel\nsentinel remove BTC') == ('status', {}),
+          ui.parse('sentinel\nsentinel remove BTC'))
 
 
 def t_no_import_of_the_trading_contour():
@@ -5120,6 +5146,7 @@ def main():
                t_lease_keeps_one_poller,
                t_rings_and_outcome_are_measured_not_told,
                t_commands_are_parsed_exactly_and_refuse_with_words,
+               t_english_commands_parse_through_the_bots_registry,
                t_no_import_of_the_trading_contour,
                t_live_proof_runs_from_either_layout_and_counts_venues,
                t_engine_tick_never_throws_and_always_says_something,
