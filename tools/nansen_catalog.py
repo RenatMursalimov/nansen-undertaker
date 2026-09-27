@@ -137,9 +137,11 @@ SCENARIOS = [
              'The list tells you who is in. The map tells you where the market moves fast.'},
     {'id': 'walletperps', 'title': '🩺 Счёт кошелька на перпах и запас до ликвидации',
      'cmds': ['нансен перпы 0x…'], 'btns': ['🧠 Nansen → ⚔️ Чужое плечо → 🩺 Счёт на перпах'],
-     'eps': ['profiler/perp-positions'], 'scene': 'wallet_perps', 'menu': 'nsn_wperps',
-     'price': 'цена не названа в официальном списке',
-     'gives': 'капитал, сколько под залогом, нереализованный PnL, здоровье счёта и позиции',
+     'eps': ['profiler/perp-positions', 'profiler/perp-pnl-summary'], 'scene': 'wallet_perps',
+     'menu': 'nsn_wperps',
+     'price': 'цена позиций не названа в официальном списке; плюс сводка за 30 дней, 1 кредит',
+     'gives': ('капитал, сколько под залогом, нереализованный PnL, здоровье счёта и позиции; '
+               'за 30 дней: реализованный PnL, win rate, закрытые сделки, комиссии, лучшие монеты'),
      'why': 'главный вопрос про кита с плечом - не «что он держит», а «сколько ему осталось»',
      'hook': 'How much room a leveraged whale has left before liquidation.'},
     # ── ТОКЕН ─────────────────────────────────────────────────────────────────
@@ -489,8 +491,10 @@ _EN = {
                       'the market moves fast"; it is not a line but a distribution'},
     'walletperps': {'cmds': ['nansen perp 0x…'], 'btns': ['🧠 Nansen → ⚔️ Leverage → 🩺 Wallet perp account'],
                     'title': "🩺 A wallet's perp account and room to liquidation",
-                    'price': 'price not named in the official list',
-                    'gives': 'capital, how much is collateralized, unrealized PnL, account '
+                    'price': ('positions: price not named in the official list; plus the '
+                              '30-day summary, 1 credit'),
+                    'gives': '30 days of realized PnL, win rate, closed trades, fees and top '
+                             'coins, plus capital, how much is collateralized, unrealized PnL, account '
                              'health and positions',
                     'why': 'the main question about a leveraged whale is not "what do they hold" '
                            'but "how much room is left"'},

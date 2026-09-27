@@ -157,6 +157,7 @@ _EP_EST = {
     'smart-money/holdings': 3,                     # в overview числа нет, докстринг «1-5»
     # ЦЕНА ИЗ ЗАГОЛОВКА `x-credit-cost` ДОКУМЕНТА openapi (проба 27.09, probe_new.py): там она
     # названа площадкой для этой ручки, а живой вызов списал ровно столько же.
+    'profiler/perp-pnl-summary': 1,
     'profiler/address/first-funder': 1,
 }
 

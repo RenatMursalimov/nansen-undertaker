@@ -320,9 +320,8 @@ def c_wallet_perps(argv):
     if not argv:
         return _need('wallet-perps <адрес>', 'wallet-perps %s' % BUILDER)
     with T.scene('wallet_perps'):
-        d = N.profiler_perp_positions(argv[0])
-        _why = None if d else N.fail_reason('empty')
-    _say(N.wallet_perp_block(d, argv[0], LANG) if d else None,
+        _txt, _why = N.wallet_perp_block_ex(argv[0], LANG)
+    _say(_txt,
          _w('позиций этого адреса на перпах', 'perp positions of this address'), _why)
     return 0
 
