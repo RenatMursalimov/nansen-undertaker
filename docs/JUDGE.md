@@ -39,7 +39,7 @@ sequence is dominated by `git clone`. What you should see, top to bottom:
    for three different actions, and a person reading a phone should not have to open a server log to
    tell them apart.
 
-`?rehearsal=1` reads `fixtures/*.json`. Those files carry `"provenance": "synthetic"`: the shape is
+`?rehearsal=1` reads `webapp/fixtures/*.json`, next to the page. Those files carry `"provenance": "synthetic"`: the shape is
 real (it comes from the production formatters), the numbers are invented. That is stated in the file
 and printed on the banner, because “recorded” and “invented” are different claims.
 

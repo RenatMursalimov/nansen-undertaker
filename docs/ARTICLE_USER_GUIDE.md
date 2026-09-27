@@ -30,8 +30,6 @@ money)**. All three open the same screen with five sections:
 * 🔎 A wallet and a token
 * 🌐 Chains and my tally
 
-<!-- dm_module.py: MENU_ROW2_TEMP ('menu.nansen') -> oc_menu.nansen_root; Trends: callback ocm:nav:nsn (trends.hub_btns 'smart'); Onchain: btn_nansen -> ocm:nav:nsn (oc_menu.handle_callback) -->
-
 **Three kinds of buttons.** Worth knowing, so you do not decide a button "does nothing":
 
 1. a section button opens the next menu;
@@ -66,8 +64,6 @@ different stories, a one-off entry versus steady accumulation.
 **Limit:** net only. Inflow and outflow separately exist in the client (`tgm_flows`) but have no
 screen yet.
 
-<!-- oc_menu.py: ocm:nav:nsm -> ocm:nav:sm -> ocm:sm:<window> (oc_menu.handle_callback, nansen_api.sm_netflow_block) | words: onchain/oc_dm.py:2241 -->
-
 ### 🔥 Screener: 24h inflow
 
 Answers: which tokens are trending today by smart money inflow specifically.
@@ -78,8 +74,6 @@ Answers: which tokens are trending today by smart money inflow specifically.
 **FRAME:** the screener, first rows with tickers.
 **Limit:** a different source than "Smart flows" (the token screener, not netflow), so the numbers
 on the two screens need not match.
-
-<!-- oc_menu.py: trends:sec:smart -> dm_module.handle_trends_callback (section 'smart') -->
 
 ### 💼 What smart money holds
 
@@ -94,8 +88,6 @@ position.
 **Limit:** a snapshot of the position, not a history: how the portfolio changed over time is not
 on this screen.
 
-<!-- oc_menu.py: ocm:run:nsn_holdings -> _RUN "смарт холдинги" -> onchain/oc_dm.py:2191 -->
-
 ### 🧠 Smart money trades now
 
 Answers: who exactly went into what over the last day.
@@ -109,8 +101,6 @@ a $50B token it is noise.
 **Limit:** perp trades are not on this screen; that feed is read only by Sentinel (the 🐋 Smart
 Perp event, section 6).
 
-<!-- oc_menu.py: ocm:run:nsn_trades -> _RUN "смарт сделки" -> onchain/oc_dm.py:2515 -->
-
 ### 🧊 Buying on a schedule (DCA)
 
 Answers: who is building a position in parts, that is, intends to keep buying.
@@ -121,8 +111,6 @@ Answers: who is building a position in parts, that is, intends to keep buying.
 spent. A single $2M trade and a $2M program say different things about intent.
 **FRAME:** 2–3 programs with the spent share visible.
 **Limit:** only programs Nansen classes as smart money.
-
-<!-- oc_menu.py: ocm:run:nsn_dca -> _RUN "dca" -> onchain/oc_dm.py:2540 -->
 
 ### 🧊 Jupiter DCA by token
 
@@ -136,8 +124,6 @@ command with an example (the JUP mint); put your mint in and send it.
 **Limit:** Solana only. Jupiter is a Solana aggregator; an EVM address is cut off before the
 request and the bot says why. Native SOL is not supported by this route.
 
-<!-- oc_menu.py: ocm:hint:nsn_jupdca -> onchain/oc_dm.py:2600 -->
-
 ### 🌐 Chain ranking
 
 Answers: where to look today at the chain level, before the token level.
@@ -147,8 +133,6 @@ Answers: where to look today at the chain level, before the token level.
 **On screen:** chains by TVL with the daily change, DEX volume and active addresses.
 **FRAME:** the chain table with TVL and change.
 **Limit:** the general picture of a chain; this screen says nothing about smart money.
-
-<!-- oc_menu.py: ocm:run:nsn_chains -> _RUN "рейтинг сетей" -> onchain/oc_dm.py:2676 -->
 
 ---
 
@@ -168,8 +152,6 @@ buttons: 📊 Flows chart, 🔄 Who bought, ⚖️ Who is positioned.
 **Limit:** this is not a contract safety check; there is no "check before buying" scenario on
 Nansen data, only the Score comes from Nansen here.
 
-<!-- oc_menu.py: ocm:hint:nsn_token -> onchain/oc_dm.py:2091 | 🧠 on the token card: hs:nsn (onchain/hub_scanner.py, oc_callbacks.handle_onchain_callback) -->
-
 ### 🔄 Who bought and who sold
 
 Answers: who is behind the move, is it inflow or a hand-off.
@@ -184,8 +166,6 @@ Smart Money label next to a volume says more than the price does.
 **Limit:** the chain is detected by fact, not by the look of the address: the same `0x…` exists on
 several chains (USDC with this address lives on Base). The window is in days, not hours.
 
-<!-- oc_menu.py: ocm:hint:nsn_wbs -> onchain/oc_dm.py:2352 | button under the breakdown: hs:wbs (oc_callbacks.handle_onchain_callback) -->
-
 ### 🪪 Token information
 
 Answers: how big is this token.
@@ -195,8 +175,6 @@ Answers: how big is this token.
 **On screen:** market cap, volume, liquidity and holder count in one answer.
 **FRAME:** the information for USDC on Base.
 **Limit:** size numbers, no "good or bad" verdict.
-
-<!-- oc_menu.py: ocm:hint:nsn_tinfo -> onchain/oc_dm.py:2367 -->
 
 ### 📊 Flows chart
 
@@ -210,8 +188,6 @@ wallets. Green accumulates, red dumps. Easy to drop into a chat instead of three
 **FRAME:** the chart itself for USDC on Base.
 **Limit:** with no data there is no picture, you get a text with the reason: six zero bars would
 look like a measurement.
-
-<!-- oc_menu.py: ocm:hint:nsn_flowpng -> onchain/oc_dm.py:2731 | button under the breakdown: hs:nflow -->
 
 ---
 
@@ -228,8 +204,6 @@ Answers: whom to watch on perps.
 frames.
 **Limit:** past PnL promises nothing; this is a list to watch, not to copy.
 
-<!-- oc_menu.py: ocm:run:nsn_perps -> _RUN "топ перпы" -> onchain/oc_dm.py:2164 -->
-
 ### 💥 Leveraged positions and the liquidation price
 
 Answers: who holds the token with leverage and at what price they get wiped out.
@@ -241,8 +215,6 @@ example `perp positions BTC`. Or on the exchange card (opened with `chart BTC`) 
 Under the answer, a 🗺 Liquidation map button.
 **FRAME:** BTC positions with the liquidation column visible.
 **Limit:** Hyperliquid perps; positions on other venues are not here.
-
-<!-- oc_menu.py: ocm:hint:nsn_perppos -> onchain/oc_dm.py:2474 | exchange card button: cx:perp (onchain/oc_major.py, oc_callbacks.handle_cex_callback) -->
 
 ### 🗺 Liquidation map
 
@@ -258,8 +230,6 @@ for example "$22.5M between $61.5K and $62.4K".
 **Limit:** these are other people's stops, **not a forecast**, and the caption says so in words.
 Positions without a liquidation price are not dropped silently; their count is in the caption.
 
-<!-- oc_menu.py: ocm:hint:nsn_liqmap -> onchain/oc_dm.py:2457 | button under positions: cx:liqmap (oc_callbacks.handle_cex_callback) -->
-
 ### ⚔️ Perp risk board
 
 Answers: which of the large tokens has its price closest to other people's liquidations.
@@ -272,8 +242,6 @@ cluster: distance in percent, the cluster's side, longs against shorts and how m
 wallets with a Nansen label.
 **FRAME:** the whole board, four rows.
 **Limit:** a fixed set of four tokens; for any other token use the liquidation map.
-
-<!-- oc_menu.py: ocm:run:nsn_board -> _RUN "борд риска" -> onchain/oc_dm.py:2724 | button under the map: cx:board -->
 
 ### ⚖️ Who is positioned on a token
 
@@ -289,8 +257,6 @@ longs against shorts and the net tilt with its sign.
 **Limit:** a total per segment; for who exactly and where their liquidation is, use "Leveraged
 positions".
 
-<!-- oc_menu.py: ocm:hint:nsn_posi -> onchain/oc_dm.py:2581 | button under the breakdown: hs:posi -->
-
 ### 🩺 Wallet perp account
 
 Answers: how much room a leveraged whale has before liquidation.
@@ -302,8 +268,6 @@ address in. Shorter: in "🏆 Top perp traders" tap a trader.
 prices.
 **FRAME:** the account of a trader from the top list.
 **Limit:** one wallet; for who else sits in the same token, use "Leveraged positions".
-
-<!-- oc_menu.py: ocm:hint:nsn_wperps -> onchain/oc_dm.py:2489 -->
 
 ---
 
@@ -320,8 +284,6 @@ with the start of its question: a tap opens the market card.
 **FRAME:** the list and the market buttons under it.
 **Limit:** a market price is a probability of what people believe, not what will happen.
 
-<!-- oc_menu.py: ocm:run:pm_markets -> _RUN "полимаркет рынки" -> onchain/oc_dm.py:2276 -->
-
 ### 🎲 Market card
 
 Answers: what is going on with this market and where to dig next.
@@ -333,8 +295,6 @@ Answers: what is going on with this market and where to dig next.
 **FRAME:** the market card with the four buttons.
 **Limit:** no market id to type, it is already inside the buttons; the command is for those who
 already have the id.
-
-<!-- market button: nsp:one (oc_callbacks.handle_nansen_pm_callback -> oc_dm.send_nansen_pm_card) | words: onchain/oc_dm.py:2744 -->
 
 ### 📈 Probability chart
 
@@ -348,8 +308,6 @@ from "more likely no". 45% after 20% and 45% after 70% are opposite stories.
 **FRAME:** the chart of a trending market.
 **Limit:** a chart of the past, not a forecast.
 
-<!-- button: nsp:ch (oc_callbacks.handle_nansen_pm_callback) | menu: ocm:hint:pm_chart | words: onchain/oc_dm.py:2752 -->
-
 ### 📖 Market orderbook
 
 Answers: what it costs to test this probability with money.
@@ -361,8 +319,6 @@ command with an example.
 an empty book and 45% on a deep one are different things.
 **FRAME:** the orderbook of a trending market.
 **Limit:** a snapshot at request time, not a live feed.
-
-<!-- button: nsp:ob | menu: ocm:hint:pm_book | words: onchain/oc_dm.py:2762 -->
 
 ### 🎭 Who holds the market and how they guessed before
 
@@ -379,8 +335,6 @@ were wrong more often".
 **Limit:** holders with no history count on neither side, and their number is stated. A past win
 rate promises nothing; the screen does not tell you to bet against the crowd.
 
-<!-- button: nsp:rep | menu: ocm:hint:pm_rep | words: onchain/oc_dm.py:2308 -->
-
 ### 🧾 Who is in the market and their PnL
 
 Answers: which holders are doing well in this particular market.
@@ -392,8 +346,6 @@ and their PnL sends a hint with this same path.
 **FRAME:** the holder list of a trending market.
 **Limit:** "Who holds" says how holders guessed in general; this screen says how it is going here.
 Together they answer "who is good at this" versus "who is up for now".
-
-<!-- button: nsp:pos | menu: ocm:hint:pm_posdetail | words: onchain/oc_dm.py:2566 -->
 
 ### 🏆 Market leaders
 
@@ -408,8 +360,6 @@ from the market card.
 menu hint says "market_id from the screener", but the market list no longer prints ids (see the end
 of this guide).
 
-<!-- oc_menu.py: ocm:hint:pm_leaders -> onchain/oc_dm.py:2318 -->
-
 ### 🎰 Polymarket trader profile
 
 Answers: how this wallet's previous bets ended.
@@ -421,8 +371,6 @@ different things: you can win more often and still lose money.
 **FRAME:** the profile of a holder taken from "Who holds".
 **Limit:** Polymarket only; for the rest of the address onchain use "Wallet profile".
 
-<!-- oc_menu.py: ocm:hint:pm_profile -> onchain/oc_dm.py:2284 -->
-
 ### 🎯 Where money is sharp
 
 Answers: in which of the hot markets the people on the other side are not random.
@@ -432,9 +380,7 @@ Answers: in which of the hot markets the people on the other side are not random
 **On screen:** four hot markets side by side: money of wallets with a 60%+ win rate against money
 of those below 40%, and the largest "sharp" holder.
 **FRAME:** all four markets on one screen.
-**Limit:** the heaviest screen of the section by request count: 13 per answer by default.
-
-<!-- oc_menu.py: ocm:run:nsn_sharp -> _RUN "острые деньги" -> onchain/oc_dm.py:2700 -->
+**Limit:** the heaviest screen of the section by request count: up to 17 per answer by default.
 
 ---
 
@@ -454,8 +400,6 @@ rather than calling the address "clean".
 the plain form is enough. The address's transaction history exists in the client but has no
 screen yet.
 
-<!-- oc_menu.py: ocm:hint:nsn_profile -> onchain/oc_dm.py:2154 | button under a bare address: acc:prof (oc_callbacks.handle_account_callback) -->
-
 ### 💼 Wallet portfolio
 
 Answers: what sits on this address.
@@ -466,8 +410,6 @@ account screen from another source).
 **On screen:** portfolio composition in dollars without spam tokens.
 **FRAME:** the portfolio of an address from the top list.
 **Limit:** debts are not subtracted here; that is the next screen.
-
-<!-- oc_menu.py: ocm:hint:nsn_bal -> onchain/oc_dm.py:2420 -->
 
 ### 💠 DeFi part of a wallet
 
@@ -481,8 +423,6 @@ wallet with no debt and a $2M wallet with $1.7M of debt look the same as a token
 **FRAME:** an address with DeFi positions, the "assets minus debts" line visible.
 **Limit:** the DeFi part only; for tokens on the wallet use "Portfolio".
 
-<!-- oc_menu.py: ocm:hint:nsn_defi -> onchain/oc_dm.py:2651 -->
-
 ### 🤝 Wallet counterparties
 
 Answers: whom this address deals with most.
@@ -494,8 +434,6 @@ in.
 **FRAME:** the counterparties of an address from the top list.
 **Limit:** a fixed 30-day window.
 
-<!-- oc_menu.py: ocm:hint:nsn_cparty -> onchain/oc_dm.py:2392 -->
-
 ### 🧮 My contest tally
 
 Answers: how much I have asked Nansen through the bot.
@@ -505,8 +443,6 @@ Answers: how much I have asked Nansen through the bot.
 **On screen:** your calls, credits and rank; the leaderboard has no names and no IDs.
 **FRAME:** your own tally.
 **Limit:** the per-person breakdown with names (`нансен стата`) is visible to the bot owner only.
-
-<!-- oc_menu.py: ocm:run:nsn_tally -> _RUN "нансен зачёт" -> onchain/oc_dm.py:2772 | нансен стата: onchain/oc_dm.py:2781 -->
 
 ---
 
@@ -540,8 +476,6 @@ $250k+ within 30 minutes). The ticker in the card links to the instrument card.
 (`sentinel report`). Equities and funds outside their exchange session arrive only in the digest.
 Sentinel does not trade and does not advise: it says what happened and how unusual it is.
 
-<!-- oc_menu.py: sen_menu -> sen:home (sentinel/ui.handle_callback) from _nsm_kb and _alr_kb | words: sentinel/ui.parse, EN en_triggers.py sen_* | deep link: /start sen_<venue>_<TICKER> -> sentinel/ui.open_start -> ui.card_link | Market now: sen:now -> ui.now_text | Hit rate: sen:rep -> ui.report_text -->
-
 ---
 
 ## What it costs
@@ -559,14 +493,14 @@ requests** is given. All values come from [`CATALOG.md`](CATALOG.md).
 | 🏆 Top perp traders | 5 credits |
 | 💥 Leveraged positions | 5 credits |
 | 🗺 Liquidation map | 5 credits (the same request as positions) |
-| 🧠 Token breakdown | 4 requests, about 12 credits |
+| 🧠 Token breakdown | 4 requests, about 16 credits |
 | 🔄 Who bought and sold | 1 credit per side |
 | 🪪 Token information | 1 credit |
 | 📊 Flows chart | 1 credit |
 | 👤 Wallet profile | 3 requests; "deep" adds premium labels for 150 credits |
 | 🎰 Polymarket trader profile | 2 requests |
 | 🎭 Who holds the market | 6 requests |
-| 🎯 Where money is sharp | 1 + N + N×H requests (13 by default) |
+| 🎯 Where money is sharp | 1 + N + N×H requests (17 by default) |
 | ⚔️ Perp risk board | one request per token (4) |
 | 🧊 DCA, 🧊 Jupiter DCA, 🌐 Chain ranking, 💠 DeFi part, ⚖️ Who is positioned, 🧾 Who is in the market | 1 request |
 | 🎲 Market card | 0 requests when the market list is fresh (served from cache) |
@@ -597,14 +531,17 @@ cheaper and answers with numbers, not a retelling.
 
 ## ⚠️ Paths that need attention
 
-No path in this guide lacks a handler: each PATH has its callback or the command's parsing line
-named in the HTML comment next to it, and every command in the guide was run through the parser
-(`oc_dm.is_onchain_command` and the `oc_dm.handle_onchain` regexes; Sentinel commands through
-`sentinel/ui.parse` and `en_triggers.py`). Flagged separately: things that work but can confuse.
+No path in this guide lacks a handler: every PATH was traced to its callback or parsing line in
+the bot, and every command in the guide was run through the parser (`oc_dm.is_onchain_command` and
+the `oc_dm.handle_onchain` regexes; Sentinel commands through `sentinel/ui.parse` and
+`en_triggers.py`). The bot's router is private; the public repository carries the Nansen client,
+the formatters, Sentinel with its parser and `en_triggers.py`. Flagged separately: things that work
+but can confuse.
 
 1. **The "🏆 Market leaders" hint** (`ocm:hint:pm_leaders`) says "needs a market_id (from the
    screener)", but the market list no longer prints ids: they are on the market card. The command
-   handler exists (`onchain/oc_dm.py:2318`); only the hint text is stale.
+   handler exists (the `market leaders` branch of the router); only the hint
+   text is stale.
 2. **The bottom-menu "🧠 Nansen" button is temporary**, for the hackathon
    (`dm_module.MENU_ROW2_TEMP`). Afterwards the paths in this guide start with "🔥 Trends → 🧠
    Nansen" or "🔗 Onchain → 🧠 Nansen (smart money)", and everything after that is the same.

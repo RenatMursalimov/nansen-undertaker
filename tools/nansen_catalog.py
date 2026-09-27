@@ -35,6 +35,7 @@
 """
 
 import os
+import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -148,7 +149,7 @@ SCENARIOS = [
              'tgm/pnl-leaderboard'],
      'scene': 'token_check', 'menu': 'nsn_token',
      'where': ('dm', 'group_btn'), 'gcb': 'hs:nsn',
-     'price': '4 запроса, около 12 кредитов',
+     'price': '4 запроса, около 16 кредитов',
      'gives': 'нетто-потоки по сегментам холдеров, Nansen Score, метки топ-холдеров, топ по PnL',
      'why': 'один экран отвечает на «кто в этом токене» четырьмя разными способами',
      'hook': 'Four Nansen lenses on one token in a single tap: segment flows, Nansen Score, '
@@ -382,7 +383,7 @@ SCENARIOS = [
      'eps': ['prediction-market/market-screener', 'prediction-market/top-holders',
              'prediction-market/address-summary'],
      'scene': 'sharp_markets', 'menu': 'nsn_sharp',
-     'price': 'цена не названа в официальном списке · 1 + N + N×H запросов (по умолчанию 13)',
+     'price': 'цена не названа в официальном списке · 1 + N + N×H запросов (по умолчанию 17)',
      'gives': 'четыре разогретых рынка рядом: сколько денег у кошельков с винрейтом от 60% '
               'против денег тех, у кого ниже 40%, и кто крупнейший «острый» держатель',
      'why': 'разбор одного рынка не отвечает на вопрос выбора: из десяти разогретых нужен тот, '
@@ -493,7 +494,7 @@ _EN = {
                            'but "how much room is left"'},
     'tokencheck': {'cmds': ['passport 0x… deep'], 'btns': ['token/meme card → 🧠'],
                    'title': '🧠 Token breakdown: flows, Nansen Score, holder labels',
-                   'price': '4 requests, about 12 credits',
+                   'price': '4 requests, about 16 credits',
                    'gives': 'net flows by holder segment, Nansen Score, top-holder labels, top '
                             'by PnL',
                    'why': 'one screen answers "who is in this token" in four different ways'},
@@ -650,7 +651,7 @@ _EN = {
                      'btns': ['🧠 Nansen → 🎲 Polymarket → 🎯 Where money is sharp'],
                      'title': '🎯 Where the money on Polymarket is sharp (market comparison)',
                      'price': 'price not named in the official list · 1 + N + N×H requests '
-                              '(13 by default)',
+                              '(17 by default)',
                      'gives': 'four heated markets side by side: how much money sits with '
                               'wallets whose win rate is at or above 60% against the money of '
                               'those below 40%, plus the biggest sharp holder',
@@ -930,6 +931,43 @@ def _verify():
     _orphans = sorted(set(_EN) - {s['id'] for s in SCENARIOS})
     if _orphans:
         bad.append('в _EN есть перевод для несуществующих сценариев: %s' % ', '.join(_orphans))
+    bad += _verify_price_numbers()
+    return bad
+
+
+def _verify_price_numbers():
+    """ЧИСЛА В ЦЕНЕ ВЫВОДЯТСЯ ИЗ КОДА, А НЕ ПИШУТСЯ РУКАМИ (аудит 27.09, закон №52).
+
+    Строка цены редакторская, но два числа в ней знает код, и они разошлись молча: экран острых
+    денег стоил «13 запросов» при N=4 рынках и H=3 держателях (1 + 4 + 12 = 17), а разбор токена
+    «около 12 кредитов» при ценах своих четырёх ручек 1 + 5 + 5 + 5 = 16 по той же таблице,
+    по которой бот считает расход. Здесь оба числа пересчитываются из констант и сверяются с
+    текстом на обоих языках: константу поменяли, строку забыли - каталог красный."""
+    bad = []
+    import nansen_api as N
+    import nansen_log as T
+    by_id = {s['id']: s for s in SCENARIOS}
+    _sharp = 1 + N.SHARP_MARKETS_N + N.SHARP_MARKETS_N * N.SHARP_HOLDERS
+    _tc = by_id.get('tokencheck')
+    _cr = sum(T._EP_EST.get(e, 0) for e in (_tc or {}).get('eps', ()))
+    _unpriced = [e for e in (_tc or {}).get('eps', ()) if e not in T._EP_EST]
+    if _unpriced:
+        bad.append('tokencheck: у ручек %s нет цены в nansen_log._EP_EST' % _unpriced)
+    for lang in ('ru', 'en'):
+        if 'sharpmarkets' in by_id:
+            _p = _f(by_id['sharpmarkets'], 'price', lang)
+            # числа ПОСЛЕ формулы «1 + N + N×H»: это и есть значение по умолчанию
+            _got = [int(m) for m in re.findall(r'\d+', _p.split('N×H')[-1])]
+            if _got != [_sharp]:
+                bad.append('sharpmarkets[%s]: в цене %s, а код даёт 1 + %d + %d×%d = %d'
+                           % (lang, _got, N.SHARP_MARKETS_N, N.SHARP_MARKETS_N,
+                              N.SHARP_HOLDERS, _sharp))
+        if _tc:
+            _p = _f(_tc, 'price', lang)
+            _nums = [int(m) for m in re.findall(r'\d+', _p)]
+            if _nums != [len(_tc['eps']), _cr]:
+                bad.append('tokencheck[%s]: в цене %s, а код даёт %d ручки и %d кредитов'
+                           % (lang, _nums, len(_tc['eps']), _cr))
     return bad
 
 
