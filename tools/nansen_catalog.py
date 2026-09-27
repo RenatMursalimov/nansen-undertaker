@@ -325,6 +325,17 @@ SCENARIOS = [
             'уровне токена',
      'hook': 'Where to look today is a question about chains before it is a question about '
              'tokens: TVL, DEX volume and active addresses with their daily change.'},
+    {'id': 'smpnl', 'title': '🥇 Самые прибыльные смарт-мани: закрытое и открытое отдельно',
+     'cmds': ['самые прибыльные смарт-мани', 'most profitable smart money'],
+     'btns': ['🧠 Nansen → 🧠 Что делают умные деньги → 🥇 Самые прибыльные смарт-мани'],
+     'eps': ['smart-money/pnl-leaderboard'], 'scene': 'sm_pnl_leaders', 'menu': 'nsn_smpnl',
+     'price': '5 кредитов (напечатано на экране)',
+     'gives': 'адреса смарт-мани с наибольшим PnL за 7 дней: итог, реализованное и открытое '
+              'отдельно, win rate, число сделок, чем торговали; тап по адресу открывает досье',
+     'why': 'итог прячет, заработаны ли деньги: +$5.66M при реализованных -$40K - это ещё '
+            'открытые позиции, а не прибыль',
+     'hook': 'The most profitable smart money of the week, realized and open PnL apart, one tap '
+             'to the wallet dossier.'},
     {'id': 'scoretop', 'title': '🏆 Лучшие токены по Nansen Score: потенциал, риск, капитализация',
      'cmds': ['лучшие по score', 'top by nansen score'],
      'btns': ['🧠 Nansen → 🔎 Кошелёк и токен → 🏆 Лучшие по Nansen Score'],
@@ -619,6 +630,15 @@ _EN = {
                'gives': 'chains by TVL with their daily change, DEX volume and active addresses',
                'why': '"where to look today" is a question about chains before it is a question '
                       'about tokens'},
+    'smpnl': {'cmds': ['most profitable smart money'],
+              'btns': ['🧠 Nansen → 🧠 What smart money is doing → 🥇 Most profitable smart money'],
+              'title': '🥇 Most profitable smart money: realized and open apart',
+              'price': '5 credits (printed on the screen)',
+              'gives': 'smart money addresses with the highest PnL over 7 days: total, realized '
+                       'and open apart, win rate, trade count, what they traded; tap an address '
+                       'to open its dossier',
+              'why': 'a total hides whether the money is earned: +$5.66M with realized -$40K is '
+                     'still open positions, not profit'},
     'scoretop': {'cmds': ['top by nansen score'],
                  'btns': ['🧠 Nansen → 🔎 Wallet and token → 🏆 Top by Nansen Score'],
                  'title': '🏆 Top tokens by Nansen Score: potential, risk, market cap',
