@@ -11,7 +11,7 @@ reading it.
 | `.github/workflows/tests.yml` | `2a6e3eb9b0193aa0` | extract-only, this file does not exist in the bot |
 | `.gitignore` | `62e03de43434737b` | extract-only, this file does not exist in the bot |
 | `LICENSE` | `6bc57942e4f8d266` | extract-only, this file does not exist in the bot |
-| `README.md` | `05e0a6be76c4ac6a` | extract-only, this file does not exist in the bot |
+| `README.md` | `bdc414bee869c243` | extract-only, this file does not exist in the bot |
 | `alert_log.py` | `1ac751d2999a3368` | byte-for-byte from the bot |
 | `assets/social-preview.png` | `2e02bc4b7b3180d0` | extract-only, this file does not exist in the bot |
 | `bip39_en.txt` | `2f5eed53a4727b4b` | byte-for-byte from the bot |
@@ -26,7 +26,7 @@ reading it.
 | `docs/CATALOG.md` | `2aaf5823d18c12ba` | from the bot, private paths/services substituted (see below) |
 | `docs/CATALOG_ru.md` | `eb32910b293608c4` | from the bot, private paths/services substituted (see below) |
 | `docs/DEMO_SCRIPT.md` | `1aeb7dffe6ba17d8` | from the bot, private paths/services substituted (see below) |
-| `docs/ENDPOINT_SWEEP.md` | `22a63ba29ec94bfc` | from the bot, private paths/services substituted (see below) |
+| `docs/ENDPOINT_SWEEP.md` | `fdd6355dd4bbd263` | from the bot, private paths/services substituted (see below) |
 | `docs/FULL_GUIDE.md` | `9ffce41f908f5079` | byte-for-byte from the bot |
 | `docs/JUDGE.md` | `30326535aeb71804` | from the bot, private paths/services substituted (see below) |
 | `docs/MINIAPP_DECISIONS.md` | `c21d902a9bd96bec` | from the bot, private paths/services substituted (see below) |
