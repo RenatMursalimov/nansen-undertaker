@@ -689,8 +689,6 @@ _EP_HUMAN = {
     'profiler/address/premium-labels': ('премиум-метки', 'premium labels'),
     'profiler/address/pnl-summary': ('PnL и winrate', 'PnL and winrate'),
     'profiler/address/related-wallets': ('связанные кошельки', 'related wallets'),
-    'profiler/perp-positions': ('позиции на перпах', 'perp positions'),
-    'profiler/perp-pnl-summary': ('сводка PnL на перпах', 'perp PnL summary'),
     'profiler/address/first-funder': ('первый отправитель', 'first funder'),
     'profiler/address/counterparties': ('контрагенты', 'counterparties'),
     'profiler/address/current-balance': ('портфель', 'portfolio'),
