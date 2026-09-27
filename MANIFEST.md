@@ -22,7 +22,7 @@ reading it.
 | `docs/CATALOG_ru.md` | `9a91a2cbe9ce5e76` | from the bot, private paths/services substituted (see below) |
 | `docs/DEMO_SCRIPT.md` | `1aeb7dffe6ba17d8` | from the bot, private paths/services substituted (see below) |
 | `docs/ENDPOINT_SWEEP.md` | `22a63ba29ec94bfc` | from the bot, private paths/services substituted (see below) |
-| `docs/JUDGE.md` | `e5c94cb4cd1d1fd8` | from the bot, private paths/services substituted (see below) |
+| `docs/JUDGE.md` | `30326535aeb71804` | from the bot, private paths/services substituted (see below) |
 | `docs/MINIAPP_DECISIONS.md` | `c21d902a9bd96bec` | from the bot, private paths/services substituted (see below) |
 | `docs/PROJECT_STATUS.md` | `368a44d4317b5154` | from the bot, private paths/services substituted (see below) |
 | `docs/RECORDING_RUNBOOK.md` | `e4f15957855bc935` | from the bot, private paths/services substituted (see below) |
@@ -49,16 +49,7 @@ reading it.
 | `docs/wiki/Status.md` | `52a803345629f7d0` | from the bot, private paths/services substituted (see below) |
 | `docs/wiki/_Sidebar.md` | `bed3e53f7e03b897` | from the bot, private paths/services substituted (see below) |
 | `env_load.py` | `222f6df16beb597b` | extract-only, this file does not exist in the bot |
-| `fixtures/chain_rank.json` | `76d33829dd920b6e` | byte-for-byte from the bot |
-| `fixtures/liq_map.json` | `8dfaadea80282172` | byte-for-byte from the bot |
-| `fixtures/perp_risk.json` | `f142508bfd56fe3f` | byte-for-byte from the bot |
-| `fixtures/pm_markets.json` | `82c07bd76b090a6b` | byte-for-byte from the bot |
-| `fixtures/pm_positions.json` | `3e3c55bc6305ffa8` | byte-for-byte from the bot |
-| `fixtures/pm_reputation.json` | `421fa98973536e3d` | byte-for-byte from the bot |
 | `fixtures/sentinel_perp_context.json` | `a2512bb07b37c585` | byte-for-byte from the bot |
-| `fixtures/sharp_markets.json` | `2db415d3a9eb10b0` | byte-for-byte from the bot |
-| `fixtures/smart_dca.json` | `4d33b3805dcfd104` | byte-for-byte from the bot |
-| `fixtures/smart_trades.json` | `bd5f60c65c35ff9f` | byte-for-byte from the bot |
 | `nansen_api.py` | `298f45cf3087339d` | byte-for-byte from the bot |
 | `nansen_gate.py` | `27a5f5d2c7c44048` | byte-for-byte from the bot |
 | `nansen_limits.py` | `4ea08d0118f935e2` | byte-for-byte from the bot |
@@ -88,7 +79,7 @@ reading it.
 | `sentinel/venues.py` | `0cdd5f8c58e8f6f4` | byte-for-byte from the bot |
 | `tests/fixtures/variational_names_20260926.json` | `d640bbd349f2304b` | byte-for-byte from the bot |
 | `tests/guard_text.py` | `8dbb7014d7fd073c` | byte-for-byte from the bot |
-| `tests/test_public.py` | `ddf9488054d6d995` | extract-only, this file does not exist in the bot |
+| `tests/test_public.py` | `d4f96af2b469f304` | extract-only, this file does not exist in the bot |
 | `tests/test_sentinel.py` | `bca766271ad34ed4` | byte-for-byte from the bot |
 | `tools/nansen_catalog.py` | `0fb1984bc5b4dca2` | byte-for-byte from the bot |
 | `tools/nansen_daily.py` | `699fd28d7d76437d` | byte-for-byte from the bot |
@@ -101,7 +92,16 @@ reading it.
 | `tools/render_social_preview.py` | `ba595dc312016848` | byte-for-byte from the bot |
 | `tools/scene_text_baseline.py` | `9f14ec2789a6ce6f` | byte-for-byte from the bot |
 | `tools/sentinel_funding_unit.py` | `2f097f4dcb06b073` | byte-for-byte from the bot |
-| `webapp/index.html` | `e88905830a44b93b` | byte-for-byte from the bot |
+| `webapp/fixtures/chain_rank.json` | `76d33829dd920b6e` | byte-for-byte from the bot |
+| `webapp/fixtures/liq_map.json` | `8dfaadea80282172` | byte-for-byte from the bot |
+| `webapp/fixtures/perp_risk.json` | `f142508bfd56fe3f` | byte-for-byte from the bot |
+| `webapp/fixtures/pm_markets.json` | `82c07bd76b090a6b` | byte-for-byte from the bot |
+| `webapp/fixtures/pm_positions.json` | `3e3c55bc6305ffa8` | byte-for-byte from the bot |
+| `webapp/fixtures/pm_reputation.json` | `421fa98973536e3d` | byte-for-byte from the bot |
+| `webapp/fixtures/sharp_markets.json` | `2db415d3a9eb10b0` | byte-for-byte from the bot |
+| `webapp/fixtures/smart_dca.json` | `4d33b3805dcfd104` | byte-for-byte from the bot |
+| `webapp/fixtures/smart_trades.json` | `bd5f60c65c35ff9f` | byte-for-byte from the bot |
+| `webapp/index.html` | `489bdfcd8c477a27` | byte-for-byte from the bot |
 
 ## The one declared sanitary substitution
 
