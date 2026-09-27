@@ -24,6 +24,7 @@
 человеком - то есть он всегда отставал бы ровно на один инцидент.
 """
 
+import hashlib
 import os
 import re
 import sys
@@ -120,6 +121,41 @@ def addr_leaks(txt):
 #: декоратор стоит без скобок и поэтому не отсекается хвостовым `(?![\w.(])`.
 ALLOWED_HANDLES = {'@nansen_ai', '@property', '@staticmethod', '@classmethod', '@dataclass'}
 
+#: ИСКЛЮЧЕНИЕ ДЛЯ ОДНОГО ФАЙЛА, ТОЧНЫМИ СЛОВАМИ. `docs/FULL_GUIDE.md` - статья, уже
+#: опубликованная владельцем в X, положенная сюда байт-в-байт по его прямой просьбе (27.09). В ней
+#: имя бота и подпись автора: это его решение о своих данных, и текст статьи не правится.
+#: ПОЧЕМУ НЕ ОСЛАБЛЕНИЕ ПРАВИЛА: разрешены ровно эти слова и ровно в этом файле. В любом другом
+#: файле они по-прежнему останавливают проверку, и это сверяет тест в боте.
+#: ПОЧЕМУ ХЕШИ, А НЕ СЛОВА: этот файл публичный, и список имён в нём сам разглашал бы то, от чего
+#: сторож защищает (тот же довод, что у классов вместо чёрного списка в шапке файла). Хранится
+#: sha256 слова в нижнем регистре, первые 16 знаков.
+ALLOWED_IN_FILE = {
+    'docs/FULL_GUIDE.md': {'0129021c7e3ddbee', '333010e6184ec662'},
+}
+
+
+def handle_leaks(txt):
+    """@-ручки вне белого списка. -> [(позиция, ручка)]. Сборщик зовёт эту же функцию: до 27.09
+    ручку проверял только этот файл, и сборка выжимки её пропускала (закон №40)."""
+    return [(m.start(), m.group(0))
+            for m in re.finditer(r'(?<![\w/])@[A-Za-z][A-Za-z0-9_]{3,}(?![\w.(])', txt)
+            if m.group(0).lower() not in ALLOWED_HANDLES]
+
+
+def _h16(word):
+    return hashlib.sha256(word.lower().encode('utf-8')).hexdigest()[:16]
+
+
+def mask_allowed(rel, txt):
+    """Текст, в котором разрешённые для файла слова заменены пробелами той же длины.
+
+    Номера строк в отчёте не съезжают. Сборщик выжимки зовёт эту же функцию (одна дверь)."""
+    oks = ALLOWED_IN_FILE.get(rel.replace(os.sep, '/'))
+    if not oks:
+        return txt
+    return re.sub(r'@?\w+', lambda m: ' ' * len(m.group(0)) if _h16(m.group(0)) in oks
+                  else m.group(0), txt)
+
 #: IPv4 В ТЕКСТЕ - АДРЕС МАШИНЫ, та же раскладка сервера, что и путь внутри /root: замена
 #: каталога в строке `ssh root@<адрес> 'cd <каталог>'` машину не прячет, если адрес остался.
 #: Сборщик выжимки берёт ЭТО ЖЕ правило, а не копию: две копии одного правила расходятся всегда.
@@ -196,7 +232,7 @@ def main():
     for path in files():
         rel = os.path.relpath(path, HERE)
         try:
-            txt = open(path, encoding='utf-8', errors='replace').read()
+            txt = mask_allowed(rel, open(path, encoding='utf-8', errors='replace').read())
         except OSError as e:
             print('не прочитался %s: %s' % (rel, e))
             continue
@@ -211,10 +247,8 @@ def main():
                            % (rel, _line(txt, m.start()), m.group(0)))
         for pos, why, hit in addr_leaks(txt):
             bad.append('%s:%d %s -> %s' % (rel, _line(txt, pos), why, hit))
-        for m in re.finditer(r'(?<![\w/])@[A-Za-z][A-Za-z0-9_]{3,}(?![\w.(])', txt):
-            if m.group(0).lower() not in ALLOWED_HANDLES:
-                bad.append('%s:%d @-ручка не в белом списке -> %s'
-                           % (rel, _line(txt, m.start()), m.group(0)))
+        for pos, hit in handle_leaks(txt):
+            bad.append('%s:%d @-ручка не в белом списке -> %s' % (rel, _line(txt, pos), hit))
     # СКАНЕР МОГ ОСЛЕПНУТЬ, И «НАРУШЕНИЙ НЕТ» ВЫГЛЯДЕЛО БЫ ТАК ЖЕ. Поэтому сначала
     # утверждение о том, что файлы вообще читались.
     if seen_files < 10:
