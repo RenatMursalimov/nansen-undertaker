@@ -72,7 +72,7 @@ SCENES = (
     'pm_markets',              # список рынков
     'pm_chart',                # вероятность во времени
     'pm_orderbook',            # стакан
-    'token_resolve',           # тикер/имя -> адрес токена (search/general), до экрана
+    'pm_trades',               # последние сделки рынка, по тапу (trades-by-market)
     'pm_reputation',           # кто держит и как угадывал раньше
     'pm_wallet',               # профиль трейдера
     'pm_leaders',              # топ конкретного рынка
@@ -160,9 +160,9 @@ _EP_EST = {
     'token-screener': 1, 'tgm/flow-intelligence': 1,
     'tgm/who-bought-sold': 1, 'tgm/token-information': 1,
     'smart-money/holdings': 3,                     # в overview числа нет, докстринг «1-5»
-    # ЦЕНА ИЗМЕРЕНА И РАВНА НУЛЮ (проба 27.09: заголовок openapi {'free': 0, 'pro': 0} и живое
-    # списание 0). Запись здесь, а не отсутствие: отсутствие значит «не измерено».
-    'search/general': 0,
+    # ЦЕНА ИЗ ЗАГОЛОВКА `x-credit-cost` ДОКУМЕНТА openapi (проба 27.09, probe_new.py), и живой
+    # вызов списал ровно 1.
+    'prediction-market/trades-by-market': 1,
     # ЦЕНА ИЗ ЗАГОЛОВКА `x-credit-cost` ДОКУМЕНТА openapi (проба 27.09, probe_new.py): там она
     # названа площадкой для этой ручки, а живой вызов списал ровно столько же.
     'smart-money/pnl-leaderboard': 5,
