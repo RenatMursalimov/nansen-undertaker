@@ -689,6 +689,8 @@ _EP_HUMAN = {
     'profiler/address/premium-labels': ('премиум-метки', 'premium labels'),
     'profiler/address/pnl-summary': ('PnL и winrate', 'PnL and winrate'),
     'profiler/address/related-wallets': ('связанные кошельки', 'related wallets'),
+    'profiler/perp-positions': ('позиции на перпах', 'perp positions'),
+    'profiler/perp-pnl-summary': ('сводка PnL на перпах', 'perp PnL summary'),
     'profiler/address/first-funder': ('первый отправитель', 'first funder'),
     'profiler/address/counterparties': ('контрагенты', 'counterparties'),
     'profiler/address/current-balance': ('портфель', 'portfolio'),
@@ -3998,8 +4000,84 @@ def perp_positions_block(rows, token, lang='ru', bot_un=None):
 # ФОРМАТТЕР ВЕРНУЛСЯ ИЗ GIT ВМЕСТЕ СО СВОИМ ЭНДПОИНТОМ (проба путей 20.09 нашла его живым
 # по адресу `profiler/perp-positions`). Он никуда не пропадал - удалён был на день, и это
 # ровно то, зачем удалять честно: вернуть из истории дешевле, чем переписывать.
-def wallet_perp_block(d, address, lang='ru'):
+def profiler_perp_pnl_summary(address, days=30):
+    """Сводка закрытых сделок адреса на перпах Hyperliquid за окно. -> dict | None.
+
+    Проба 27.09 (`probe_new.py`): тело `address` и `date{from,to}` датами, `data` - ОБЪЕКТ:
+    `realized_pnl_usd`, `realized_pnl_percent`, `win_rate`, `closed_trade_count`,
+    `winning_trade_count`, `fees_usd`, `traded_coin_count`, `top5_coins[]` (у каждой `coin`,
+    `realized_pnl_usd`, `closed_trade_count`). Цена по заголовку openapi 1 кредит."""
+    _r = _date_range(days)
+    j = _post("profiler/perp-pnl-summary",
+              {"address": address, "date": {"from": _r["from"][:10], "to": _r["to"][:10]}},
+              ckey=f"ppnl:{address.lower()}:{days}")
+    if isinstance(j, dict) and isinstance(j.get('data'), dict):
+        return j['data']
+    return j if isinstance(j, dict) and 'closed_trade_count' in j else None
+
+
+def perp_pnl_line(s, lang='ru', days=30):
+    """Строка «что адрес закрыл на перпах за окно». -> str | None.
+
+    НОЛЬ СДЕЛОК - ЭТО СЛОВА, А НЕ «PnL $0» (закон №22): $0 читается как «торговал в ноль», а
+    на деле он не закрыл ни одной сделки, и это другой ответ на вопрос про кита."""
+    if not isinstance(s, dict):
+        return None
+    en = (lang == 'en')
+    try:
+        n = int(s.get('closed_trade_count'))
+    except (TypeError, ValueError):
+        return None
+    if n == 0:
+        return (('📊 %d days: no closed trades' % days) if en
+                else ('📊 За %d дней: нет закрытых сделок' % days))
+    seg = []
+    rp = _num_or_none(s.get('realized_pnl_usd'))
+    if rp is not None:
+        seg.append(('realized ' if en else 'реализ. ') + ('+$' if rp >= 0 else '-$')
+                   + _usd(abs(rp)))
+    wr = _num_or_none(s.get('win_rate'))
+    if wr is not None:
+        seg.append('win rate %.0f%%' % (wr * 100 if wr <= 1 else wr))
+    seg.append(('closed trades %d' if en else 'закрытых сделок %d') % n)
+    fee = _num_or_none(s.get('fees_usd'))
+    if fee is not None:
+        seg.append(('fees $%s' if en else 'комиссии $%s') % _usd(fee))
+    top = []
+    for c in (s.get('top5_coins') or [])[:3]:
+        if not isinstance(c, dict) or not c.get('coin'):
+            continue
+        cp = _num_or_none(c.get('realized_pnl_usd'))
+        top.append(('%s %s' % (c['coin'], ('+$' if cp >= 0 else '-$') + _usd(abs(cp))))
+                   if cp is not None else str(c['coin']))
+    line = (('📊 %d days: ' if en else '📊 За %d дней: ') % days) + ' · '.join(seg)
+    if top:
+        line += ('\n   top: ' if en else '\n   лучше всего: ') + ', '.join(top)
+    return line
+
+
+def wallet_perp_block_ex(address, lang='ru', days=30):
+    """Счёт на перпах И сводка за окно, одной дверью. -> (str|None, reason).
+
+    ОБА ЗАПРОСА В ОДНОМ ПОТОКЕ С ФОРМАТОМ, как у досье: «что не приехало» читает отказы
+    текущего потока, и сводка, запрошенная в другом месте, отказалась бы молча. Бот и
+    терминал зовут эту функцию, а не собирают экран каждый по-своему (закон №40)."""
+    if not _key():
+        return None, 'nokey'
+    _tele.clear()
+    d = profiler_perp_positions(address)
+    if not d:
+        return None, fail_reason('empty')
+    s = profiler_perp_pnl_summary(address, days)
+    return wallet_perp_block(d, address, lang, pnl=s, days=days,
+                             miss=missing_note(lang, total=2)), 'ok'
+
+
+def wallet_perp_block(d, address, lang='ru', pnl=None, days=30, miss=''):
     """Счёт кошелька на перпах: позиции, PnL и ЗАПАС ДО ЛИКВИДАЦИИ. -> str | None.
+
+    pnl: сводка закрытых сделок за `days` (`profiler_perp_pnl_summary`), печатается строкой
+    под итогом счёта. miss: готовая строка «что не приехало» от `wallet_perp_block_ex`.
 
     Запас до ликвидации - тот вопрос про кита с плечом, на который мы раньше не отвечали:
     позиции видели, а сколько ему осталось - нет."""
@@ -4009,6 +4087,9 @@ def wallet_perp_block(d, address, lang='ru'):
     short = '%s…%s' % (address[:6], address[-4:])
     L = [('🩺 <b>Счёт на перпах</b> <code>%s</code>' % short) if lang != 'en'
          else ('🩺 <b>Perp account</b> <code>%s</code>' % short)]
+    if miss:
+        L.append(miss)
+    _pl = perp_pnl_line(pnl, lang, days)
     # ИМЕНА ПОЛЕЙ - ИЗ ЖИВОГО ОТВЕТА (проба №5 27.09): `margin_summary_account_value_usd`,
     # `margin_summary_total_margin_used_usd`, `withdrawable_usd`; позиции - `asset_positions`,
     # у каждой вложенный `position` с `coin`, `szi` (знак = сторона), `leverage.value`,
@@ -4081,10 +4162,15 @@ def wallet_perp_block(d, address, lang='ru'):
                  'нет. Экран смотрит только Hyperliquid; счёт на другой площадке или за '
                  'агент-кошельком здесь не виден. Адрес с живым счётом: «🏆 Топ перп-трейдеры» '
                  '→ тап по трейдеру.')
+        # ПУСТОЙ СЕЙЧАС - НЕ ЗНАЧИТ «НЕ ТОРГОВАЛ»: сводка за окно отвечает про закрытое.
+        if _pl:
+            L.append(_pl)
         return with_source('\n'.join(L), lang)
     pos = _open
     if seg:
         L.append('📈 ' + ' · '.join(seg))
+    if _pl:
+        L.append(_pl)
     if health not in (None, ''):
         L.append(('🩺 здоровье счёта: %s' if lang != 'en' else '🩺 account health: %s') % health)
     for p in pos[:8]:
