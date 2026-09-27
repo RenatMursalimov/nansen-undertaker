@@ -10,7 +10,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 | Scenarios | Endpoints used | Telemetry scenes |
 |---|---|---|
-| 34: 32 user-facing on Nansen + 1 background + 1 local | 38 | 31 of 39 in registry |
+| 35: 33 user-facing on Nansen + 1 background + 1 local | 39 | 32 of 40 in registry |
 
 ## Three doors: where Nansen can be asked at all
 
@@ -54,6 +54,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [🔍 Free-form question to the Nansen agent](#agent) | — | exchange card → 🔍 Nansen<br>a question in DM or chat | 💬 👥🔘 👥🤖 | 200 credits (fast) or 750 (expert) — the MOST expensive path |
 | [🧊 Who buys on a schedule (smart money DCA)](#dca) | `dca` | 🧠 Nansen → 🧠 Smart money → 🧊 Buying on a schedule | 💬 | price not named in the official list · 1 request |
 | [🌐 Chain ranking: TVL, DEX volume, active addresses](#chains) | `chain rank` | 🧠 Nansen → 🌐 Chains and tally → 🌐 Chain ranking | 💬 | price not named in the official list · 1 request |
+| [🏆 Top tokens by Nansen Score: potential, risk, market cap](#scoretop) | `top by nansen score` | 🧠 Nansen → 🔎 Wallet and token → 🏆 Top by Nansen Score | 💬 | 1 credit |
 | [💠 The DeFi part of a wallet: assets MINUS debts](#defi) | `defi 0x…` | 🧠 Nansen → 🔎 Wallet and token → 💠 DeFi part | 💬 | price not named in the official list · 1 request |
 | [🧾 Who is in a Polymarket market, and their PnL](#pmpos) | `market positions 654412` | 🎲 Trending markets → the market → 🧾 Who is in it now<br>🧠 Nansen → 🎲 Polymarket → 🧾 Who is in the market and their PnL | 💬 | price not named in the official list · 1 request |
 | [🧊 Jupiter DCA by token (Solana)](#jupdca) | `jup dca <mint>` | 🧠 Nansen → 🧠 Smart money → 🧊 Jupiter DCA by token | 💬 | price not named in the official list · 1 request |
@@ -693,6 +694,30 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ---
 
+<a name="scoretop"></a>
+
+## 🏆 Top tokens by Nansen Score: potential, risk, market cap
+
+**Say to the bot:** `top by nansen score`
+**By button:** 🧠 Nansen → 🔎 Wallet and token → 🏆 Top by Nansen Score
+**Where:** in DM · **not in a group**: the word command is parsed only by the DM router
+
+**What you get:** the tokens with the highest Nansen Score, with risk and market cap next to it; tap a ticker to open the token card
+
+**Price:** 1 credit
+
+**Why:** a Score without risk misleads: the same potential at different risk is a different token, and market cap says how big the bet is
+
+**Endpoints:** `nansen-score/top-tokens`
+
+**Telemetry scene:** `score_top` — this screen's spend is counted under it.
+
+**For a tweet (EN):**
+
+> Nansen Score top list with risk and market cap next to it, one tap to the token card.
+
+---
+
 <a name="defi"></a>
 
 ## 💠 The DeFi part of a wallet: assets MINUS debts
@@ -887,7 +912,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 ## Client routes with no ordinary user scenario
 
-The catalog above has 34 workflows that use 38 unique API routes. The client contains **62** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
+The catalog above has 35 workflows that use 39 unique API routes. The client contains **63** routes in total; another 24 have no ordinary user door (some service/owner-only, some client groundwork).
 
 This is not a claim that all work end-to-end: having a client is not the same as a ready scenario. The list is broken out precisely so as not to pass API coverage off as user-available functionality.
 
