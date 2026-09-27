@@ -200,7 +200,9 @@ def registry():
                'status': 'active', 'pagination': _pg()}),
         _case('prediction-market/orderbook', {'market_id': MARKET}),
         _case('prediction-market/ohlcv', {'market_id': MARKET}),
-        _case('prediction-market/trades-by-market', {'market_id': MARKET, 'pagination': _pg()}),
+        # ЦЕНА ПО ПРОБЕ 27.09: 1 кредит (заголовок openapi и живое списание).
+        _case('prediction-market/trades-by-market', {'market_id': MARKET, 'pagination': _pg()},
+              estimate=1),
         _case('prediction-market/trades-by-address', {'address': WALLET, 'pagination': _pg()}),
         _case('prediction-market/top-holders',
               {'market_id': MARKET, 'pagination': _pg(),
