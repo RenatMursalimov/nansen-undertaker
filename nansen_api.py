@@ -3319,6 +3319,73 @@ def defi_block(d, address='', lang='ru', top=6):
     return with_source('\n'.join(L), lang)
 
 
+def nansen_score_top(limit=10, market_cap_group=None):
+    """ЛУЧШИЕ ТОКЕНЫ ПО NANSEN SCORE. -> [dict].
+
+    Проба 27.09 (`probe_new.py`): тело `limit` и необязательный `market_cap_group`, ответ -
+    `data[]` с `token_symbol`, `chain`, `token_address`, `performance_score`, `risk_score`,
+    компонентами обоих скоров, `market_cap`, `market_cap_group`. Цена по заголовку openapi
+    1 кредит."""
+    body = {"limit": int(limit)}
+    if market_cap_group:
+        body["market_cap_group"] = str(market_cap_group)
+    return _rows(_post("nansen-score/top-tokens", body,
+                       ckey=f"nstop:{int(limit)}:{market_cap_group or ''}"))
+
+
+def score_top_data(rows, top=10):
+    """ЧИСЛА ЭКРАНА «ЛУЧШИЕ ПО NANSEN SCORE», БЕЗ СЛОВ. -> dict | None.
+
+    ПОРЯДОК - ПО SCORE, ПРИ РАВЕНСТВЕ ПО МЕНЬШЕМУ РИСКУ. Площадка отдаёт строки уже упорядоченными,
+    но порядок - тоже число, и считать его обязано одно место, а не надежда на ответ."""
+    _all = [r for r in (rows or ()) if isinstance(r, dict)]
+    if not _all:
+        return None
+    _shape('score-top', _all[0])
+    _all.sort(key=lambda r: (-(_num_or_none(r.get('performance_score')) or 0),
+                             _num_or_none(r.get('risk_score')) or 0))
+    out = []
+    for i, r in enumerate(_all[:int(top)], 1):
+        out.append({'i': i, 'sym': str(r.get('token_symbol') or '?')[:16],
+                    'chain': str(r.get('chain') or '?')[:14],
+                    'addr': str(r.get('token_address') or ''),
+                    'score': _num_or_none(r.get('performance_score')),
+                    'risk': _num_or_none(r.get('risk_score')),
+                    'mcap': _num_or_none(r.get('market_cap'))})
+    return {'rows': out, 'shown': len(out), 'total': len(_all)}
+
+
+def score_top_block(rows, lang='ru', top=10, bot_un=None):
+    """Лучшие токены по Nansen Score - текстом. -> str | None.
+
+    SCORE И РИСК РЯДОМ, А НЕ ОДИН SCORE: высокий потенциал с высоким риском и тот же потенциал
+    с низким - разные токены, и по одному числу их не отличить. Капитализация - третьей: Score 75
+    у токена на $50M и на $5B читается по-разному.
+    bot_un: имя бота - тогда тикер ведёт на карточку токена в боте."""
+    d = rows if (isinstance(rows, dict) and 'rows' in rows) else score_top_data(rows, top)
+    if not d or not d.get('rows'):
+        return None
+    en = (lang == 'en')
+    L = [('🏆 <b>Top tokens by Nansen Score</b>' if en
+          else '🏆 <b>Лучшие токены по Nansen Score</b>'),
+         ('<i>Score is potential (higher is better), risk is risk (higher is worse); both are '
+          'Nansen\'s 0-100 scores.</i>' if en else
+          '<i>Score - потенциал (выше лучше), риск - риск (выше хуже); обе оценки Nansen, 0-100.</i>')]
+    for it in d['rows']:
+        seg = []
+        if it.get('score') is not None:
+            seg.append('Score %d' % it['score'])
+        if it.get('risk') is not None:
+            seg.append(('risk %d' if en else 'риск %d') % it['risk'])
+        if it.get('mcap') is not None:
+            seg.append(('mcap $%s' if en else 'капа $%s') % _usd(it['mcap']))
+        L.append('%d. %s [%s] · %s' % (it['i'], tok_link(_esc(it['sym']), it['addr'], bot_un),
+                                        _esc(it['chain']), ' · '.join(seg) or '?'))
+    if bot_un:
+        L.append(tap_hint(lang, 'token'))
+    return with_source('\n'.join(L), lang)
+
+
 def chain_rank(per_page=20):
     """РЕЙТИНГ СЕТЕЙ: TVL, объём DEX, выручка, активные адреса и их изменение. -> [dict].
 
