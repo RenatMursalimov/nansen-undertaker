@@ -160,9 +160,10 @@ def registry():
               {'token_symbol': 'BTC', 'date': _dr(7), 'pagination': _pg(),
                'order_by': [{'field': 'pnl_usd_total', 'direction': 'DESC'}]}),
 
-        # ПРОБА 27.09: тело как у официального CLI, цена 0 (заголовок и живое списание).
-        _case('search/general', {'search_query': 'pepe', 'result_type': 'token', 'limit': 5},
-              estimate=0),
+        # ПРОБА 27.09: цепи, окно в днях, пустые фильтры, пагинация - как у официального CLI.
+        _case('smart-money/pnl-leaderboard',
+              {'chains': ['ethereum', 'solana', 'base'], 'timeframe': 7, 'filters': {},
+               'pagination': _pg()}, estimate=5),
         # ПРОБА 27.09: тело как у официального CLI - `limit` и необязательный `market_cap_group`.
         _case('nansen-score/top-tokens', {'limit': 5}, estimate=1),
         _case('profiler/address/labels',
