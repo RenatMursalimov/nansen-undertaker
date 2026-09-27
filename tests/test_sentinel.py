@@ -4758,6 +4758,212 @@ def t_poller_watchdog_and_one_message_per_incident():
           and 'после рестарта' not in cards.card(ev_h[0]))
 
 
+def t_onchain_refusal_is_not_silence_d2_d4_d5():
+    """ОТКАЗ ПЛОЩАДКИ - НЕ ТИШИНА, НЕТТО ИЗ ОДНОЙ СТОРОНЫ НЕ СЧИТАЕТСЯ, А КРУПНЫЕ АДРЕСА НЕ
+    НАЗЫВАЮТСЯ СМАРТ-МАНИ (Д2, Д4, Д5; ревью 27.09).
+
+    Д2: провод отвечал на `tgm/who-bought-sold` 402 с документированным телом, а итог сводки был
+    «смарт-мани молчат: след за 3 ч пустой», в логе - класс `empty`: `confirm()` читал причину
+    ПОСЛЕ выхода из коробки вызова (`nansen_log.scene`), где её уже не было (тот же класс, что
+    исправлен в `sentinel/lab.py`).
+    Д4: BUY=200 и SELL=429 давали «подтверждают: нетто +$400.0k» - продажи не прочитаны, а нетто
+    подано как измерение.
+    Д5: в теле `tgm/who-bought-sold` фильтра меток нет - это крупные адреса, а не smart money;
+    пока имя фильтра не снято живой пробой, так и пишем.
+    ПОДМЕНЁН ТОЛЬКО ПРОВОД (закон №56): `httpx.post` (ответ Nansen), сопоставление тикера с
+    контрактом (DexScreener), X и Polymarket. `confirm`, клиент Nansen с его классами отказа,
+    коробка телеметрии, `build`, итог и карточка - боевые. Состояние клиента (кэш, схемы,
+    телеметрия, кредиты) уводится во временный каталог: тест не оставляет в дереве файлов,
+    которые скруббер выжимки справедливо назвал бы рантайм-состоянием.
+    """
+    import json as _json
+    import shutil as _sh
+    import httpx as _hx
+    import nansen_api as N
+    import nansen_log as NL
+    from sentinel import enrichment as en, ignition, predict
+    _tmp = tempfile.mkdtemp(prefix='sentinel_d2_')
+    _keep = (N._CACHE, N.SCHEMA_FILE, NL.TELE_DIR, NL.CREDITS_FILE,
+             os.environ.get('NANSEN_API_KEY'), getattr(_hx, 'post', None),
+             predict.lines, en._x_lines)
+    N._CACHE = os.path.join(_tmp, 'nansen_cache.json')
+    N.SCHEMA_FILE = os.path.join(_tmp, 'nansen_schema.json')
+    NL.TELE_DIR = os.path.join(_tmp, 'nansen_tele')
+    NL.CREDITS_FILE = os.path.join(_tmp, 'nansen_credits.json')
+    os.environ['NANSEN_API_KEY'] = 'test-placeholder-not-a-key'
+    # СОПОСТАВЛЕНИЕ ТИКЕРА С КОНТРАКТОМ - ПРОВОД DEXSCREENER. В публичной выжимке модуля нет
+    # вовсе, поэтому там он ставится пустым модулем ровно с этой одной функцией.
+    _op, _stub = sys.modules.get('oc_passport'), False
+    if _op is None:
+        try:
+            import oc_passport as _op
+        except Exception:                                  # noqa: BLE001
+            _op, _stub = types.ModuleType('oc_passport'), True
+            sys.modules['oc_passport'] = _op
+    _canon = getattr(_op, 'canonical_contract', None)
+
+    # СВОЙ КОНТРАКТ НА КАЖДЫЙ ТИКЕР: ключ кэша клиента несёт адрес, и общий адрес отдал бы
+    # следующему случаю прочитанные строки предыдущего.
+    async def _fake_canon(symbol, price, tol=None):
+        import hashlib as _hl
+        return ('0x' + _hl.sha1(symbol.encode()).hexdigest()[:40],
+                {'chain': 'base', 'symbol': symbol}, None)
+
+    async def _no_pm(*a, **k):
+        return [], None, 0
+
+    async def _no_x(*a, **k):
+        return [], None
+
+    MODE = {}
+
+    class _R(object):
+        def __init__(self, status, body):
+            self.status_code, self._b, self.headers = status, body, {}
+            self.text = _json.dumps(body)
+
+        def json(self):
+            return self._b
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        if url.split('/api/v1/', 1)[-1] == 'tgm/who-bought-sold':
+            side = (json or {}).get('buy_or_sell')
+            st = MODE[side]
+            if st == 200:
+                return _R(200, {'data': MODE.get(side + '_rows') or []})
+            if st == 429:
+                return _R(429, {'code': 'rate_limit_exceeded', 'message': 'slow down',
+                                'retry_after': 60})
+        return _R(402, {'code': 'insufficient_credits', 'message': 'no credits'})
+
+    _buy = {'address': '0x' + '1' * 40, 'address_label': 'Smart Trader',
+            'bought_volume_usd': 400000.0, 'sold_volume_usd': 0.0}
+    _sell = {'address': '0x' + '2' * 40, 'address_label': 'Whale',
+             'bought_volume_usd': 0.0, 'sold_volume_usd': 150000.0}
+
+    def _run(tick, buy, sell, buy_rows=None, sell_rows=None):
+        MODE.clear()
+        MODE.update({'BUY': buy, 'SELL': sell, 'BUY_rows': buy_rows, 'SELL_rows': sell_rows})
+        N._LAST_ERR.update({'path': None, 'text': ''})
+        ev = {'kind': 'move_up', 'ticker': tick,
+              'payload': {'venue': 'variational', 'mark': 1.23, 'volume_24h': 5.0e6,
+                          'asset_class': 'crypto', 'name': tick + ' Token'}}
+        b = asyncio.run(en.build(ev, uid=None))
+        return b, cards.enrich_card(ev, b, standalone=False)
+
+    _op.canonical_contract = _fake_canon
+    _hx.post = _fake_post
+    predict.lines, en._x_lines = _no_pm, _no_x
+    try:
+        # ── Д2: ОБЕ СТОРОНЫ 402 - это отказ оплаты, а не пустой след ──
+        b, card = _run('DTWOA', 402, 402)
+        v = '\n'.join(b.get('verdict') or [])
+        check('D2: 402 в итоге - «ончейн не прочитан» с причиной, а не «молчат»',
+              'не прочитан' in v and '402' in v and 'молчат' not in v, v)
+        check('D2: класс отказа доезжает до лога сводки, а не превращается в empty',
+              '402' in (b.get('refused') or '') and 'empty' not in (b.get('refused') or ''),
+              b.get('refused'))
+        check('D2: и человек в карточке видит то же', 'не прочитан' in card
+              and 'молчат' not in card, card)
+        # ── Д4: ПОКУПКИ ПРОЧИТАНЫ, ПРОДАЖИ 429 - нетто из одной стороны не измерение ──
+        b, card = _run('DTWOB', 200, 429, buy_rows=[_buy])
+        v = '\n'.join(b.get('verdict') or [])
+        body = '\n'.join(b.get('lines') or [])
+        check('D4: при отказе одной стороны нетто не считается и не печатается',
+              'нетто' not in body and 'нетто' not in v and 'нетто' not in card, (body, v))
+        check('D4: и список одной стороны не выдаётся за картину', 'Покупали' not in card, card)
+        check('D4: итог называет, какая сторона не прочитана и почему',
+              'не прочитан' in v and 'продажи' in v and '429' in v, v)
+        # ── ОБРАТНАЯ СТОРОНА (закон №51): обе стороны прочитаны - нетто есть; обе пусты -
+        #    это правда тишина, а не отказ ──
+        b, card = _run('DTWOC', 200, 200, buy_rows=[_buy], sell_rows=[_sell])
+        v = '\n'.join(b.get('verdict') or [])
+        check('D4: обе стороны прочитаны - нетто посчитано и названо',
+              'нетто' in card and 'подтверждают' in v and 'не прочитан' not in v, (card, v))
+        check('D5: у who-bought-sold без фильтра меток - «крупные адреса за 3 ч», не смарт-мани',
+              'крупные адреса за 3 ч' in v and 'смарт-мани' not in v, v)
+        b, card = _run('DTWOD', 200, 200)
+        v = '\n'.join(b.get('verdict') or [])
+        check('D2: пустой ответ 200 с обеих сторон - «молчат: след пустой», не отказ',
+              'молчат' in v and 'пустой' in v and 'не прочитан' not in v, v)
+        check('D5: и молчат тоже крупные адреса, а не смарт-мани',
+              'крупные адреса за 3 ч' in v and 'смарт-мани' not in v, v)
+        # ── Д5, ГРАНИЦА: зажигание и смарт-перп рождены лентами smart money - там слово верное ──
+        ign = {'kind': 'ignition', 'ticker': 'STONK', 'payload': {'usd': 156000}}
+        v = en.verdict_lines(ign, {'sm': ('source', 156000.0, 5.0), 'tweets': []}, {'nansen'})
+        check('D5: у зажигания «смарт-мани - это и есть событие» остаётся',
+              v and 'смарт-мани' in v[0] and 'это и есть событие' in v[0], v)
+    finally:
+        (N._CACHE, N.SCHEMA_FILE, NL.TELE_DIR, NL.CREDITS_FILE, _key, _post,
+         predict.lines, en._x_lines) = _keep
+        if _key is None:
+            os.environ.pop('NANSEN_API_KEY', None)
+        else:
+            os.environ['NANSEN_API_KEY'] = _key
+        if _post is None:
+            del _hx.post
+        else:
+            _hx.post = _post
+        if _stub:
+            # ЗАГЛУШКУ МОДУЛЯ СНИМАЕМ ЦЕЛИКОМ: следующий тест обязан увидеть «модуля нет», а не
+            # пустой модуль, который импортируется и ломается позже и в другом месте.
+            sys.modules.pop('oc_passport', None)
+        elif _canon is None:
+            delattr(_op, 'canonical_contract')
+        else:
+            _op.canonical_contract = _canon
+        _sh.rmtree(_tmp, ignore_errors=True)
+
+
+def t_hyperliquid_without_sides_has_no_skew_d3():
+    """У HYPERLIQUID СТОРОН ИНТЕРЕСА НЕТ - И ПЕРЕКОСА НЕТ, А НЕ «100% В ШОРТЫ» (Д3, ревью 27.09).
+
+    Площадка отдаёт открытый интерес одним числом (`oi_base`), без лонгов и шортов. `oi_skew`
+    делил на это число ноль и отдавал 0.0 - то есть «лонгов 0%»: карточка печатала «ОИ $2.1k,
+    лонгов 0%», а детектор рождал событие «толпа: 100% интереса в шорты» (вид `crowded` - в
+    видах по умолчанию и в пресете «Трейдер»). Шапка свойства обещала None «если сторон нет» -
+    код этого не делал (закон №52: правду, известную коду, проверяй на выходе).
+    ПОДМЕНЁН ТОЛЬКО ПРОВОД: ответ движка `oc_perps.hl_universe` (форма `onchain/oc_perps.py`).
+    `venues.hl_fetch`, `detector.detect` и `cards.card` - боевые.
+    """
+    from sentinel import variational_feed as vf
+    _fake = {'XYZ': {'mark': 2.10, 'oi_usd': 1000.0 * 2.10, 'vol24': 5.0e6, 'chg24': 0.0,
+                     'oi_base': 1000.0, 'funding': -0.0005, 'spread_bps': 3.0}}
+
+    async def _universe(dex=''):
+        return dict(_fake)
+    _keep = venues._oc_perps
+    venues._oc_perps = lambda: types.SimpleNamespace(hl_universe=_universe)
+    try:
+        rows, _meta = asyncio.run(venues.hl_fetch())
+    finally:
+        venues._oc_perps = _keep
+    L = rows[0]
+    check('D3: у Hyperliquid стороны пусты, интерес одним числом',
+          L.oi_long is None and L.oi_short is None and L.oi_total_raw == 1000.0, L)
+    check('D3: перекоса без сторон нет - None, а не 0.0', L.oi_skew is None, L.oi_skew)
+    check('D3: интерес в долларах при этом на месте', L.oi_usd and L.oi_usd > 0, L.oi_usd)
+    # КОЛЬЦО, НА КОТОРОМ ДЕТЕКТОР ДО ФИКСА РОДИЛ «ТОЛПУ»: 80 точек раз в 15 минут, фандинг всегда
+    # выше текущего - то есть текущая ставка в хвосте, и событию о толпе было из чего собраться.
+    now = 1_790_000_000
+    ring = []
+    for i in range(80, 0, -1):
+        ring.append((now - i * 900, 2.0 * (1.0 + (0.002 if i % 2 else -0.002)), 5.0e6, None,
+                     None, 0.0001 + (i % 5) * 0.00002, 3.0, None, 2100.0))
+    last = (now, L.mark, 5.0e6, None, None, L.funding_raw, 3.0, None, L.oi_usd)
+    hot = [r for r in ring if r[0] >= now - 3600] + [last]
+    evs = detector.detect(L, hot, now=now, ring=ring + [last])
+    check('D3: без сторон интереса события «толпа» нет',
+          not [e for e in evs if e['kind'] == 'crowded'], [e['kind'] for e in evs])
+    txt = '\n'.join(cards.card(e) for e in evs)
+    check('D3: и карточка не печатает «лонгов 0%»', 'лонгов' not in txt, txt)
+    # ОБРАТНАЯ СТОРОНА: у Variational стороны есть - перекос считается как раньше
+    V = vf.Listing(ticker='ABC', oi_long=600.0, oi_short=400.0)
+    check('D3: со сторонами перекос прежний (0.6)', V.oi_skew == 0.6, V.oi_skew)
+    check('D3: нулевой интерес со сторонами - тоже None',
+          vf.Listing(ticker='ABC', oi_long=0.0, oi_short=0.0).oi_skew is None)
+
+
 def main():
     for fn in (t_parse_is_real_and_names_what_is_missing,
                t_detector_needs_both_percent_and_sigma,
@@ -4848,7 +5054,10 @@ def main():
                #    имеет права молча сменить ВОПРОС ──
                t_repair_must_not_change_the_question,
                t_silence_names_the_cap_and_the_dead_poller,
-               t_bot_takes_over_a_dead_poller):
+               t_bot_takes_over_a_dead_poller,
+               # ── ревью 27.09: отказ площадки не тишина, стороны интереса не выдумываются ──
+               t_onchain_refusal_is_not_silence_d2_d4_d5,
+               t_hyperliquid_without_sides_has_no_skew_d3):
         print('\n== %s' % fn.__name__)
         try:
             fn()

@@ -11,7 +11,7 @@ reading it.
 | `.github/workflows/tests.yml` | `d020a3b5ca3ebe21` | extract-only, this file does not exist in the bot |
 | `.gitignore` | `62e03de43434737b` | extract-only, this file does not exist in the bot |
 | `LICENSE` | `6bc57942e4f8d266` | extract-only, this file does not exist in the bot |
-| `README.md` | `ab3d8cf7c71b30d6` | extract-only, this file does not exist in the bot |
+| `README.md` | `5ae479efa8196119` | extract-only, this file does not exist in the bot |
 | `alert_log.py` | `1ac751d2999a3368` | byte-for-byte from the bot |
 | `assets/social-preview.png` | `2e02bc4b7b3180d0` | extract-only, this file does not exist in the bot |
 | `bip39_en.txt` | `2f5eed53a4727b4b` | byte-for-byte from the bot |
@@ -24,10 +24,10 @@ reading it.
 | `docs/ENDPOINT_SWEEP.md` | `dcf160e67798f33f` | from the bot, private paths/services substituted (see below) |
 | `docs/JUDGE.md` | `e5c94cb4cd1d1fd8` | from the bot, private paths/services substituted (see below) |
 | `docs/MINIAPP_DECISIONS.md` | `c21d902a9bd96bec` | from the bot, private paths/services substituted (see below) |
-| `docs/PROJECT_STATUS.md` | `359abe24b5ba10f9` | from the bot, private paths/services substituted (see below) |
+| `docs/PROJECT_STATUS.md` | `94a9702cc33ef4cc` | from the bot, private paths/services substituted (see below) |
 | `docs/RECORDING_RUNBOOK.md` | `e4f15957855bc935` | from the bot, private paths/services substituted (see below) |
-| `docs/SENTINEL_SPEC.md` | `1be06bab8a4af23d` | from the bot, private paths/services substituted (see below) |
-| `docs/SENTINEL_SPEC_ru.md` | `fe242f92d5127e66` | from the bot, private paths/services substituted (see below) |
+| `docs/SENTINEL_SPEC.md` | `120e313e523dcc33` | from the bot, private paths/services substituted (see below) |
+| `docs/SENTINEL_SPEC_ru.md` | `97fdb3291843c65d` | from the bot, private paths/services substituted (see below) |
 | `docs/VIDEO.md` | `b090b36fa4aaed7a` | from the bot, private paths/services substituted (see below) |
 | `docs/VIDEO_SCRIPT.md` | `d92d574e3f55518d` | from the bot, private paths/services substituted (see below) |
 | `docs/WINNER_PLAN.md` | `b5285d8fce82c7d2` | from the bot, private paths/services substituted (see below) |
@@ -36,8 +36,8 @@ reading it.
 | `docs/proofs/LIVE_HERO_2026-09-20.md` | `4751606545e5d3c5` | from the bot, private paths/services substituted (see below) |
 | `docs/proofs/LIVE_MARKET_SELECTION_2026-09-20.md` | `5b366b993a727a33` | from the bot, private paths/services substituted (see below) |
 | `docs/proofs/MERIDIAN_CORPUS_2026-09-20.md` | `a5bc4f78fbc8c2a0` | from the bot, private paths/services substituted (see below) |
-| `docs/scenarios.md` | `1d1ccee53c7b83c0` | from the bot, private paths/services substituted (see below) |
-| `docs/scenarios_ru.md` | `79624fd01e5f6579` | from the bot, private paths/services substituted (see below) |
+| `docs/scenarios.md` | `43773a9d32b85e20` | from the bot, private paths/services substituted (see below) |
+| `docs/scenarios_ru.md` | `69dc50ebf7358e74` | from the bot, private paths/services substituted (see below) |
 | `docs/submission-checklist.md` | `81063c00ce1cc4ba` | from the bot, private paths/services substituted (see below) |
 | `docs/submission-checklist_ru.md` | `eace87c7f42bc24a` | from the bot, private paths/services substituted (see below) |
 | `docs/submission.md` | `d5e44a4aba63b562` | from the bot, private paths/services substituted (see below) |
@@ -76,20 +76,20 @@ reading it.
 | `sentinel/config.py` | `0a35a0ef71df6ed6` | byte-for-byte from the bot |
 | `sentinel/detector.py` | `a364b6c960f9f7b0` | byte-for-byte from the bot |
 | `sentinel/engine.py` | `ccb2373ca35b596f` | byte-for-byte from the bot |
-| `sentinel/enrichment.py` | `7f395d4216c97632` | byte-for-byte from the bot |
-| `sentinel/ignition.py` | `0a9d4e132a1894ff` | byte-for-byte from the bot |
+| `sentinel/enrichment.py` | `4d772242c846c4af` | byte-for-byte from the bot |
+| `sentinel/ignition.py` | `9dc860a2b79c4a09` | byte-for-byte from the bot |
 | `sentinel/lab.py` | `e0736135e36216e4` | byte-for-byte from the bot |
 | `sentinel/main.py` | `b11dd4e2cadc2a87` | byte-for-byte from the bot |
 | `sentinel/outbox.py` | `0a38706d86b0df96` | byte-for-byte from the bot |
 | `sentinel/predict.py` | `9d4808981b9dddb2` | byte-for-byte from the bot |
 | `sentinel/store.py` | `eef4bb551febb214` | byte-for-byte from the bot |
 | `sentinel/ui.py` | `2f056237d77ad878` | byte-for-byte from the bot |
-| `sentinel/variational_feed.py` | `814c924da26ef410` | byte-for-byte from the bot |
+| `sentinel/variational_feed.py` | `3b30b047de33a4c1` | byte-for-byte from the bot |
 | `sentinel/venues.py` | `0cdd5f8c58e8f6f4` | byte-for-byte from the bot |
 | `tests/fixtures/variational_names_20260926.json` | `d640bbd349f2304b` | byte-for-byte from the bot |
 | `tests/guard_text.py` | `8dbb7014d7fd073c` | byte-for-byte from the bot |
 | `tests/test_public.py` | `ddf9488054d6d995` | extract-only, this file does not exist in the bot |
-| `tests/test_sentinel.py` | `d192dc8d23b6f01a` | byte-for-byte from the bot |
+| `tests/test_sentinel.py` | `7602da02545df17b` | byte-for-byte from the bot |
 | `tools/nansen_catalog.py` | `0fb1984bc5b4dca2` | byte-for-byte from the bot |
 | `tools/nansen_daily.py` | `699fd28d7d76437d` | byte-for-byte from the bot |
 | `tools/nansen_endpoint_sweep.py` | `10511b78461c253c` | byte-for-byte from the bot |
