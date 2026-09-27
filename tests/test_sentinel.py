@@ -1057,6 +1057,32 @@ def t_commands_are_parsed_exactly_and_refuse_with_words():
           'НЕ торгует' in ui.HELP or 'НЕ советует' in ui.HELP)
 
 
+def t_english_commands_parse_through_the_bots_registry():
+    """АНГЛИЙСКИЕ КОМАНДЫ ИЗ ГАЙДА РАЗБИРАЮТСЯ САМИМ `parse` (аудит 27.09, A2).
+
+    ЗУБЫ: гайд и HELP_EN обещали `sentinel BTC`, `sentinel report`, а `ui.parse('sentinel')`
+    возвращал None: английский переписывал только `_route` бота. В публичной выжимке `_route`
+    нет, и в ончейн-режиме бота фраза приходила в `parse` раньше `_route` («Не понял команду»).
+    Сверяем с РУССКИМ двойником, а не с ожидаемым кортежем: правило одно (реестр
+    `en_triggers`), и тест не держит его вторую копию (закон №40)."""
+    from sentinel import ui
+    pairs = [('sentinel', 'дозор'), ('sentinel BTC', 'дозор btc'), ('watch ETH', 'дозор eth'),
+             ('sentinel all', 'дозор всё'), ('sentinel remove BTC', 'дозор убрать BTC'),
+             ('sentinel off', 'дозор алерты выкл'), ('sentinel on', 'дозор алерты вкл'),
+             ('sentinel threshold 5', 'дозор порог 5'), ('sentinel quiet 22 8', 'дозор тихо 22 8'),
+             ('sentinel quiet off', 'дозор тихо выкл'), ('sentinel report', 'дозор отчёт'),
+             ('Sentinel Report', 'дозор отчёт')]
+    for en, ru in pairs:
+        got, want = ui.parse(en), ui.parse(ru)
+        check('EN: %r разобран как %r' % (en, ru), got is not None and got == want, (got, want))
+    check('EN: `sentinel off` - выключатель, а не инструмент OFF',
+          ui.parse('sentinel off') == ('alerts', {'on': False}), ui.parse('sentinel off'))
+    check('EN: слово не в голове команды - не команда (закон №11)',
+          ui.parse('my sentinel is great') is None and ui.parse('please sentinel BTC') is None,
+          (ui.parse('my sentinel is great'), ui.parse('please sentinel BTC')))
+    check('EN: материал после первой строки не читается (закон №6)',
+          ui.parse('sentinel\nsentinel remove BTC') == ('status', {}),
+          ui.parse('sentinel\nsentinel remove BTC'))
 def t_live_proof_runs_from_either_layout_and_counts_venues():
     """ЖИВОЕ ДОКАЗАТЕЛЬСТВО ЗАПУСКАЕТСЯ И В БОТЕ, И В ВЫЖИМКЕ (аудит 27.09, A3, A6).
 
@@ -1099,32 +1125,6 @@ def t_live_proof_runs_from_either_layout_and_counts_venues():
           got.get('variational') == 3 and got.get('hyperliquid') == 2, got)
     check('PROOF: отказ площадки назван словами, а не нулём (закон №22)',
           isinstance(got.get('lighter'), str) and 'нет сети' in got['lighter'], got)
-def t_english_commands_parse_through_the_bots_registry():
-    """АНГЛИЙСКИЕ КОМАНДЫ ИЗ ГАЙДА РАЗБИРАЮТСЯ САМИМ `parse` (аудит 27.09, A2).
-
-    ЗУБЫ: гайд и HELP_EN обещали `sentinel BTC`, `sentinel report`, а `ui.parse('sentinel')`
-    возвращал None: английский переписывал только `_route` бота. В публичной выжимке `_route`
-    нет, и в ончейн-режиме бота фраза приходила в `parse` раньше `_route` («Не понял команду»).
-    Сверяем с РУССКИМ двойником, а не с ожидаемым кортежем: правило одно (реестр
-    `en_triggers`), и тест не держит его вторую копию (закон №40)."""
-    from sentinel import ui
-    pairs = [('sentinel', 'дозор'), ('sentinel BTC', 'дозор btc'), ('watch ETH', 'дозор eth'),
-             ('sentinel all', 'дозор всё'), ('sentinel remove BTC', 'дозор убрать BTC'),
-             ('sentinel off', 'дозор алерты выкл'), ('sentinel on', 'дозор алерты вкл'),
-             ('sentinel threshold 5', 'дозор порог 5'), ('sentinel quiet 22 8', 'дозор тихо 22 8'),
-             ('sentinel quiet off', 'дозор тихо выкл'), ('sentinel report', 'дозор отчёт'),
-             ('Sentinel Report', 'дозор отчёт')]
-    for en, ru in pairs:
-        got, want = ui.parse(en), ui.parse(ru)
-        check('EN: %r разобран как %r' % (en, ru), got is not None and got == want, (got, want))
-    check('EN: `sentinel off` - выключатель, а не инструмент OFF',
-          ui.parse('sentinel off') == ('alerts', {'on': False}), ui.parse('sentinel off'))
-    check('EN: слово не в голове команды - не команда (закон №11)',
-          ui.parse('my sentinel is great') is None and ui.parse('please sentinel BTC') is None,
-          (ui.parse('my sentinel is great'), ui.parse('please sentinel BTC')))
-    check('EN: материал после первой строки не читается (закон №6)',
-          ui.parse('sentinel\nsentinel remove BTC') == ('status', {}),
-          ui.parse('sentinel\nsentinel remove BTC'))
 
 
 def t_no_import_of_the_trading_contour():
@@ -2158,13 +2158,15 @@ def t_live_defects_after_1b():
           all('sm_perp' in p['kinds'] for p in store.PRESETS.values()),
           [p['kinds'] for p in store.PRESETS.values()])
     # ── 3. АДРЕС SOLANA НЕ ПРИВОДИТСЯ К НИЖНЕМУ РЕГИСТРУ ─────────────────────────────────
-    # Живой замер: `3uox8K7U…` как есть -> 10 связей, в нижнем регистре -> 422
+    # Живой замер: адрес как есть -> 10 связей, в нижнем регистре -> 422
     # invalid_address_format. base58 чувствителен к регистру; проверка связей по Solana не
-    # работала никогда и давала «связи не проверены: badreq».
-    sol = '3uox8K7U4NZoZCXKFYm1CpT1TX3etbHDtJNv1ggBSjpK'
+    # работала никогда и давала «связи не проверены: badreq». Адреса здесь - синтетические
+    # метки смешанного регистра: настоящие кошельки из живой ленты уезжали в публичный тест
+    # (аудит 27.09), а проверке нужен только регистр, не форма base58.
+    sol = 'SoLCaseWa11etOne'
     trs = [{'transaction_hash': '0xs%d' % i, 'token_bought_symbol': 'CASE',
             'token_bought_address': 'CaseMint111', 'chain': 'solana', 'trade_value_usd': 1000,
-            'trader_address': (sol if i == 0 else 'Bi8CtUDGiGz2Y9ptmTnoAcrvjaJiVak868bwV8Qrbxmi'),
+            'trader_address': (sol if i == 0 else 'SoLCaseWa11etTwo'),
             'block_timestamp': __import__('datetime').datetime.utcfromtimestamp(
                 now - 60).strftime('%Y-%m-%dT%H:%M:%SZ')} for i in range(2)]
     g = list(ignition.group(ignition.rows_from_feed(trs), now=now).values())[0]
@@ -2183,7 +2185,7 @@ def t_live_defects_after_1b():
     check('LIVE3: в Nansen уходит адрес как есть, а не в нижнем регистре',
           sol in seen and sol.lower() not in seen, seen)
     # ── 4. ТЕХНИЧЕСКИЕ МЕТКИ ЧЕЛОВЕКУ НЕ ПОКАЗЫВАЕМ ─────────────────────────────────────
-    for lb in ('Uses "LEGENDTRADE" HL Referral Code', 'wallet.poor', 'sh4dow.eth*',
+    for lb in ('Uses "LEGENDTRADE" HL Referral Code', 'wallet.poor', 'example.eth*',
                'Funded @abc On Friendtech'):   # короткая ручка: скруббер выжимки берёт 4+
         check('LIVE4: техническая метка скрыта: %s' % lb, N.meaningful_label(lb) == '')
     for lb in ('HL Perps Whale', 'Smart Trader', 'Fund', 'STONK Whale',

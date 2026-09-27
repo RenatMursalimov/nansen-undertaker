@@ -2054,7 +2054,7 @@ def schema_gap_note(row, what, lang='ru'):
 
 #: ТЕХНИЧЕСКИЕ МЕТКИ NANSEN: они описывают происхождение адреса, а не то, КТО это.
 #: Замер ленты 26.09 (500 сделок, dex + perp): «Uses "ZXY" HL Referral Code» - какой реферальный
-#: код вписан в аккаунт Hyperliquid; «wallet.poor», «malk.sol», «sh4dow.eth*» - доменные имена
+#: код вписан в аккаунт Hyperliquid; «wallet.poor», «<имя>.sol», «<имя>.eth*» - доменные имена
 #: кошелька; «Funded @X On Friendtech» - кто пополнил. Ни одно не отвечает на вопрос, ради
 #: которого метку и читают: это кит, смарт-трейдер, фонд? Смысловые при этом есть и частые:
 #: «HL Perps Whale» (97), «High Activity» (59), «High Balance» (44), «STONK Whale» (17),

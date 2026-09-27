@@ -43,7 +43,7 @@
   },
   {
    "address": "addr-03",
-   "address_label": "illenium.eth*",
+   "address_label": "example.eth*",
    "side": "Short",
    "position_value_usd": 1085681.32894,
    "position_size": -3108074.0,
@@ -169,7 +169,7 @@
   },
   {
    "address": "addr-12",
-   "address_label": "bergspyder.eth",
+   "address_label": "example.eth",
    "side": "Short",
    "position_value_usd": 502210.67182,
    "position_size": -1437722.0,
@@ -225,7 +225,7 @@
   },
   {
    "address": "addr-16",
-   "address_label": "wazzed.eth*",
+   "address_label": "example.eth*",
    "side": "Long",
    "position_value_usd": 349310.0,
    "position_size": 1000000.0,
@@ -596,5 +596,6 @@
    "fresh_wallets_wallet_count": 0
   }
  ],
- "_note": "Сняты живой пробой REST 26.09 (tgm/position-intelligence HYPE, tgm/perp-positions JUP, tgm/flow-intelligence JUP на solana). Адреса кошельков ОБЕЗЛИЧЕНЫ хешем: тестам нужна форма ответа и числа, а не чужие кошельки. Адреса заменены метками addr-NN (27.09): публичный скруббер не пускает наружу ничего похожего на адрес, а коду теста адрес не нужен."
+ "_note": "Сняты живой пробой REST 26.09 (tgm/position-intelligence HYPE, tgm/perp-positions JUP, tgm/flow-intelligence JUP на solana) и ОБЕЗЛИЧЕНЫ: адреса кошельков заменены метками addr-NN (27.09), ENS-метки - заглушкой example.eth той же формы (27.09: имя резолвится в тот же кошелёк, и одной замены адресов было мало). Тестам нужна форма ответа и числа, а не чужие кошельки.",
+ "provenance": "live"
 }

@@ -56,8 +56,8 @@ reading it.
 | `docs/wiki/_Sidebar.md` | `bed3e53f7e03b897` | from the bot, private paths/services substituted (see below) |
 | `en_triggers.py` | `c72b39e7a0ed8577` | byte-for-byte from the bot |
 | `env_load.py` | `222f6df16beb597b` | extract-only, this file does not exist in the bot |
-| `fixtures/sentinel_perp_context.json` | `a2512bb07b37c585` | byte-for-byte from the bot |
-| `nansen_api.py` | `9066e16f9589dee0` | byte-for-byte from the bot |
+| `fixtures/sentinel_perp_context.json` | `8680b093e3f89a44` | byte-for-byte from the bot |
+| `nansen_api.py` | `217966ef2665a689` | byte-for-byte from the bot |
 | `nansen_gate.py` | `27a5f5d2c7c44048` | byte-for-byte from the bot |
 | `nansen_limits.py` | `4ea08d0118f935e2` | byte-for-byte from the bot |
 | `nansen_log.py` | `6a429ddb56da28c5` | byte-for-byte from the bot |
@@ -66,11 +66,11 @@ reading it.
 | `onchain/oc_perps.py` | `c7eed1e3b68d59e6` | byte-for-byte from the bot |
 | `proofs/sentinel_live_proof.py` | `e91faa9e69eb9fb2` | byte-for-byte from the bot |
 | `requirements.txt` | `56dbb14aff00e3cd` | extract-only, this file does not exist in the bot |
-| `scrub.py` | `6a1205b278bb2a7a` | extract-only, this file does not exist in the bot |
+| `scrub.py` | `b352edc004327163` | extract-only, this file does not exist in the bot |
 | `sentinel/__init__.py` | `45318e500abc283f` | byte-for-byte from the bot |
 | `sentinel/assets.py` | `8cdfa7dca1e5af34` | byte-for-byte from the bot |
 | `sentinel/cards.py` | `c85ef789b32398d8` | byte-for-byte from the bot |
-| `sentinel/clusters.py` | `4291e12740f04af6` | byte-for-byte from the bot |
+| `sentinel/clusters.py` | `0c2dbdb0641aa555` | byte-for-byte from the bot |
 | `sentinel/config.py` | `0a35a0ef71df6ed6` | byte-for-byte from the bot |
 | `sentinel/detector.py` | `a364b6c960f9f7b0` | byte-for-byte from the bot |
 | `sentinel/engine.py` | `ccb2373ca35b596f` | byte-for-byte from the bot |
@@ -87,7 +87,7 @@ reading it.
 | `tests/fixtures/variational_names_20260926.json` | `d640bbd349f2304b` | byte-for-byte from the bot |
 | `tests/guard_text.py` | `8dbb7014d7fd073c` | byte-for-byte from the bot |
 | `tests/test_public.py` | `da36801d7c48452b` | extract-only, this file does not exist in the bot |
-| `tests/test_sentinel.py` | `0bf877d2fb2780d8` | byte-for-byte from the bot |
+| `tests/test_sentinel.py` | `73525f520d80c61d` | byte-for-byte from the bot |
 | `tools/nansen_catalog.py` | `1824150d749723f5` | byte-for-byte from the bot |
 | `tools/nansen_daily.py` | `699fd28d7d76437d` | byte-for-byte from the bot |
 | `tools/nansen_endpoint_sweep.py` | `ac243751eb38b441` | byte-for-byte from the bot |
