@@ -161,6 +161,7 @@ _EP_EST = {
     'prediction-market/trades-by-market': 1,
     # ЦЕНА ИЗ ЗАГОЛОВКА `x-credit-cost` ДОКУМЕНТА openapi (проба 27.09, probe_new.py): там она
     # названа площадкой для этой ручки, а живой вызов списал ровно столько же.
+    'profiler/perp-pnl-summary': 1,
     'profiler/address/first-funder': 1,
 }
 
