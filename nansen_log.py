@@ -156,9 +156,9 @@ _EP_EST = {
     'token-screener': 1, 'tgm/flow-intelligence': 1,
     'tgm/who-bought-sold': 1, 'tgm/token-information': 1,
     'smart-money/holdings': 3,                     # в overview числа нет, докстринг «1-5»
-    # ЦЕНА ИЗ ЗАГОЛОВКА `x-credit-cost` ДОКУМЕНТА openapi (проба 27.09, probe_new.py), и живой
-    # вызов списал ровно 1.
-    'prediction-market/trades-by-market': 1,
+    # ЦЕНА ИЗ ЗАГОЛОВКА `x-credit-cost` ДОКУМЕНТА openapi (проба 27.09, probe_new.py): там она
+    # названа площадкой для этой ручки, а живой вызов списал ровно столько же.
+    'profiler/address/first-funder': 1,
 }
 
 #: ЦЕНА НЕ ИЗМЕРЕНА: ни в docs/api/overview, ни в докстрингах клиента числа нет. Ноль вместо

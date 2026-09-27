@@ -167,6 +167,8 @@ def registry():
               estimate=150, tier='expensive'),
         _case('profiler/address/pnl-summary',
               {'address': WALLET, 'chain': 'ethereum', 'date': _dr(30)}),
+        # ТОЛЬКО EVM: на Solana площадка отвечает 422 «Invalid EVM address format» (27.09).
+        _case('profiler/address/first-funder', {'address': WALLET, 'chain': 'all'}, estimate=1),
         _case('profiler/address/related-wallets',
               {'address': WALLET, 'chain': 'ethereum', 'pagination': _pg(),
                'order_by': [{'field': 'order', 'direction': 'ASC'}]}),
@@ -412,9 +414,10 @@ def main(argv=None):
         return 2
     # ЧИСЛО ЖЁСТКОЕ НАРОЧНО: оно напечатано в судейских документах, и «маршрут добавили, а
     # документ не обновили» обязано ломать прогон, а не обнаруживаться читателем. 55 - после
-    # живой пробы схем 24.09 (`smart-money/dcas`, `chains/chain-rank`).
-    if len(cases) != 59:
-        print('REGISTRY DRIFT: expected 59 routes, got %d' % len(cases))
+    # живой пробы схем 24.09 (`smart-money/dcas`, `chains/chain-rank`); 60 - с первым
+    # отправителем адреса (27.09).
+    if len(cases) != 60:
+        print('REGISTRY DRIFT: expected 60 routes, got %d' % len(cases))
         return 2
     if args.max_wire < 1 or args.daily_wire_cap < 1 or args.daily_credit_cap < 1:
         print('Caps must be positive. Nothing sent.')

@@ -193,10 +193,12 @@ SCENARIOS = [
      'cmds': ['профиль 0x…', 'профиль 0x… глубже'],
      'btns': ['голый адрес в личку → 🕵 Досье'],
      'eps': ['profiler/address/labels', 'profiler/address/pnl-summary',
-             'profiler/address/related-wallets', 'profiler/address/premium-labels'],
+             'profiler/address/related-wallets', 'profiler/address/premium-labels',
+             'profiler/address/first-funder'],
      'scene': 'wallet_profile', 'menu': 'nsn_profile',
-     'price': '3 запроса; «глубже» добавляет премиум-метки за 150 кредитов',
-     'gives': 'метки, PnL и winrate, связанные кошельки',
+     'price': ('3 запроса, у адреса 0x четыре (первый отправитель, 1 кредит); «глубже» '
+               'добавляет премиум-метки за 150 кредитов'),
+     'gives': 'метки, PnL и winrate, связанные кошельки, а у адреса 0x - кто первым его пополнил и когда',
      'why': 'первый вопрос про незнакомый адрес - «кто это»; «меток нет» при этом НЕ значит '
             '«адрес чистый», и экран говорит это прямо',
      'hook': 'Wallet dossier: labels, PnL, related wallets. And when there are no labels it '
@@ -537,8 +539,10 @@ _EN = {
     'profile': {'cmds': ['profile 0x…', 'profile 0x… deep'],
                 'btns': ['bare address in DM → 🕵 Dossier'],
                 'title': '👤 Wallet profile: labels, PnL, related',
-                'price': '3 requests; "deeper" adds premium labels for 150 credits',
-                'gives': 'labels, PnL and win rate, related wallets',
+                'price': ('3 requests, 4 for a 0x address (first funder, 1 credit); "deeper" '
+                          'adds premium labels for 150 credits'),
+                'gives': 'labels, PnL and win rate, related wallets and, for a 0x address, '
+                         'who funded it first and when',
                 'why': 'the first question about an unknown address is "who is this"; "no '
                        'labels" does NOT mean "clean address", and the screen says so directly'},
     'cparty': {'cmds': ['counterparties 0x…'], 'btns': ['🧠 Nansen → 🔎 Wallet and token → 🤝 Counterparties'],
