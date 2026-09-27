@@ -689,6 +689,7 @@ _EP_HUMAN = {
     'profiler/address/premium-labels': ('премиум-метки', 'premium labels'),
     'profiler/address/pnl-summary': ('PnL и winrate', 'PnL and winrate'),
     'profiler/address/related-wallets': ('связанные кошельки', 'related wallets'),
+    'profiler/address/first-funder': ('первый отправитель', 'first funder'),
     'profiler/address/counterparties': ('контрагенты', 'counterparties'),
     'profiler/address/current-balance': ('портфель', 'portfolio'),
     'tgm/flow-intelligence': ('потоки по сегментам', 'segment flows'),
@@ -1710,6 +1711,55 @@ def profiler_related_wallets(address, chain="ethereum", per_page=10):
                        ckey=f"rel:{chain}:{address}:{per_page}"))
 
 
+#: АДРЕС EVM - единственная форма, которую понимает `first-funder` (проба 27.09).
+_EVM_RX = re.compile(r'^0x[0-9a-fA-F]{40}$')
+
+
+def profiler_first_funder(address):
+    """Первый отправитель денег на адрес: кто и когда впервые его пополнил. -> dict | None.
+
+    Поля (проба 27.09, `probe_new.py`): `first_funder_address`, `first_funder_name`,
+    `transaction_hash`, `block_timestamp`, `chain`. Тело - `address` и `chain: "all"`, цена по
+    заголовку openapi 1 кредит.
+
+    ТОЛЬКО EVM. На адрес Solana площадка отвечает 422 «Invalid EVM address format», поэтому
+    запрос не уходит вовсе, а вызывающий не показывает строку. Это граница ручки, а не отказ:
+    писать «ошибка» про то, что ручка по определению не покрывает, значило бы соврать о причине."""
+    if not _EVM_RX.match(str(address or '')):
+        return None
+    rows = _rows(_post("profiler/address/first-funder", {"address": address, "chain": "all"},
+                       ckey=f"ffund:{address.lower()}"))
+    return rows[0] if rows and isinstance(rows[0], dict) else None
+
+
+def first_funder_line(ff, lang='ru'):
+    """Строка досье «кто первым пополнил адрес». -> str | None.
+
+    ВРЕМЯ ДЛЯ ЧЕЛОВЕКА - МСК (закон №42): площадка отдаёт UTC, и «16:02» без зоны читался бы
+    как местное время. Имя - то, что назвала площадка (часто это поведенческая метка, а не
+    владелец), адрес отправителя рядом коротко, чтобы метку можно было проверить."""
+    if not isinstance(ff, dict):
+        return None
+    src = str(ff.get('first_funder_address') or '')
+    name = str(ff.get('first_funder_name') or '').strip()
+    if not src and not name:
+        return None
+    short = ('%s…%s' % (src[:6], src[-4:])) if len(src) > 12 else src
+    who = ('%s (%s)' % (name, short)) if (name and short) else (name or short)
+    when = ''
+    ts = str(ff.get('block_timestamp') or '')
+    try:
+        _t = _dt.datetime.strptime(ts[:19], '%Y-%m-%dT%H:%M:%S').replace(
+            tzinfo=_dt.timezone.utc).astimezone(_dt.timezone(_dt.timedelta(hours=3)))
+        when = _t.strftime('%d.%m.%Y %H:%M') + (' MSK' if lang == 'en' else ' МСК')
+    except ValueError:
+        pass
+    ch = str(ff.get('chain') or '').strip()
+    tail = ''.join(((' · ' + when) if when else '', (' [%s]' % ch) if ch else ''))
+    return (('🌱 First funded by %s%s' if lang == 'en' else '🌱 Первым пополнил: %s%s')
+            % (who, tail))
+
+
 def profiler_counterparties(address, chain="ethereum", per_page=10, days=30):
     """Топ-контрагенты кошелька (с кем чаще всего торгует; объёмы in/out). -> [dict]."""
     return _rows(_post("profiler/address/counterparties",
@@ -1924,7 +1974,11 @@ def wallet_profile_block(address, chain="ethereum", premium=False, lang='ru'):
     labels = profiler_labels(address, chain, premium=premium) or []
     pnl = profiler_pnl_summary(address, chain) or {}
     rel = profiler_related_wallets(address, chain, per_page=5) or []
-    if not (labels or pnl or rel):
+    # ЧЕТВЁРТЫЙ ЗАПРОС - ТОЛЬКО ДЛЯ EVM (27.09): первый отправитель. Для Solana ручка отвечает
+    # 422, поэтому запрос не уходит, строки нет, и в «что не приехало» он не попадает.
+    _evm = bool(_EVM_RX.match(str(address or '')))
+    ff = profiler_first_funder(address) if _evm else None
+    if not (labels or pnl or rel or ff):
         return None
     en = (lang == 'en')
     short = f"{address[:6]}…{address[-4:]}"
@@ -1935,7 +1989,7 @@ def wallet_profile_block(address, chain="ethereum", premium=False, lang='ru'):
     # карточку без меток и без PnL и не мог узнать, что их не спрашивали успешно. Живой прогон
     # 14.09: два запроса из трёх отдали 422, на экран приехала одна строка про связанные
     # кошельки, и выглядело это как «у адреса больше ничего нет».
-    _miss = missing_note(lang, total=3)
+    _miss = missing_note(lang, total=4 if _evm else 3)
     if _miss:
         L.append(_miss)
     if labels:
@@ -1976,6 +2030,9 @@ def wallet_profile_block(address, chain="ethereum", premium=False, lang='ru'):
         rl = ", ".join((r.get("relation") or "?") for r in rel[:4])
         L.append((f"🔗 related wallets: {len(rel)}+ ({rl})") if en
                  else (f"🔗 связанных кошельков: {len(rel)}+ ({rl})"))
+    _ffl = first_funder_line(ff, lang)
+    if _ffl:
+        L.append(_ffl)
     return with_source("\n".join(L), lang)
 
 

@@ -59,7 +59,7 @@ because the telemetry was already writing those rows.
 Decisions, including the screen deliberately **not** shipped and two leaks the scrubber caught before
 production: [`docs/MINIAPP_DECISIONS.md`](docs/MINIAPP_DECISIONS.md).
 
-**60 Nansen API routes** · **34 documented workflows** · **39 named telemetry scenes** ·
+**60 Nansen API routes** · **34 documented workflows** · **38 named telemetry scenes** ·
 **8 distinct failure states**
 
 - [`docs/proofs/LIVE_HERO_2026-09-20.md`](docs/proofs/LIVE_HERO_2026-09-20.md) — sanitized live hero proof: 4 calls, 3 known histories, 0 failures.
@@ -77,6 +77,8 @@ production: [`docs/MINIAPP_DECISIONS.md`](docs/MINIAPP_DECISIONS.md).
 - Ready X thread: [`docs/X_THREAD.md`](docs/X_THREAD.md)
 - User guide, every Nansen screen by taps and by command, with its limit and cost:
   [`docs/ARTICLE_USER_GUIDE.md`](docs/ARTICLE_USER_GUIDE.md)
+- The full guide as published on X on 27.09 (verbatim; current numbers are in the catalog):
+  [`docs/FULL_GUIDE.md`](docs/FULL_GUIDE.md)
 - Technical guide, Nansen routes, fields and the traps we measured:
   [`docs/ARTICLE_TECH_GUIDE.md`](docs/ARTICLE_TECH_GUIDE.md)
 - Sentinel thread with a frame list (Russian, EN tweets inside):

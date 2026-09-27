@@ -10,7 +10,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 
 | Scenarios | Endpoints used | Telemetry scenes |
 |---|---|---|
-| 34: 32 user-facing on Nansen + 1 background + 1 local | 36 | 31 of 39 in registry |
+| 34: 32 user-facing on Nansen + 1 background + 1 local | 36 | 31 of 38 in registry |
 
 ## Three doors: where Nansen can be asked at all
 
@@ -41,7 +41,7 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 | [🪪 Token info sheet from Nansen](#tinfo) | `token info 0x…`<br>`token info PEPE` | 🧠 Nansen → 🔎 Wallet and token → 🪪 Token information | 💬 | 1 credit |
 | [📊 Holder-segment flows AS A CHART](#flowpng) | `flows chart 0x…` | token card → 🧠 → 📊 Flows chart | 💬 👥🔘 | 1 credit |
 | [🧪 Backtest on onchain candles](#backtest) | — | meme card → 🧪 Backtest | 💬 | 5 credits for 89 daily candles |
-| [👤 Wallet profile: labels, PnL, related](#profile) | `profile 0x…`<br>`profile 0x… deep` | bare address in DM → 🕵 Dossier | 💬 | 3 requests; "deeper" adds premium labels for 150 credits |
+| [👤 Wallet profile: labels, PnL, related](#profile) | `profile 0x…`<br>`profile 0x… deep` | bare address in DM → 🕵 Dossier | 💬 | 3 requests, 4 for a 0x address (first funder, 1 credit); "deeper" adds premium labels for 150 credits |
 | [🤝 Who a wallet trades with most](#cparty) | `counterparties 0x…` | 🧠 Nansen → 🔎 Wallet and token → 🤝 Counterparties | 💬 | price not named in the official list |
 | [💼 Wallet portfolio per Nansen data](#balance) | `nansen balance 0x…` | 🧠 Nansen → 🔎 Wallet and token → 💼 Wallet portfolio | 💬 | price not named in the official list |
 | [🎲 Trending Polymarket markets with market_id](#pmmarkets) | `polymarket markets` | 🧠 Nansen → 🎲 Polymarket → 🎲 Trending markets | 💬 | price not named in the official list |
@@ -385,13 +385,13 @@ Every bot screen that talks to Nansen: what to say, what comes back, what it cos
 **By button:** bare address in DM → 🕵 Dossier
 **Where:** in DM · **not in a group**: the word command is parsed only by the DM router
 
-**What you get:** labels, PnL and win rate, related wallets
+**What you get:** labels, PnL and win rate, related wallets and, for a 0x address, who funded it first and when
 
-**Price:** 3 requests; "deeper" adds premium labels for 150 credits
+**Price:** 3 requests, 4 for a 0x address (first funder, 1 credit); "deeper" adds premium labels for 150 credits
 
 **Why:** the first question about an unknown address is "who is this"; "no labels" does NOT mean "clean address", and the screen says so directly
 
-**Endpoints:** `profiler/address/labels`, `profiler/address/pnl-summary`, `profiler/address/related-wallets`, `profiler/address/premium-labels`
+**Endpoints:** `profiler/address/labels`, `profiler/address/pnl-summary`, `profiler/address/related-wallets`, `profiler/address/premium-labels`, `profiler/address/first-funder`
 
 **Telemetry scene:** `wallet_profile` — this screen's spend is counted under it.
 

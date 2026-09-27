@@ -54,7 +54,7 @@ All four commands above are plans: zero network calls.
 
 ## One fresh run
 
-Routine: 52 calls, about 232 planning credits. It omits three expensive structural routes and both
+Routine: 52 calls, about 233 planning credits. It omits three expensive structural routes and both
 Agent routes, but includes a zero-credit trading quote:
 
 ```bash
@@ -64,7 +64,7 @@ cd <BOT_DIR>
 ```
 
 Complete structural run: 54 structural reads + trading quote = 55 fresh calls, conservative planning
-budget about 432 credits:
+budget about 433 credits:
 
 ```bash
 cd <BOT_DIR>
