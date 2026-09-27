@@ -160,6 +160,7 @@ _EP_EST = {
     # ЦЕНА ИЗ ЗАГОЛОВКА `x-credit-cost` ДОКУМЕНТА openapi (проба 27.09, probe_new.py): там она
     # названа площадкой для этой ручки, а живой вызов списал ровно столько же.
     'nansen-score/top-tokens': 1,
+    'profiler/address/first-funder': 1,
 }
 
 #: ЦЕНА НЕ ИЗМЕРЕНА: ни в docs/api/overview, ни в докстрингах клиента числа нет. Ноль вместо
