@@ -422,8 +422,8 @@ def main(argv=None):
     # документ не обновили» обязано ломать прогон, а не обнаруживаться читателем. 55 - после
     # живой пробы схем 24.09 (`smart-money/dcas`, `chains/chain-rank`); 60 - с первым
     # отправителем адреса (27.09); 61 - со сводкой PnL на перпах (27.09).
-    if len(cases) != 62:
-        print('REGISTRY DRIFT: expected 62 routes, got %d' % len(cases))
+    if len(cases) != 61:
+        print('REGISTRY DRIFT: expected 61 routes, got %d' % len(cases))
         return 2
     if args.max_wire < 1 or args.daily_wire_cap < 1 or args.daily_credit_cap < 1:
         print('Caps must be positive. Nothing sent.')
