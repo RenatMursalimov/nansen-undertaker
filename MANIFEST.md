@@ -18,8 +18,10 @@ reading it.
 | `cli.py` | `c1108bc69f1448e7` | extract-only, this file does not exist in the bot |
 | `db.py` | `63edb86b74a0eb75` | extract-only, this file does not exist in the bot |
 | `deploy/sentinel.service` | `49732635591be7d2` | from the bot, private paths/services substituted (see below) |
-| `docs/CATALOG.md` | `2ce75bcc73123ef1` | from the bot, private paths/services substituted (see below) |
-| `docs/CATALOG_ru.md` | `9a91a2cbe9ce5e76` | from the bot, private paths/services substituted (see below) |
+| `docs/ARTICLE_USER_GUIDE.md` | `10bd15cf7eaf9a45` | from the bot, private paths/services substituted (see below) |
+| `docs/ARTICLE_USER_GUIDE_ru.md` | `44d4dcd52e95b7e9` | from the bot, private paths/services substituted (see below) |
+| `docs/CATALOG.md` | `7cc5b5a528c2c17d` | from the bot, private paths/services substituted (see below) |
+| `docs/CATALOG_ru.md` | `8fe31b62eb2fc78f` | from the bot, private paths/services substituted (see below) |
 | `docs/DEMO_SCRIPT.md` | `1aeb7dffe6ba17d8` | from the bot, private paths/services substituted (see below) |
 | `docs/ENDPOINT_SWEEP.md` | `22a63ba29ec94bfc` | from the bot, private paths/services substituted (see below) |
 | `docs/JUDGE.md` | `e5c94cb4cd1d1fd8` | from the bot, private paths/services substituted (see below) |
@@ -90,7 +92,7 @@ reading it.
 | `tests/guard_text.py` | `8dbb7014d7fd073c` | byte-for-byte from the bot |
 | `tests/test_public.py` | `ddf9488054d6d995` | extract-only, this file does not exist in the bot |
 | `tests/test_sentinel.py` | `bca766271ad34ed4` | byte-for-byte from the bot |
-| `tools/nansen_catalog.py` | `0fb1984bc5b4dca2` | byte-for-byte from the bot |
+| `tools/nansen_catalog.py` | `1824150d749723f5` | byte-for-byte from the bot |
 | `tools/nansen_daily.py` | `699fd28d7d76437d` | byte-for-byte from the bot |
 | `tools/nansen_endpoint_sweep.py` | `ac243751eb38b441` | byte-for-byte from the bot |
 | `tools/nansen_live_smoke.py` | `923f06a1adebef3d` | byte-for-byte from the bot |
@@ -103,7 +105,7 @@ reading it.
 | `tools/sentinel_funding_unit.py` | `2f097f4dcb06b073` | byte-for-byte from the bot |
 | `webapp/index.html` | `e88905830a44b93b` | byte-for-byte from the bot |
 
-## The one declared sanitary substitution
+## The declared sanitary substitution
 
 The documents are instructions for the bot owner, and they contain absolute paths,
 a host address and systemd service names of the live servers. Those must not travel:
@@ -124,7 +126,14 @@ table would disclose exactly what the replacement hides - the same mistake that
 makes the public `scrub.py` look for CLASS SIGNATURES rather than a list of
 specific handles and addresses.
 
-Nothing else in the texts is changed, and the substitution is declared right here:
+## The second declared change: private-path comments
+
+The user guides (`docs/ARTICLE_USER_GUIDE.md`, `docs/ARTICLE_USER_GUIDE_ru.md`) lose their HTML comments (`<!-- ... -->`).
+In the bot's repository each comment names the callback or parser line behind a path
+in the guide. Those files are private, so here the comments would point a reader at
+code that is not in this repository.
+
+Nothing else in the texts is changed, and both changes are declared right here:
 "byte-for-byte" with an undeclared exception is a lie, and after one small lie like
 that you cannot trust a single claim in the repository.
 
