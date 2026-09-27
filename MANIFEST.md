@@ -11,19 +11,25 @@ reading it.
 | `.github/workflows/tests.yml` | `d020a3b5ca3ebe21` | extract-only, this file does not exist in the bot |
 | `.gitignore` | `62e03de43434737b` | extract-only, this file does not exist in the bot |
 | `LICENSE` | `6bc57942e4f8d266` | extract-only, this file does not exist in the bot |
-| `README.md` | `5ae479efa8196119` | extract-only, this file does not exist in the bot |
+| `README.md` | `703231adf6e32a0c` | extract-only, this file does not exist in the bot |
 | `alert_log.py` | `1ac751d2999a3368` | byte-for-byte from the bot |
 | `assets/social-preview.png` | `2e02bc4b7b3180d0` | extract-only, this file does not exist in the bot |
 | `bip39_en.txt` | `2f5eed53a4727b4b` | byte-for-byte from the bot |
 | `cli.py` | `c1108bc69f1448e7` | extract-only, this file does not exist in the bot |
 | `db.py` | `63edb86b74a0eb75` | extract-only, this file does not exist in the bot |
 | `deploy/sentinel.service` | `49732635591be7d2` | from the bot, private paths/services substituted (see below) |
+| `docs/ARTICLE_TECH_GUIDE.md` | `7249bcc4c6b399d7` | from the bot, private paths/services substituted (see below) |
+| `docs/ARTICLE_TECH_GUIDE_ru.md` | `51fc3fdf12892d64` | from the bot, private paths/services substituted (see below) |
+| `docs/ARTICLE_USER_GUIDE.md` | `c786e3b3efc31ee5` | from the bot, private paths/services substituted (see below) |
+| `docs/ARTICLE_USER_GUIDE_ru.md` | `b0c420d62631e5dc` | from the bot, private paths/services substituted (see below) |
+| `docs/BRIEF_SENTINEL_ru.md` | `7b3c21134dd8adb2` | from the bot, private paths/services substituted (see below) |
 | `docs/CATALOG.md` | `2ce75bcc73123ef1` | from the bot, private paths/services substituted (see below) |
 | `docs/CATALOG_ru.md` | `9a91a2cbe9ce5e76` | from the bot, private paths/services substituted (see below) |
 | `docs/DEMO_SCRIPT.md` | `1aeb7dffe6ba17d8` | from the bot, private paths/services substituted (see below) |
 | `docs/ENDPOINT_SWEEP.md` | `22a63ba29ec94bfc` | from the bot, private paths/services substituted (see below) |
 | `docs/JUDGE.md` | `e5c94cb4cd1d1fd8` | from the bot, private paths/services substituted (see below) |
 | `docs/MINIAPP_DECISIONS.md` | `c21d902a9bd96bec` | from the bot, private paths/services substituted (see below) |
+| `docs/POST_SENTINEL_X_ru.md` | `05e4f221f42bdefe` | from the bot, private paths/services substituted (see below) |
 | `docs/PROJECT_STATUS.md` | `368a44d4317b5154` | from the bot, private paths/services substituted (see below) |
 | `docs/RECORDING_RUNBOOK.md` | `e4f15957855bc935` | from the bot, private paths/services substituted (see below) |
 | `docs/SENTINEL_SPEC.md` | `a6e816b4b9c7ccb1` | from the bot, private paths/services substituted (see below) |
@@ -59,7 +65,7 @@ reading it.
 | `fixtures/sharp_markets.json` | `2db415d3a9eb10b0` | byte-for-byte from the bot |
 | `fixtures/smart_dca.json` | `4d33b3805dcfd104` | byte-for-byte from the bot |
 | `fixtures/smart_trades.json` | `bd5f60c65c35ff9f` | byte-for-byte from the bot |
-| `nansen_api.py` | `298f45cf3087339d` | byte-for-byte from the bot |
+| `nansen_api.py` | `9066e16f9589dee0` | byte-for-byte from the bot |
 | `nansen_gate.py` | `27a5f5d2c7c44048` | byte-for-byte from the bot |
 | `nansen_limits.py` | `4ea08d0118f935e2` | byte-for-byte from the bot |
 | `nansen_log.py` | `6a429ddb56da28c5` | byte-for-byte from the bot |
