@@ -9,13 +9,13 @@ The registry is checked against `nansen_api.py` on every start:
 
 | Class | Routes | Scheduled behavior |
 |---|---:|---|
-| Structural reads | 56 | fresh POST through production telemetry; all in `complete` |
+| Structural reads | 57 | fresh POST through production telemetry; all in `complete` |
 | Agent | 2 | only with explicit `--include-agents`; 200 + 750 credits |
 | `trade/quote` | 1 | safe read, zero Nansen credits; included in routine/complete |
 | `trade/bridge-status` | 1 | safe read only with an existing tx hash from env |
 | `trade/prepare` | 1 | never scheduled; human-only signable-intent probe |
 | `trade/execute` | 1 | never available in the generic probe; broadcasts real money |
-| **Total** | **62** | every client route is covered or explicitly blocked |
+| **Total** | **63** | every client route is covered or explicitly blocked |
 
 > These six numbers are **counted from the registry**, not typed by hand: the table above had drifted
 > to *47 structural / 53 total* while the tool itself carried 52, and a table that disagrees with the
@@ -54,7 +54,7 @@ All four commands above are plans: zero network calls.
 
 ## One fresh run
 
-Routine: 54 calls, about 231 planning credits. It omits three expensive structural routes and both
+Routine: 55 calls, about 240 planning credits. It omits three expensive structural routes and both
 Agent routes, but includes a zero-credit trading quote:
 
 ```bash
@@ -63,8 +63,8 @@ cd <BOT_DIR>
   --max-wire 50 --daily-wire-cap 700 --daily-credit-cap 6000 --reserve-credits 15000
 ```
 
-Complete structural run: 56 structural reads + trading quote = 57 fresh calls, conservative planning
-budget about 431 credits:
+Complete structural run: 57 structural reads + trading quote = 58 fresh calls, conservative planning
+budget about 440 credits:
 
 ```bash
 cd <BOT_DIR>

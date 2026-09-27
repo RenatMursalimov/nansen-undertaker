@@ -2193,6 +2193,18 @@ def tok_link(text, addr, bot_un=None):
     return '<a href="https://t.me/%s?start=tok_%s">%s</a>' % (bot_un, a, text)
 
 
+def prof_link(text, addr, bot_un=None):
+    """Адрес/метка -> ССЫЛКА на досье кошелька в боте (?start=prof_<addr>). -> str.
+
+    Отдельно от `acc_link`: та ведёт на карточку счёта, где досье - ещё одна кнопка. Экран
+    «самые прибыльные смарт-мани» отвечает на вопрос «кто это», и тап обязан сразу давать
+    досье, а не карточку, из которой его надо искать."""
+    a = str(addr or '').strip()
+    if not bot_un or not a:
+        return text
+    return '<a href="https://t.me/%s?start=prof_%s">%s</a>' % (bot_un, a, text)
+
+
 def _who_a(row, bot_un=None):
     """`_who`, но КЛИКАБЕЛЬНЫЙ: тап -> экран счёта этого кошелька в боте. -> str.
 
@@ -3377,6 +3389,77 @@ def defi_block(d, address='', lang='ru', top=6):
         if len(_rows) > int(top):
             L.append(('<i>and %d more protocol(s)</i>' if en else '<i>и ещё %d протокол(ов)</i>')
                      % (len(_rows) - int(top)))
+    return with_source('\n'.join(L), lang)
+
+
+#: ЦЕПИ ЭКРАНА «САМЫЕ ПРИБЫЛЬНЫЕ СМАРТ-МАНИ» - ровно те, на которых ручка ответила в пробе
+#: 27.09 (`probe_new.py`: ethereum, solana, base -> 200, пять строк). Список цепей в документе
+#: openapi шире, но число без замера - обещание, а не факт.
+SM_PNL_CHAINS = ('ethereum', 'solana', 'base')
+
+
+def sm_pnl_leaderboard(days=7, per_page=10, chains=SM_PNL_CHAINS):
+    """САМЫЕ ПРИБЫЛЬНЫЕ СМАРТ-МАНИ ЗА ОКНО. -> [dict].
+
+    Проба 27.09: тело `chains`, `timeframe` (1/7/30/90/180 дней), `filters`, `pagination`;
+    строка - `address`, `address_label` (часто ПУСТАЯ), `realized_pnl_usd`,
+    `unrealized_pnl_usd`, `total_pnl_usd`, `win_rate`, `n_trades`, `top_traded_tokens_info`.
+    Цена по заголовку openapi 5 кредитов."""
+    body = {"chains": list(chains), "timeframe": int(days), "filters": {},
+            "pagination": {"page": 1, "per_page": int(per_page)}}
+    return _rows(_post("smart-money/pnl-leaderboard", body,
+                       ckey=f"smpnl:{','.join(chains)}:{int(days)}:{int(per_page)}"))
+
+
+def sm_pnl_leaders_block(rows, lang='ru', top=10, bot_un=None, days=7):
+    """Самые прибыльные смарт-мани - текстом. -> str | None.
+
+    ИТОГ ДЕЛИТСЯ НА ЗАКРЫТОЕ И ОТКРЫТОЕ: «+$5.66M» у адреса с реализованным -$40K и открытыми
+    +$5.70M - это ещё не заработанные деньги, и одно число это прячет. Метки у этой ручки часто
+    пусты, тогда печатается короткий адрес; тап по нему открывает досье.
+    ЦЕНА ПЕЧАТАЕТСЯ НА ЭКРАНЕ (закон №31): 5 кредитов - один из самых дорогих экранов раздела."""
+    rows = [r for r in (rows or ()) if isinstance(r, dict)]
+    if not rows:
+        return None
+    _shape('sm-pnl-leaderboard', rows[0])
+    en = (lang == 'en')
+    L = [('🥇 <b>Most profitable smart money, %d days</b>' % days) if en
+         else ('🥇 <b>Самые прибыльные смарт-мани за %d дней</b>' % days)]
+
+    def _m(v):
+        return ('+$' if v >= 0 else '-$') + _usd(abs(v))
+    for i, r in enumerate(rows[:int(top)], 1):
+        addr = str(r.get('address') or '')
+        lbl = str(r.get('address_label') or '').strip()
+        who = _esc(lbl) if lbl else ('%s…%s' % (addr[:6], addr[-4:]) if len(addr) > 12 else addr)
+        tot = _num_or_none(r.get('total_pnl_usd'))
+        rea = _num_or_none(r.get('realized_pnl_usd'))
+        unr = _num_or_none(r.get('unrealized_pnl_usd'))
+        seg = []
+        if tot is not None:
+            _in = []
+            if rea is not None:
+                _in.append(('realized %s' if en else 'реализ. %s') % _m(rea))
+            if unr is not None:
+                _in.append(('open %s' if en else 'в позициях %s') % _m(unr))
+            seg.append(_m(tot) + ((' (%s)' % ' · '.join(_in)) if _in else ''))
+        wr = _num_or_none(r.get('win_rate'))
+        if wr is not None:
+            seg.append('win rate %.0f%%' % (wr * 100 if wr <= 1 else wr))
+        n = r.get('n_trades')
+        if n not in (None, ''):
+            seg.append(('%s trades' if en else 'сделок %s') % n)
+        _tt = [str(t.get('symbol') or t.get('token_symbol') or '')
+               for t in (r.get('top_traded_tokens_info') or []) if isinstance(t, dict)]
+        _tt = [t for t in _tt if t][:3]
+        if _tt:
+            seg.append(('top: %s' if en else 'топ: %s') % ', '.join(_esc(t) for t in _tt))
+        L.append('%d. %s · %s' % (i, prof_link(who, addr, bot_un), ' · '.join(seg) or '?'))
+    L.append('<i>This screen costs 5 Nansen credits.</i>' if en
+             else '<i>Цена экрана: 5 кредитов Nansen.</i>')
+    if bot_un:
+        L.append('<i>Tap an address — I will open its dossier (🕵).</i>' if en
+                 else '<i>Тапни адрес — открою его досье (🕵).</i>')
     return with_source('\n'.join(L), lang)
 
 
