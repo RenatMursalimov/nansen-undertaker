@@ -48,6 +48,7 @@ reading it.
 | `docs/wiki/Roadmap.md` | `bfbbb641e61b03c9` | from the bot, private paths/services substituted (see below) |
 | `docs/wiki/Status.md` | `52a803345629f7d0` | from the bot, private paths/services substituted (see below) |
 | `docs/wiki/_Sidebar.md` | `bed3e53f7e03b897` | from the bot, private paths/services substituted (see below) |
+| `en_triggers.py` | `c72b39e7a0ed8577` | byte-for-byte from the bot |
 | `env_load.py` | `222f6df16beb597b` | extract-only, this file does not exist in the bot |
 | `fixtures/chain_rank.json` | `76d33829dd920b6e` | byte-for-byte from the bot |
 | `fixtures/liq_map.json` | `8dfaadea80282172` | byte-for-byte from the bot |
@@ -83,13 +84,13 @@ reading it.
 | `sentinel/outbox.py` | `0a38706d86b0df96` | byte-for-byte from the bot |
 | `sentinel/predict.py` | `9d4808981b9dddb2` | byte-for-byte from the bot |
 | `sentinel/store.py` | `eef4bb551febb214` | byte-for-byte from the bot |
-| `sentinel/ui.py` | `2f056237d77ad878` | byte-for-byte from the bot |
+| `sentinel/ui.py` | `cc9efbe396997c94` | byte-for-byte from the bot |
 | `sentinel/variational_feed.py` | `3b30b047de33a4c1` | byte-for-byte from the bot |
 | `sentinel/venues.py` | `0cdd5f8c58e8f6f4` | byte-for-byte from the bot |
 | `tests/fixtures/variational_names_20260926.json` | `d640bbd349f2304b` | byte-for-byte from the bot |
 | `tests/guard_text.py` | `8dbb7014d7fd073c` | byte-for-byte from the bot |
 | `tests/test_public.py` | `ddf9488054d6d995` | extract-only, this file does not exist in the bot |
-| `tests/test_sentinel.py` | `bca766271ad34ed4` | byte-for-byte from the bot |
+| `tests/test_sentinel.py` | `c0924880e45d6b90` | byte-for-byte from the bot |
 | `tools/nansen_catalog.py` | `0fb1984bc5b4dca2` | byte-for-byte from the bot |
 | `tools/nansen_daily.py` | `699fd28d7d76437d` | byte-for-byte from the bot |
 | `tools/nansen_endpoint_sweep.py` | `ac243751eb38b441` | byte-for-byte from the bot |
