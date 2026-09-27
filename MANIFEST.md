@@ -8,14 +8,14 @@ reading it.
 | file | sha256 (16) | origin |
 |---|---|---|
 | `.env.example` | `036af93edd779cca` | extract-only, this file does not exist in the bot |
-| `.github/workflows/tests.yml` | `d020a3b5ca3ebe21` | extract-only, this file does not exist in the bot |
+| `.github/workflows/tests.yml` | `2a6e3eb9b0193aa0` | extract-only, this file does not exist in the bot |
 | `.gitignore` | `62e03de43434737b` | extract-only, this file does not exist in the bot |
 | `LICENSE` | `6bc57942e4f8d266` | extract-only, this file does not exist in the bot |
-| `README.md` | `5ae479efa8196119` | extract-only, this file does not exist in the bot |
+| `README.md` | `0566d6a8cdae9f37` | extract-only, this file does not exist in the bot |
 | `alert_log.py` | `1ac751d2999a3368` | byte-for-byte from the bot |
 | `assets/social-preview.png` | `2e02bc4b7b3180d0` | extract-only, this file does not exist in the bot |
 | `bip39_en.txt` | `2f5eed53a4727b4b` | byte-for-byte from the bot |
-| `cli.py` | `c1108bc69f1448e7` | extract-only, this file does not exist in the bot |
+| `cli.py` | `17c531dff25ddf48` | extract-only, this file does not exist in the bot |
 | `db.py` | `63edb86b74a0eb75` | extract-only, this file does not exist in the bot |
 | `deploy/sentinel.service` | `49732635591be7d2` | from the bot, private paths/services substituted (see below) |
 | `docs/ARTICLE_USER_GUIDE.md` | `10bd15cf7eaf9a45` | from the bot, private paths/services substituted (see below) |
@@ -26,7 +26,7 @@ reading it.
 | `docs/ENDPOINT_SWEEP.md` | `22a63ba29ec94bfc` | from the bot, private paths/services substituted (see below) |
 | `docs/JUDGE.md` | `e5c94cb4cd1d1fd8` | from the bot, private paths/services substituted (see below) |
 | `docs/MINIAPP_DECISIONS.md` | `c21d902a9bd96bec` | from the bot, private paths/services substituted (see below) |
-| `docs/PROJECT_STATUS.md` | `368a44d4317b5154` | from the bot, private paths/services substituted (see below) |
+| `docs/PROJECT_STATUS.md` | `d5fda737038c2ad0` | from the bot, private paths/services substituted (see below) |
 | `docs/RECORDING_RUNBOOK.md` | `e4f15957855bc935` | from the bot, private paths/services substituted (see below) |
 | `docs/SENTINEL_SPEC.md` | `a6e816b4b9c7ccb1` | from the bot, private paths/services substituted (see below) |
 | `docs/SENTINEL_SPEC_ru.md` | `fdc360d17b835861` | from the bot, private paths/services substituted (see below) |
@@ -68,7 +68,7 @@ reading it.
 | `nansen_scene.py` | `a1188a7a62e91034` | byte-for-byte from the bot |
 | `oc_nansen_viz.py` | `3c994ecf18fc56a9` | byte-for-byte from the bot |
 | `onchain/oc_perps.py` | `c7eed1e3b68d59e6` | byte-for-byte from the bot |
-| `proofs/sentinel_live_proof.py` | `d0f25d0b304672a3` | byte-for-byte from the bot |
+| `proofs/sentinel_live_proof.py` | `e91faa9e69eb9fb2` | byte-for-byte from the bot |
 | `requirements.txt` | `56dbb14aff00e3cd` | extract-only, this file does not exist in the bot |
 | `scrub.py` | `6a1205b278bb2a7a` | extract-only, this file does not exist in the bot |
 | `sentinel/__init__.py` | `45318e500abc283f` | byte-for-byte from the bot |
@@ -87,11 +87,11 @@ reading it.
 | `sentinel/store.py` | `eef4bb551febb214` | byte-for-byte from the bot |
 | `sentinel/ui.py` | `2f056237d77ad878` | byte-for-byte from the bot |
 | `sentinel/variational_feed.py` | `3b30b047de33a4c1` | byte-for-byte from the bot |
-| `sentinel/venues.py` | `0cdd5f8c58e8f6f4` | byte-for-byte from the bot |
+| `sentinel/venues.py` | `fedb211f685b453c` | byte-for-byte from the bot |
 | `tests/fixtures/variational_names_20260926.json` | `d640bbd349f2304b` | byte-for-byte from the bot |
 | `tests/guard_text.py` | `8dbb7014d7fd073c` | byte-for-byte from the bot |
-| `tests/test_public.py` | `ddf9488054d6d995` | extract-only, this file does not exist in the bot |
-| `tests/test_sentinel.py` | `bca766271ad34ed4` | byte-for-byte from the bot |
+| `tests/test_public.py` | `d337dc2fbe14b3f8` | extract-only, this file does not exist in the bot |
+| `tests/test_sentinel.py` | `be724bc498ae8f59` | byte-for-byte from the bot |
 | `tools/nansen_catalog.py` | `1824150d749723f5` | byte-for-byte from the bot |
 | `tools/nansen_daily.py` | `699fd28d7d76437d` | byte-for-byte from the bot |
 | `tools/nansen_endpoint_sweep.py` | `ac243751eb38b441` | byte-for-byte from the bot |

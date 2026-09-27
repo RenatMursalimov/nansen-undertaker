@@ -59,7 +59,7 @@ because the telemetry was already writing those rows.
 Decisions, including the screen deliberately **not** shipped and two leaks the scrubber caught before
 production: [`docs/MINIAPP_DECISIONS.md`](docs/MINIAPP_DECISIONS.md).
 
-**59 Nansen API routes** · **34 documented workflows** · **36 named telemetry scenes** ·
+**59 Nansen API routes** · **34 documented workflows** · **38 named telemetry scenes** ·
 **8 distinct failure states**
 
 - [`docs/proofs/LIVE_HERO_2026-09-20.md`](docs/proofs/LIVE_HERO_2026-09-20.md) — sanitized live hero proof: 4 calls, 3 known histories, 0 failures.
@@ -112,7 +112,7 @@ production code:
 ```bash
 python3 tests/test_public.py
 python3 scrub.py
-NANSEN_LANG=en python3 cli.py --help
+python3 cli.py --help                # English by default, NANSEN_LANG=ru for Russian
 ```
 
 ---
@@ -202,8 +202,9 @@ separately — a visible “184 unpriced calls” is better than a tidy total bu
 
 ## Sentinel: live perp alerts with Nansen context
 
-`sentinel/` watches **553** Variational Omni instruments, **234** Hyperliquid perps and **210** live
-Lighter markets and pings a Telegram chat only when a move is unusual *for that instrument* (no
+`sentinel/` watches three venues (Variational Omni: **553** instruments in the dated listing
+`tests/fixtures/variational_names_20260926.json`; Hyperliquid perps and live Lighter markets:
+`python3 proofs/sentinel_live_proof.py` prints the current count for every venue) and pings a Telegram chat only when a move is unusual *for that instrument* (no
 sigma over 20+ points, no event). Nansen context is written into the same card: large addresses
 over 3 h, net and who bought or sold (`tgm/who-bought-sold`; the request has no smart-money label
 filter, so the card does not call them smart money), 24 h holder segments
@@ -220,7 +221,8 @@ Try it without any key (the venues are public):
 python3 cli.py sentinel-card BTC hyperliquid   # live instrument card, the same screen as in the bot
 python3 cli.py sentinel-demo                   # what an alert of each kind looks like
 python3 cli.py sentinel-presets                # what each preset changes
-python3 tests/test_sentinel.py                 # 791 offline checks, no network
+python3 tests/test_sentinel.py                 # offline checks, no network; prints its own PASS count
+python3 proofs/sentinel_live_proof.py          # live: instruments per venue, then a real card (network, no key)
 ```
 
 Full spec: [`docs/SENTINEL_SPEC.md`](docs/SENTINEL_SPEC.md) (section 17 is the V2 summary).
@@ -236,7 +238,7 @@ The generated catalog distinguishes **client capability** from **shipped workflo
   - 32 user-facing workflows that call Nansen;
   - 1 background digest workflow;
   - 1 local contribution-tally workflow;
-- 30 unique API routes drive those workflows;
+- 35 unique API routes drive those workflows;
 - remaining client-only/owner-only routes are listed separately, not presented as working user
   screens.
 
@@ -322,7 +324,8 @@ See [`docs/WINNER_PLAN.md`](docs/WINNER_PLAN.md) and [`docs/submission.md`](docs
 
 ## Language and safety
 
-`NANSEN_LANG=en` selects English where production formatters support it. Every English-primary
+The CLI answers in English by default where production formatters support it; `NANSEN_LANG=ru`
+switches it to Russian. Every English-primary
 document — this README, `MANIFEST.md`, everything under `docs/` without an `_ru` suffix — is
 English throughout; a Russian analog of each judge-facing document sits next to it as `*_ru.md`
 (`docs/CATALOG_ru.md`, `docs/scenarios_ru.md`, `docs/WINNER_PLAN_ru.md`,

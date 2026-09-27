@@ -1057,6 +1057,50 @@ def t_commands_are_parsed_exactly_and_refuse_with_words():
           'НЕ торгует' in ui.HELP or 'НЕ советует' in ui.HELP)
 
 
+def t_live_proof_runs_from_either_layout_and_counts_venues():
+    """ЖИВОЕ ДОКАЗАТЕЛЬСТВО ЗАПУСКАЕТСЯ И В БОТЕ, И В ВЫЖИМКЕ (аудит 27.09, A3, A6).
+
+    ЗУБЫ: `proofs/sentinel_live_proof.py` в публичной выжимке падал `ModuleNotFoundError:
+    sentinel` - корень считался тремя `dirname` от файла, по раскладке бота. И числа площадок
+    в README (234 и 210) не повторялись ничем. Здесь модуль грузится из той раскладки, в которой
+    лежит этот тест, а счётчик площадок проверяется на подменённом проводе (закон №56): логика
+    подсчёта настоящая, подменён только `fetch_all`."""
+    import importlib.util as _ilu
+    from sentinel import venues as _v, variational_feed as _vf
+    _cand = [os.path.join(BASE, 'nansen', 'proofs', 'sentinel_live_proof.py'),
+             os.path.join(BASE, 'proofs', 'sentinel_live_proof.py')]
+    _pp = next((p for p in _cand if os.path.exists(p)), None)
+    check('PROOF: файл доказательства на месте', bool(_pp), _cand)
+    if not _pp:
+        return
+    _argv = sys.argv
+    sys.argv = [_pp]
+    try:
+        _sp = _ilu.spec_from_file_location('_sentinel_live_proof', _pp)
+        _m = _ilu.module_from_spec(_sp)
+        _sp.loader.exec_module(_m)
+    finally:
+        sys.argv = _argv
+    check('PROOF: корень найден по пакету, а не по глубине',
+          os.path.isdir(os.path.join(_m.BASE, 'sentinel')), _m.BASE)
+    _rows = ([_vf.Listing(ticker='A%d' % i, venue='variational') for i in range(3)]
+             + [_vf.Listing(ticker='B%d' % i, venue='hyperliquid') for i in range(2)])
+    _real = _v.fetch_all
+
+    async def _fake(venues=None):
+        return _rows, {'variational': {}, 'hyperliquid': {},
+                       'lighter': _v.FeedError('net', 'нет сети')}
+    _v.fetch_all = _fake
+    try:
+        got = _m.venue_counts()
+    finally:
+        _v.fetch_all = _real
+    check('PROOF: инструменты считаются по площадкам',
+          got.get('variational') == 3 and got.get('hyperliquid') == 2, got)
+    check('PROOF: отказ площадки назван словами, а не нулём (закон №22)',
+          isinstance(got.get('lighter'), str) and 'нет сети' in got['lighter'], got)
+
+
 def t_no_import_of_the_trading_contour():
     """ГРАНИЦА: ни один файл дозорного не знает про подписанта и торговые маршруты."""
     import re
@@ -5077,6 +5121,7 @@ def main():
                t_rings_and_outcome_are_measured_not_told,
                t_commands_are_parsed_exactly_and_refuse_with_words,
                t_no_import_of_the_trading_contour,
+               t_live_proof_runs_from_either_layout_and_counts_venues,
                t_engine_tick_never_throws_and_always_says_something,
                # ── круг 2 (25.09): боевые отказы с прода Ren + меню и бесплатный Nansen ──
                t_reads_close_their_cursors_and_never_lock,

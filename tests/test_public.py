@@ -25,6 +25,7 @@
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -369,6 +370,37 @@ def t_ledger_counts_people_not_spam():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def t_cli_speaks_english_by_default():
+    """CLI ПО УМОЛЧАНИЮ АНГЛИЙСКИЙ, РУССКИЙ - ПО NANSEN_LANG=ru (аудит 27.09, D1).
+
+    ЗУБЫ: первая команда судьи, `python3 cli.py --help` без переменных, печатала русскую
+    справку, а подсказка аргументов оставалась русской и при `NANSEN_LANG=en`. Проверяется
+    отдельным процессом: язык выбирается при импорте, и подмена атрибута не доказала бы, что
+    выбирает его окружение."""
+    import subprocess
+    _cli = os.path.join(_ROOT, 'cli.py')
+
+    def run(args, lang=None):
+        env = {k: v for k, v in os.environ.items() if k not in ('NANSEN_LANG', 'NANSEN_API_KEY')}
+        if lang:
+            env['NANSEN_LANG'] = lang
+        r = subprocess.run([sys.executable, _cli] + args, capture_output=True, text=True,
+                           env=env, cwd=_ROOT, timeout=120)
+        return r.stdout + r.stderr
+    h = run(['--help'])
+    check('LANG: --help без переменных - по-английски', 'Commands:' in h and 'Команды' not in h,
+          h[:200])
+    hr = run(['--help'], 'ru')
+    check('LANG: NANSEN_LANG=ru - по-русски', 'Команды' in hr, hr[:200])
+    nd = run(['token'])
+    check('LANG: подсказка аргументов по-английски, без русских меток',
+          'arguments needed: token <chain> <contract>' in nd
+          and not re.search('[а-яА-Я]', nd), nd[:200])
+    nk = run(['flows'])
+    check('LANG: без ключа английский отказ называет причину',
+          'API key is not set' in nk and 'never asked' in nk, nk[:200])
+
+
 def t_cli_without_key_says_why():
     """КАЖДАЯ КОМАНДА ТЕРМИНАЛА БЕЗ КЛЮЧА ГОВОРИТ ПРИЧИНУ, а не падает и не молчит.
 
@@ -391,6 +423,9 @@ def t_cli_without_key_says_why():
         httpx.post = _boom
         import cli
         cli.N = N2
+        # ЯЗЫК ЗАКРЕПЛЁН РУССКИМ: ниже сверяются русские строки форматтеров. С 27.09 CLI по
+        # умолчанию английский (D1); английская сторона - в t_cli_speaks_english_by_default.
+        cli.LANG = 'ru'
         import io
         names = [c[0] for c in cli.CMDS]
         check('CLI: команд достаточно', len(names) >= 15, names)
@@ -763,6 +798,7 @@ def main():
         t_source_is_named,
         t_ledger_counts_people_not_spam,
         t_cli_without_key_says_why,
+        t_cli_speaks_english_by_default,
         t_docs_are_here_and_name_prices,
         t_public_hygiene_and_live_tools_are_safe_by_default,
     )

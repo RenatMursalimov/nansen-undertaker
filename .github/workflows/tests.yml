@@ -16,4 +16,7 @@ jobs:
       # картинок нет, - иначе он проверяет наличие колеса, а не поведение слоя.
       - run: pip install --quiet httpx
       - run: python3 tests/test_public.py
+      # ДОЗОРНЫЙ - СВОИМ ШАГОМ: README ссылается на этот набор, а CI его не гонял (аудит 27.09).
+      # Сети он не требует, пакетов сверх httpx тоже.
+      - run: python3 tests/test_sentinel.py
       - run: python3 scrub.py
