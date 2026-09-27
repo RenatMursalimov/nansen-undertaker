@@ -2088,13 +2088,15 @@ def t_live_defects_after_1b():
           all('sm_perp' in p['kinds'] for p in store.PRESETS.values()),
           [p['kinds'] for p in store.PRESETS.values()])
     # ── 3. АДРЕС SOLANA НЕ ПРИВОДИТСЯ К НИЖНЕМУ РЕГИСТРУ ─────────────────────────────────
-    # Живой замер: `3uox8K7U…` как есть -> 10 связей, в нижнем регистре -> 422
+    # Живой замер: адрес как есть -> 10 связей, в нижнем регистре -> 422
     # invalid_address_format. base58 чувствителен к регистру; проверка связей по Solana не
-    # работала никогда и давала «связи не проверены: badreq».
-    sol = '3uox8K7U4NZoZCXKFYm1CpT1TX3etbHDtJNv1ggBSjpK'
+    # работала никогда и давала «связи не проверены: badreq». Адреса здесь - синтетические
+    # метки смешанного регистра: настоящие кошельки из живой ленты уезжали в публичный тест
+    # (аудит 27.09), а проверке нужен только регистр, не форма base58.
+    sol = 'SoLCaseWa11etOne'
     trs = [{'transaction_hash': '0xs%d' % i, 'token_bought_symbol': 'CASE',
             'token_bought_address': 'CaseMint111', 'chain': 'solana', 'trade_value_usd': 1000,
-            'trader_address': (sol if i == 0 else 'Bi8CtUDGiGz2Y9ptmTnoAcrvjaJiVak868bwV8Qrbxmi'),
+            'trader_address': (sol if i == 0 else 'SoLCaseWa11etTwo'),
             'block_timestamp': __import__('datetime').datetime.utcfromtimestamp(
                 now - 60).strftime('%Y-%m-%dT%H:%M:%SZ')} for i in range(2)]
     g = list(ignition.group(ignition.rows_from_feed(trs), now=now).values())[0]
@@ -2113,7 +2115,7 @@ def t_live_defects_after_1b():
     check('LIVE3: в Nansen уходит адрес как есть, а не в нижнем регистре',
           sol in seen and sol.lower() not in seen, seen)
     # ── 4. ТЕХНИЧЕСКИЕ МЕТКИ ЧЕЛОВЕКУ НЕ ПОКАЗЫВАЕМ ─────────────────────────────────────
-    for lb in ('Uses "LEGENDTRADE" HL Referral Code', 'wallet.poor', 'sh4dow.eth*',
+    for lb in ('Uses "LEGENDTRADE" HL Referral Code', 'wallet.poor', 'example.eth*',
                'Funded @abc On Friendtech'):   # короткая ручка: скруббер выжимки берёт 4+
         check('LIVE4: техническая метка скрыта: %s' % lb, N.meaningful_label(lb) == '')
     for lb in ('HL Perps Whale', 'Smart Trader', 'Fund', 'STONK Whale',
