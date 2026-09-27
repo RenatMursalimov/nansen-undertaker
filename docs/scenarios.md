@@ -535,10 +535,13 @@ turnover are not watched.
 
 What arrives: one card per move (the ticker links to the instrument card, a class mark next to it),
 then only "strengthened" or "pulled back" as a reply to it, at most two per kind. The **same card
-is edited** with Nansen context: smart-money net over 3 h and who sold/bought
-(`tgm/who-bought-sold`), 24 h segments (`tgm/flow-intelligence`), whose leverage
-(`perp-positioning`), the two nearest liquidation clusters from $100k (`perp-positions`) and a
-verdict computed by code. Two events are born in Nansen itself: Smart Ignition (3+ smart addresses
+is edited** with Nansen context: large addresses over 3 h, net and who sold/bought
+(`tgm/who-bought-sold`; the request carries no smart-money label filter, so the card does not call
+them smart money), 24 h segments (`tgm/flow-intelligence`), whose leverage
+(`tgm/position-intelligence`), the two nearest liquidation clusters from $100k
+(`tgm/perp-positions`) and a verdict computed by code. When the provider refuses, the verdict says
+so: "on-chain not read" with the reason (402, 429), and no net.
+Two events are born in Nansen itself: Smart Ignition (3+ smart addresses
 bought one token for $100k+ within 180 min and at least 5 bps of market cap,
 `smart-money/dex-trades`) and Smart Perp (2+ smart addresses opened one side for $250k+ within
 30 min, `smart-money/perp-trades`).

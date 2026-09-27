@@ -204,9 +204,11 @@ separately — a visible “184 unpriced calls” is better than a tidy total bu
 
 `sentinel/` watches **553** Variational Omni instruments, **234** Hyperliquid perps and **210** live
 Lighter markets and pings a Telegram chat only when a move is unusual *for that instrument* (no
-sigma over 20+ points, no event). Nansen context is written into the same card: smart-money net
-over 3 h (`tgm/who-bought-sold`), 24 h holder segments (`tgm/flow-intelligence`), whose leverage
-(`perp-positioning`), the nearest liquidation clusters (`perp-positions`), plus two Nansen-born
+sigma over 20+ points, no event). Nansen context is written into the same card: large addresses
+over 3 h, net and who bought or sold (`tgm/who-bought-sold`; the request has no smart-money label
+filter, so the card does not call them smart money), 24 h holder segments
+(`tgm/flow-intelligence`), whose leverage (`tgm/position-intelligence`), the nearest liquidation
+clusters (`tgm/perp-positions`), plus two Nansen-born
 events: Smart Ignition (`smart-money/dex-trades`) and Smart Perp (`smart-money/perp-trades`). The
 ticker is a link to the instrument card, presets show what they change before applying, and a
 line that does not change the trader's decision is not printed (a law test enforces it). Every

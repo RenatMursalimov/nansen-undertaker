@@ -542,33 +542,63 @@ async def confirm(symbol, price, chain_hint=None, hours=None):
         ch = out['chain'] or 'ethereum'
         _h = int(hours or CONFIRM_HOURS)
         out['hours'] = _h
-        with _tele.scene('sentinel_ignition', None, surface='sentinel'):
-            # ОКНО В ЧАСАХ И СВОЙ КОРОТКИЙ КЭШ: общий тридцатиминутный кэш превратил бы «сейчас»
-            # в «раз в полчаса» - наблюдатель обязан видеть свежее, иначе он не наблюдатель.
-            buys = await asyncio.to_thread(_n.tgm_who_bought_sold, ch, addr, 'BUY', 6, 1,
-                                           _h, 20)
-            sells = await asyncio.to_thread(_n.tgm_who_bought_sold, ch, addr, 'SELL', 6, 1,
-                                            _h, 20)
+        rows, why = {}, {}
+        for side in ('BUY', 'SELL'):
+            # ═══ КОРОБКА НА СТОРОНУ, И ПРИЧИНА ЧИТАЕТСЯ ВНУТРИ НЕЁ (Д2, ревью 27.09) ═══
+            # Класс отказа лежит в коробке вызова (`nansen_log`), а читался ПОСЛЕ выхода из
+            # `with` - коробка к тому времени сброшена, и `fail_reason` отдавал дефолт `empty`:
+            # 402 печатался как «след за 3 ч пустой». Тот же класс уже исправлен в `lab.py`.
+            # Коробка у каждой стороны своя, потому что `outcome()` отдаёт ХУДШИЙ исход коробки,
+            # и в общей отказ одной стороны читался бы причиной другой.
+            with _tele.scene('sentinel_ignition', None, surface='sentinel'):
+                # ОКНО В ЧАСАХ И СВОЙ КОРОТКИЙ КЭШ: общий тридцатиминутный кэш превратил бы
+                # «сейчас» в «раз в полчаса» - наблюдатель обязан видеть свежее.
+                got = await asyncio.to_thread(_n.tgm_who_bought_sold, ch, addr, side, 6, 1,
+                                              _h, 20)
+                rows[side] = got or []
+                why[side] = None if got else _n.fail_reason('empty')
         out['credits'] = 2 * _CREDITS_SM_DEX
         store.spend_add(credits=out['credits'])
-        out['buyers'] = buys or []
-        out['sellers'] = sells or []
-        if not buys and not sells:
-            out['refused'] = _fail_words()
+        # ═══ ОТКАЗ ЛЮБОЙ СТОРОНЫ - «ОНЧЕЙН НЕ ПРОЧИТАН», И СТРОК НЕТ ВОВСЕ (Д4) ═══
+        # Нетто - это покупки МИНУС продажи. Без одной стороны оно не измерение, а половина
+        # картины, поданная как вся: BUY=200 и SELL=429 давали «подтверждают: нетто +$400k».
+        # Список одной стороны тоже не отдаём - он читается тем же выводом.
+        bad = [(s, why[s]) for s in ('BUY', 'SELL') if why[s] not in (None, 'empty')]
+        if bad:
+            out['fail'] = bad[0][1]
+            out['fail_words'] = _fail_text(bad)
+            out['refused'] = 'ончейн не прочитан: %s' % out['fail_words']
+            return out
+        out['buyers'], out['sellers'] = rows['BUY'], rows['SELL']
     except Exception as e:
+        out['fail'] = 'error'
+        out['fail_words'] = 'сбой у нас (%s)' % type(e).__name__
         out['refused'] = 'ончейн не прочитан: %s: %s' % (type(e).__name__, str(e)[:100])
     return out
 
 
-def _fail_words():
-    """Почему ончейн пуст — СЛОВАМИ ПЛОЩАДКИ, а не нашим «данных нет».
+#: КЛАСС ОТКАЗА -> КОРОТКИЕ СЛОВА ДЛЯ СТРОКИ ИТОГА «ончейн не прочитан: …». Полные фразы
+#: `nansen_api.refusal` писаны для отдельного экрана; в карточке нужна одна строка, и класс в
+#: ней обязан остаться различимым: 402 - пополнить, 429 - подождать, 400/422 - наш баг.
+_FAIL_SHORT = {
+    'nokey': 'ключ Nansen не задан',
+    'nocredits': 'кредиты Nansen кончились (402)',
+    'ratelimit': 'Nansen придержал по частоте (429)',
+    'timeout': 'Nansen не ответил вовремя',
+    'badreq': 'Nansen не принял наш запрос (400/422)',
+    'http': 'Nansen ответил ошибкой',
+    'unsupported': 'Nansen не покрывает этот токен',
+}
+_SIDE_WORDS = {'BUY': 'покупки', 'SELL': 'продажи'}
 
-    Класс отказа лежит в коробке вызова (`nansen_log`), и брать его надо оттуда: «пустота» и
-    «нам отказали» выглядят одинаково в `[]`, и именно это в проекте однажды выдало чистую
-    страницу вместо сообщения о нехватке кредитов.
-    """
-    try:
-        import nansen_api as _n
-        return _n.fail_reason('empty')
-    except Exception:
-        return 'empty'
+
+def _fail_text(bad):
+    """[(сторона, класс)] -> «продажи: Nansen придержал по частоте (429)». -> str.
+
+    Обе стороны с одним классом - одной фразой без сторон: «покупки и продажи» к причине
+    ничего не добавляет. Разные классы или одна сторона - поимённо: человеку важно, что именно
+    не прочитано, а не только что что-то не так."""
+    words = [(s, _FAIL_SHORT.get(c) or ('отказ Nansen (%s)' % c)) for s, c in bad]
+    if len(words) == 2 and words[0][1] == words[1][1]:
+        return words[0][1]
+    return '; '.join('%s: %s' % (_SIDE_WORDS[s], w) for s, w in words)

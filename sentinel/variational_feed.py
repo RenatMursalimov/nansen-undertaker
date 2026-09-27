@@ -172,6 +172,11 @@ class Listing:
     @property
     def oi_skew(self):
         """Доля лонгов в открытом интересе, 0..1. None — если сторон нет или интерес нулевой."""
+        # СТОРОН НЕТ - ПЕРЕКОСА НЕТ (Д3, ревью 27.09). Hyperliquid отдаёт интерес одним числом,
+        # и `oi_total` здесь - это `oi_total_raw`: деление нуля лонгов на него давало 0.0, то
+        # есть «лонгов 0%» в карточке и событие «100% интереса в шорты» у детектора.
+        if self.oi_long is None and self.oi_short is None:
+            return None
         tot = self.oi_total
         if not tot:
             return None
