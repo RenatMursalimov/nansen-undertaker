@@ -344,7 +344,7 @@ def smart_money_netflow(chains=None, timeframe="24h", only_smart_money=True, per
 # Остаток кредитов приходит В ЗАГОЛОВКАХ ЛЮБОГО ответа, поэтому отдельный запрос за ним
 # не нужен. Раньше credits_left() дёргал agent/fast со словом «hi» — то есть проверка
 # баланса стоила ~200 кредитов и сама же его уменьшала.
-_CREDITS = {'remaining': None, 'used': None, 'ts': 0, 'invalid': False}
+_CREDITS = {'remaining': None, 'used': None, 'ts': 0, 'invalid': False, 'last_cost': None}
 _CREDITS_LOCK = threading.RLock()
 
 
@@ -358,6 +358,17 @@ def _note_credits(hdr):
         low = dict((k.lower(), v) for k, v in dict(hdr).items())
     except Exception:
         return
+    # ═══ ЦЕНА ВЫЗОВА - ЗАГОЛОВКОМ, А НЕ ДОГАДКОЙ (Д6, пробы 27.09) ═══
+    # Площадка отдаёт `x-nansen-credits-cost` на КАЖДЫЙ ответ, включая 422 и 404 (проба №4:
+    # 422 с cost=5; проба №6: 404 с cost=1). Дозорный копил константы (5 за ленту, 10 за
+    # confirm) при любом исходе, и «кредитов сожжено сегодня» расходилось с площадкой.
+    # Заголовок запоминается ДО проверки остатка: остаток приходит не на каждый код ответа.
+    cost = low.get('x-nansen-credits-cost')
+    with _CREDITS_LOCK:
+        try:
+            _CREDITS['last_cost'] = int(str(cost).strip()) if cost is not None else None
+        except (TypeError, ValueError):
+            _CREDITS['last_cost'] = None
     rem = low.get('x-nansen-credits-remaining')
     if rem is None:
         return
@@ -385,6 +396,17 @@ def _note_credits(hdr):
         # used другого и не пишут полусобранный JSON.
         _tele.credits_write(_CREDITS['remaining'], _CREDITS['used'],
                             invalid=bool(_CREDITS.get('invalid')))
+
+
+def last_cost(default=None):
+    """Цена ПОСЛЕДНЕГО сетевого ответа по заголовку `x-nansen-credits-cost`. -> int | default.
+
+    Читать сразу после вызова, в том же потоке, что и вызов: следующий ответ перепишет.
+    Кэшированный ответ заголовка не несёт, и здесь остаётся цена предыдущего сетевого - поэтому
+    вызывающий, который хочет отличить кэш от сети, смотрит на `_tele.box()['calls']`, а не сюда."""
+    with _CREDITS_LOCK:
+        c = _CREDITS.get('last_cost')
+    return c if isinstance(c, int) else default
 
 
 def credits_left(force=False):
@@ -820,7 +842,11 @@ def _date_range(days=7, hours=None):
     «за сутки». На пятнадцатиминутном движении WLD это выглядело так: контекст «смарт-мани
     продали на $75k» относился к суткам, тогда как за последние три часа реальный след был
     $2.1k, $912 и $880. Число верное, ответ не на тот вопрос.
-    ЖИВАЯ ПРОБА ПОДТВЕРДИЛА, ЧТО РУЧКА ПРИНИМАЕТ ЧАСЫ: окно в три часа вернуло строки.
+    ЧАСЫ УЧИТЫВАЮТСЯ, И ЭТО ДОКАЗАНО (проба 27.09, `tgm/who-bought-sold` по WETH на Base): два
+    непересекающихся окна одного дня, 00-02 и 02-04 UTC, вернули РАЗНЫЕ строки (сумма покупок
+    $10.4M против $4.7M), а окно «3 ч» против календарного «сегодня» дало $12.8M против $16.0M.
+    Ручка, которая срезала бы часы до даты, ответила бы на оба окна одинаково. До этой пробы
+    «окно в три часа вернуло строки» доказывало только, что формат принят (ревью 27.09, Д7).
     ЧАСЫ И ДНИ НЕ СМЕШИВАЮТСЯ: задан `hours` - окно ровно от «сейчас минус N часов» до «сейчас»,
     без округления до суток. Округли его - и вернётся ровно та ошибка, ради которой всё это.
     """
@@ -1448,7 +1474,7 @@ def _http_once(base, path, body, timeout, tag):
                  empty=empty, cache=False, rem=_rem,
                  used=_CREDITS.get('used'), rem_before=rem_before, parallel=parallel,
                  overlap=(overlap_end != overlap_start),
-                 sig=_tele.sig_of(path, body), cls=_cls)
+                 sig=_tele.sig_of(path, body), cls=_cls, cost=last_cost())
     return j, http
 
 
@@ -2235,6 +2261,15 @@ def token_info_block(chain, token_address, lang='ru'):
     if not isinstance(row, dict):
         return None, fail_reason('empty')
     _shape("token-information", row)
+    # ═══ ЧИСЛА ЛЕЖАТ ВЛОЖЕННО (проба №7 27.09) ═══
+    # Верхний уровень ответа - `contract_address, logo, name, spot_metrics, symbol,
+    # token_details`; капитализация, объём, держатели живут ВНУТРИ `token_details` и
+    # `spot_metrics`. Прежний код читал их с верхнего уровня, не находил ни одного числа и
+    # отвечал `empty` на живой WETH - человек читал «данных нет» (Д9). Вложенные словари
+    # разворачиваются в ту же строку; верхние поля старой плоской формы при этом остаются.
+    for _nest in ("token_details", "spot_metrics"):
+        if isinstance(row.get(_nest), dict):
+            row = dict(row[_nest], **{k: v for k, v in row.items() if k != _nest})
     sym = _first(row, ("symbol", "token_symbol"), "?")
     name = _first(row, ("name", "token_name"), "")
     _htitle = "Nansen · token info" if lang == 'en' else "Nansen · справка по токену"
@@ -2501,7 +2536,9 @@ def tgm_dex_trades(chain, token_address, per_page=20, days=1):
 
 def tgm_transfers(chain, token_address, per_page=20, days=1):
     """Крупнейшие переводы токена за период. -> [dict]. ~1 кр."""
-    return _rows(_post("tgm/token-transfers",
+    # ПУТЬ `tgm/transfers` (проба №6 27.09): прежний `tgm/token-transfers` отвечает 404,
+    # этот - 200. В спецификации только он.
+    return _rows(_post("tgm/transfers",
                        {"chain": _nc(chain), "token_address": token_address,
                         "date": _date_range(days),
                         "pagination": {"page": 1, "per_page": per_page}},
@@ -2513,7 +2550,8 @@ def tgm_price_ohlcv(chain, token_address, timeframe="1d", days=30):
 
     Отдельно от `historical_ohlcv` (бета, 5 кр, 180 дней): для карточки и графика хватает
     этого, а бета нужна бэктесту с длинной историей."""
-    return _rows(_post("tgm/price-ohlcv",
+    # ПУТЬ `tgm/token-ohlcv` (проба №6 27.09): `tgm/price-ohlcv` отвечает 404, этот - 200.
+    return _rows(_post("tgm/token-ohlcv",
                        {"chain": _nc(chain), "token_address": token_address,
                         "timeframe": timeframe, "date": _date_range(days)},
                        ckey=f"tgmohlcv:{chain}:{token_address}:{timeframe}:{days}"))
@@ -2567,10 +2605,18 @@ def profiler_perp_positions(address):
 
     ПУТЬ `profiler/perp-positions`, БЕЗ `address/` В СЕРЕДИНЕ И БЕЗ `pagination` В ТЕЛЕ - оба
     факта из пробы 20.09: прежний путь даёт 404, а этот отвечает 422 «Field 'pagination' is not
-    recognized», то есть живёт и разбирает тело. Пагинацию не посылаем вовсе."""
-    rows = _rows(_post_fix("profiler/perp-positions", {"address": address},
-                           ckey=f"pperp:{address}"))
-    return rows[0] if rows else None
+    recognized», то есть живёт и разбирает тело. Пагинацию не посылаем вовсе.
+
+    ═══ `data` - ОБЪЕКТ, А НЕ СПИСОК (проба №5 27.09) ═══
+    Ответ несёт словарь: `asset_positions` (список позиций, у каждой вложенный `position`),
+    `margin_summary_account_value_usd`, `margin_summary_total_margin_used_usd`,
+    `withdrawable_usd`, `timestamp` и cross-варианты тех же сумм. Прежний код брал `rows[0]` от
+    словаря - `KeyError(0)`, и человек читал «Не собралось: 0» (Д1)."""
+    j = _post_fix("profiler/perp-positions", {"address": address}, ckey=f"pperp:{address}")
+    d = j.get("data") if isinstance(j, dict) and "data" in j else j
+    if isinstance(d, list):
+        d = d[0] if d and isinstance(d[0], dict) else None
+    return d if isinstance(d, dict) and d else None
 
 
 def perp_positions(token, per_page=20):
@@ -2597,10 +2643,15 @@ def perp_positions(token, per_page=20):
 
 def perp_pnl_leaderboard(token, per_page=10, days=7):
     """PnL трейдеров по КОНКРЕТНОМУ перп-токену. -> [dict]. ~5 кр."""
+    # ПОЛЕ `token_symbol` И СОРТИРОВКА `pnl_usd_total` - СЛОВА ПЛОЩАДКИ (проба №4 27.09):
+    # на `token` ответ 422 «Required field 'body -> token_symbol' is missing», на `total_pnl`
+    # 422 «Valid options are: pnl_usd_realised, pnl_usd_unrealised, pnl_usd_total,
+    # roi_percent_total, …». Ремонт по словам площадки останавливался на первом: «нужно
+    # обязательное поле, а построить его нам нечем».
     return _rows(_post_fix("tgm/perp-pnl-leaderboard",
-                       {"token": str(token).upper(), "date": _date_range(days),
+                       {"token_symbol": str(token).upper(), "date": _date_range(days),
                         "pagination": {"page": 1, "per_page": per_page},
-                        "order_by": [{"field": "total_pnl", "direction": "DESC"}]},
+                        "order_by": [{"field": "pnl_usd_total", "direction": "DESC"}]},
                        ckey=f"perppnl:{token}:{per_page}:{days}"))
 
 
@@ -2668,7 +2719,9 @@ def profiler_dex_trades(address, chain="ethereum", per_page=20, days=30):
 
 def profiler_perp_trades(address, per_page=20, days=30):
     """Сделки адреса на Hyperliquid. -> [dict]."""
-    return _rows(_post("profiler/address/perp-trades",
+    # ПУТЬ `profiler/perp-trades`, без `address/` (проба №6 27.09): как у соседнего
+    # `profiler/perp-positions`, найденного пробой 20.09. Прежний путь - 404.
+    return _rows(_post("profiler/perp-trades",
                        {"address": address, "date": _date_range(days),
                         "pagination": {"page": 1, "per_page": per_page}},
                        ckey=f"pperptr:{address}:{per_page}:{days}"))
@@ -2676,7 +2729,9 @@ def profiler_perp_trades(address, per_page=20, days=30):
 
 def profiler_historical_balances(address, chain="ethereum", days=30, per_page=50):
     """Историческиe холдинги адреса: как менялся портфель. -> [dict]. ~5 кр."""
-    return _rows(_post("profiler/address/historical-token-balances",
+    # ПУТЬ `profiler/address/historical-balances` (проба №6 27.09): прежний
+    # `…/historical-token-balances` - 404.
+    return _rows(_post("profiler/address/historical-balances",
                        {"address": address, "chain": _nc(chain), "date": _date_range(days),
                         "pagination": {"page": 1, "per_page": per_page}},
                        ckey=f"phist:{chain}:{address}:{days}:{per_page}"))
@@ -2690,7 +2745,8 @@ def pm_categories():
 
 def pm_events(query="", per_page=15):
     """События Polymarket (событие = группа рынков). -> [dict]."""
-    return _rows(_post("prediction-market/events",
+    # ПУТЬ `prediction-market/event-screener` (проба №6 27.09): `…/events` - 404.
+    return _rows(_post("prediction-market/event-screener",
                        {"query": query or "", "pagination": {"page": 1, "per_page": per_page},
                         "order_by": [{"field": "volume_24hr", "direction": "DESC"}]},
                        ckey=f"pmev:{query}:{per_page}"))
@@ -2773,7 +2829,8 @@ def pm_ohlcv(market_id, outcome_index=0):
 
 def pm_market_trades(market_id, per_page=20):
     """Недавние сделки рынка. -> [dict]."""
-    return _rows(_post_fix("prediction-market/trades",
+    # ПУТЬ `prediction-market/trades-by-market` (проба №6 27.09): `…/trades` - 404.
+    return _rows(_post_fix("prediction-market/trades-by-market",
                        {"market_id": str(market_id),
                         "pagination": {"page": 1, "per_page": per_page}},
                        ckey=f"pmtr:{market_id}:{per_page}"))
@@ -2781,9 +2838,12 @@ def pm_market_trades(market_id, per_page=20):
 
 def pm_wallet_trades(address, per_page=20):
     """Сделки кошелька по всем рынкам. -> [dict]."""
-    return _rows(_post("prediction-market/wallet-trades",
-                       {"address": address, "pagination": {"page": 1, "per_page": per_page}},
-                       ckey=f"pmwtr:{address}:{per_page}"))
+    # ПУТЬ `prediction-market/trades-by-address` (спецификация 27.09, соседний
+    # `trades-by-market` снят пробой №6): `…/wallet-trades` - 404. Схема тела живьём не
+    # снята, поэтому `_post_fix`: ремонт по словам площадки.
+    return _rows(_post_fix("prediction-market/trades-by-address",
+                           {"address": address, "pagination": {"page": 1, "per_page": per_page}},
+                           ckey=f"pmwtr:{address}:{per_page}"))
 
 
 def smart_money_dcas(per_page=20):
@@ -3348,14 +3408,19 @@ def hist_quant_scores(chain, token_address, day):
     return rows[0] if rows else None
 
 
-def hist_token_screener(day, chains=None, per_page=20):
-    """Скринер токенов НА ДАТУ: что было в топе тогда. -> [dict]. 5 кр."""
+def hist_token_screener(day, chains=None, per_page=20, timeframe_days=1):
+    """Скринер токенов НА ДАТУ: что было в топе тогда. -> [dict]. 5 кр.
+
+    ТЕЛО ПО СПЕЦИФИКАЦИИ (openapi, проба №1 27.09): обязательные `timeframe_days` и `to_date`,
+    поля `as_of_date` у ручки нет («лишние=['as_of_date'] нет_обязательных=['timeframe_days',
+    'to_date']»). `to_date` - конец окна, `timeframe_days` - его длина в днях."""
     d = str(day)[:10]
     chains = chains or ["ethereum", "solana", "base"]
     return _rows(_post_beta("token-screener/historical",
-                            {"chains": chains, "as_of_date": d,
+                            {"chains": chains, "to_date": d,
+                             "timeframe_days": int(timeframe_days),
                              "pagination": {"page": 1, "per_page": per_page}},
-                            ckey=f"hscr:{','.join(chains)}:{d}:{per_page}",
+                            ckey=f"hscr:{','.join(chains)}:{d}:{timeframe_days}:{per_page}",
                             ttl=30 * 24 * 3600))
 
 
@@ -3604,11 +3669,28 @@ def positioning_key(token, market=None):
     if not t:
         return None, 'пусто'
     if not _ADDR_RE.match(t):
-        return t.upper()[:20], 'тикер'
+        _tk = t.upper()[:20]
+        return (_PERP_WRAPPERS[_tk], 'тикер, обёртка сведена к перп-рынку') \
+            if _tk in _PERP_WRAPPERS else (_tk, 'тикер')
     sym = str((market or {}).get('symbol') or '').strip().upper()
     if sym and re.match(r'^[A-Z0-9]{1,20}$', sym):
+        # ═══ ОБЁРТКА НАТИВА -> ТИКЕР ПЕРП-РЫНКА (Д8, проба №3 27.09) ═══
+        # DEX Screener называет контракт символом обёртки, а перп-рынка «WETH» нет: по `ETH`
+        # ручка отдала смарт-трейдеров лонг $82.1M, по `WETH` и по контракту - нули. Свод живёт
+        # здесь, в единственной двери выбора ключа, а не у вызывающих.
+        if sym in _PERP_WRAPPERS:
+            return _PERP_WRAPPERS[sym], 'символ контракта, обёртка сведена к перп-рынку'
         return sym, 'символ контракта'
     return None, 'адрес без опознанного рынка'
+
+
+#: ОБЁРТКИ НАТИВОВ -> ТИКЕР ПЕРП-РЫНКА. Список закрытый: свод по правилу «отрезать W» однажды
+#: превратил бы чужой токен на «W» в мейджор. `WMATIC` идёт в `POL`: рынок переименован.
+_PERP_WRAPPERS = {
+    'WETH': 'ETH', 'STETH': 'ETH', 'WSTETH': 'ETH', 'WEETH': 'ETH', 'RETH': 'ETH', 'CBETH': 'ETH',
+    'WBTC': 'BTC', 'CBBTC': 'BTC', 'TBTC': 'BTC',
+    'WSOL': 'SOL', 'WBNB': 'BNB', 'WMATIC': 'POL', 'WPOL': 'POL', 'WAVAX': 'AVAX',
+}
 
 
 #: СЕГМЕНТЫ ОТВЕТА: ключ в ответе -> (RU, EN). Порядок задаёт порядок строк экрана и выбран по
@@ -3786,15 +3868,38 @@ def wallet_perp_block(d, address, lang='ru'):
     short = '%s…%s' % (address[:6], address[-4:])
     L = [('🩺 <b>Счёт на перпах</b> <code>%s</code>' % short) if lang != 'en'
          else ('🩺 <b>Perp account</b> <code>%s</code>' % short)]
-    eq = _first(d, ('account_value', 'equity', 'account_value_usd'))
-    mar = _first(d, ('margin_used', 'margin_used_usd', 'total_margin_used'))
-    pnl = _first(d, ('unrealized_pnl', 'unrealized_pnl_usd'))
+    # ИМЕНА ПОЛЕЙ - ИЗ ЖИВОГО ОТВЕТА (проба №5 27.09): `margin_summary_account_value_usd`,
+    # `margin_summary_total_margin_used_usd`, `withdrawable_usd`; позиции - `asset_positions`,
+    # у каждой вложенный `position` с `coin`, `szi` (знак = сторона), `leverage.value`,
+    # `liquidation_px`, `position_value`, `unrealized_pnl`. Прежние имена оставлены в списках
+    # кандидатов: они ничего не стоят, а форма ответа у площадки уже менялась.
+    eq = _first(d, ('margin_summary_account_value_usd', 'account_value', 'equity',
+                    'account_value_usd'))
+    mar = _first(d, ('margin_summary_total_margin_used_usd', 'margin_used', 'margin_used_usd',
+                     'total_margin_used'))
+    free = _first(d, ('withdrawable_usd', 'withdrawable'))
     health = _first(d, ('account_health', 'health', 'margin_ratio'))
+    pos = d.get('positions') if isinstance(d.get('positions'), list) else []
+    if not pos and isinstance(d.get('asset_positions'), list):
+        pos = [(p.get('position') if isinstance(p.get('position'), dict) else p)
+               for p in d['asset_positions'] if isinstance(p, dict)]
+    # НЕРЕАЛИЗОВАННЫЙ PnL СЧЁТА - СУММА ПО ПОЗИЦИЯМ: отдельным полем верхний уровень его не несёт
+    pnl = _first(d, ('unrealized_pnl', 'unrealized_pnl_usd'))
+    if pnl in (None, '') and pos:
+        _acc = [_first(p, ('unrealized_pnl', 'unrealized_pnl_usd')) for p in pos
+                if isinstance(p, dict)]
+        try:
+            pnl = sum(float(x) for x in _acc if x not in (None, '')) if any(
+                x not in (None, '') for x in _acc) else None
+        except (TypeError, ValueError):
+            pnl = None
     seg = []
     if eq not in (None, ''):
         seg.append(('капитал $%s' if lang != 'en' else 'equity $%s') % _usd(eq))
     if mar not in (None, ''):
         seg.append(('под залогом $%s' if lang != 'en' else 'margin $%s') % _usd(mar))
+    if free not in (None, ''):
+        seg.append(('можно вывести $%s' if lang != 'en' else 'withdrawable $%s') % _usd(free))
     if pnl not in (None, ''):
         try:
             seg.append(('нереализ. +$' if float(pnl) >= 0 else 'нереализ. -$') + _usd(abs(float(pnl)))
@@ -3806,16 +3911,26 @@ def wallet_perp_block(d, address, lang='ru'):
         L.append('📈 ' + ' · '.join(seg))
     if health not in (None, ''):
         L.append(('🩺 здоровье счёта: %s' if lang != 'en' else '🩺 account health: %s') % health)
-    pos = d.get('positions') if isinstance(d.get('positions'), list) else []
     for p in pos[:8]:
         if not isinstance(p, dict):
             continue
         _c = _first(p, ('coin', 'token', 'symbol')) or '?'
         _sd = (_first(p, ('side', 'direction')) or '').upper()[:5]
+        if not _sd:
+            # СТОРОНА - ЗНАК РАЗМЕРА (`szi`), как у Hyperliquid: отрицательный размер = шорт
+            try:
+                _sz = float(_first(p, ('szi', 'size', 'position_size')) or 0)
+                _sd = 'SHORT' if _sz < 0 else ('LONG' if _sz > 0 else '')
+            except (TypeError, ValueError):
+                _sd = ''
         _lv = _first(p, ('leverage', 'leverage_x'))
-        _lq = _first(p, ('liquidation_price', 'liq_price'))
+        if isinstance(_lv, dict):
+            _lv = _lv.get('value')
+        _lq = _first(p, ('liquidation_price', 'liquidation_px', 'liq_price'))
+        _pv = _first(p, ('position_value', 'position_value_usd'))
         _bits = [x for x in (
             ('%sx' % int(float(_lv))) if _lv not in (None, '') else None,
+            ('$%s' % _usd(_pv)) if _pv not in (None, '') else None,
             (('ликв. $%s' if lang != 'en' else 'liq $%s') % _money(_lq))
             if _lq not in (None, '') else None) if x]
         L.append('• %s %s %s' % (_c, _sd, ' · '.join(_bits)))

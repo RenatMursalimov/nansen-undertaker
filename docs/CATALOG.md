@@ -895,13 +895,13 @@ The list is COMPUTED at build time (client minus catalog): a new route with no w
 
 * `perp-screener`
 * `prediction-market/categories`
-* `prediction-market/events`
-* `prediction-market/trades`
-* `prediction-market/wallet-trades`
-* `profiler/address/historical-token-balances`
-* `profiler/address/perp-trades`
+* `prediction-market/event-screener`
+* `prediction-market/trades-by-address`
+* `prediction-market/trades-by-market`
+* `profiler/address/historical-balances`
 * `profiler/address/transactions`
 * `profiler/dex-trades`
+* `profiler/perp-trades`
 * `smart-money/perp-trades`
 * `tgm/dex-trades`
 * `tgm/flows`
@@ -910,8 +910,8 @@ The list is COMPUTED at build time (client minus catalog): a new route with no w
 * `tgm/historical-top-holders`
 * `tgm/historical-who-bought-sold`
 * `tgm/perp-pnl-leaderboard`
-* `tgm/price-ohlcv`
-* `tgm/token-transfers`
+* `tgm/token-ohlcv`
+* `tgm/transfers`
 * `token-screener/historical`
 * `trade/bridge-status`
 * `trade/execute`

@@ -95,7 +95,7 @@ def registry():
         # `chains` эндпоинт не знает вовсе (422 «Field 'chains' is not recognized»), и лишнее
         # поле здесь ломает запрос, а не уточняет его.
         _case('smart-money/dcas', {'pagination': _pg()}),
-        _case('chains/chain-rank', {'pagination': _pg()}),
+        _case('chains/chain-rank', {}),
         # ПАГИНАЦИИ ЗДЕСЬ НЕТ НАРОЧНО: живая проба 24.09 сказала «Field 'pagination' is not
         # recognized» - у этой ручки тело минимальное, и лишнее поле её ломает.
         _case('portfolio/defi-holdings', {'wallet_address': WALLET}),
@@ -130,10 +130,10 @@ def registry():
         _case('tgm/dex-trades',
               {'chain': 'base', 'token_address': TOKEN, 'date': _dr(1),
                'pagination': _pg()}),
-        _case('tgm/token-transfers',
+        _case('tgm/transfers',
               {'chain': 'base', 'token_address': TOKEN, 'date': _dr(1),
                'pagination': _pg()}),
-        _case('tgm/price-ohlcv',
+        _case('tgm/token-ohlcv',
               {'chain': 'base', 'token_address': TOKEN, 'timeframe': '1d',
                'date': _dr(30)}),
         _case('perp-leaderboard',
@@ -153,9 +153,12 @@ def registry():
         # в официальном списке цены нет, поэтому в телеметрии ручка помечена как unpriced и
         # экраны считают её запросами, а не кредитами.
         _case('tgm/position-intelligence', {'token_address': TOKEN}),
+        # ПОЛЕ `token_symbol` И СОРТИРОВКА `pnl_usd_total` - слова площадки (проба №4 27.09):
+        # на `token` ручка отвечала 422 «token_symbol is missing», на `total_pnl` - 422 с
+        # перечнем допустимых полей.
         _case('tgm/perp-pnl-leaderboard',
-              {'token': 'BTC', 'date': _dr(7), 'pagination': _pg(),
-               'order_by': [{'field': 'total_pnl', 'direction': 'DESC'}]}),
+              {'token_symbol': 'BTC', 'date': _dr(7), 'pagination': _pg(),
+               'order_by': [{'field': 'pnl_usd_total', 'direction': 'DESC'}]}),
 
         _case('profiler/address/labels',
               {'address': WALLET, 'chain': 'ethereum', 'pagination': _pg(100)}),
@@ -182,14 +185,14 @@ def registry():
         _case('profiler/dex-trades',
               {'address': WALLET, 'chain': 'ethereum', 'date': _dr(30),
                'pagination': _pg()}),
-        _case('profiler/address/perp-trades',
+        _case('profiler/perp-trades',
               {'address': WALLET, 'date': _dr(30), 'pagination': _pg()}),
-        _case('profiler/address/historical-token-balances',
+        _case('profiler/address/historical-balances',
               {'address': WALLET, 'chain': 'ethereum', 'date': _dr(30),
                'pagination': _pg()}),
 
         _case('prediction-market/categories', {}),
-        _case('prediction-market/events',
+        _case('prediction-market/event-screener',
               {'query': '', 'pagination': _pg(),
                'order_by': [{'field': 'volume_24hr', 'direction': 'DESC'}]}),
         _case('prediction-market/market-screener',
@@ -197,8 +200,8 @@ def registry():
                'status': 'active', 'pagination': _pg()}),
         _case('prediction-market/orderbook', {'market_id': MARKET}),
         _case('prediction-market/ohlcv', {'market_id': MARKET}),
-        _case('prediction-market/trades', {'market_id': MARKET, 'pagination': _pg()}),
-        _case('prediction-market/wallet-trades', {'address': WALLET, 'pagination': _pg()}),
+        _case('prediction-market/trades-by-market', {'market_id': MARKET, 'pagination': _pg()}),
+        _case('prediction-market/trades-by-address', {'address': WALLET, 'pagination': _pg()}),
         _case('prediction-market/top-holders',
               {'market_id': MARKET, 'pagination': _pg(),
                'order_by': [{'field': 'position_size', 'direction': 'DESC'}]}),
@@ -222,8 +225,8 @@ def registry():
               {'chain': 'base', 'token_address': TOKEN, 'as_of_date': yesterday},
               base='beta', estimate=25, tier='expensive'),
         _case('token-screener/historical',
-              {'chains': ['ethereum', 'solana', 'base'], 'as_of_date': yesterday,
-               'pagination': _pg()}, base='beta'),
+              {'chains': ['ethereum', 'solana', 'base'], 'to_date': yesterday,
+               'timeframe_days': 1, 'pagination': _pg()}, base='beta'),
         _case('tgm/historical-token-ohlcv',
               {'chain': 'base', 'token_address': TOKEN,
                'date_from': hist_from.isoformat(), 'as_of_date': hist_to.isoformat(),
@@ -235,8 +238,16 @@ def registry():
 
         _case('trade/quote', estimate=0, kind='quote'),
         _case('trade/bridge-status', estimate=0, tier='conditional', kind='bridge'),
-        _case('agent/fast', estimate=200, tier='agent', kind='agent'),
-        _case('agent/expert', estimate=750, tier='agent', kind='agent'),
+        # ТЕЛО АГЕНТА ОБЪЯВЛЕНО (проба №1 27.09): по openapi у `agent/*` обязательное поле
+        # `text`, и клиент (`ask_agent`) его шлёт. С телом `None` сверка со спецификацией
+        # печатала «нет_обязательных=['text']» про ручку, которая работает. Живой вызов свипа
+        # по-прежнему идёт только с --include-agents, и он ставит свой вопрос сам.
+        _case('agent/fast', {'text': 'Using current Nansen data only, name three measurable '
+                                     'onchain signals worth monitoring today.'},
+              estimate=200, tier='agent', kind='agent'),
+        _case('agent/expert', {'text': 'Using current Nansen data only, compare smart-money '
+                                       'flows across chains and name what changed this week.'},
+              estimate=750, tier='agent', kind='agent'),
         _case('trade/prepare', estimate=0, tier='manual', kind='blocked'),
         _case('trade/execute', estimate=0, tier='forbidden', kind='blocked'),
     ]

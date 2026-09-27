@@ -319,7 +319,7 @@ def scan(now=None, fetch=None):
             # стало бы невычислимым ровно там, где на это смотрят.
             with _tele.scene('sentinel_watch', None, surface='sentinel'):
                 rows = _n.sm_dex_trades(per_page=100, live=True)
-            store.spend_add(credits=_credits_guess(), events=0)
+                store.spend_add(credits=_spent(), events=0)
             return rows
     try:
         trades = fetch() or []
@@ -394,7 +394,7 @@ def scan_perp(now=None, fetch=None):
             import nansen_api as _n
             with _tele.scene('sentinel_watch', None, surface='sentinel'):
                 rows = _n.sm_perp_trades(per_page=100, live=True)
-            store.spend_add(credits=_credits_guess(), events=0)
+                store.spend_add(credits=_spent(), events=0)
             return rows
     try:
         trades = fetch() or []
@@ -484,14 +484,35 @@ def scan_perp(now=None, fetch=None):
     return evs, note
 
 
-#: ЦЕНА ВЫЗОВА В КРЕДИТАХ - ПО ОФИЦИАЛЬНОЙ СТРАНИЦЕ ЦЕН, ТОЙ ЖЕ, ЧТО У `nansen_log`. Где цена
-#: не названа источником, в проекте пишут ноль и считают отдельной строкой; здесь названа (1-5
-#: за структурный вызов), берём верхнюю границу - занижать свой же расход хуже, чем завысить.
+#: ЦЕНА ВЫЗОВА В КРЕДИТАХ, ЕСЛИ ЗАГОЛОВКА НЕТ - ПО ОФИЦИАЛЬНОЙ СТРАНИЦЕ ЦЕН, ТОЙ ЖЕ, ЧТО У
+#: `nansen_log`. Верхняя граница (1-5 за структурный вызов): занижать свой расход хуже, чем
+#: завысить. Это ЗАПАСНОЙ путь: настоящая цена приезжает заголовком (см. `_spent`).
 _CREDITS_SM_DEX = 5
 
 
 def _credits_guess():
     return _CREDITS_SM_DEX
+
+
+def _spent(calls=1):
+    """Сколько стоил ТОЛЬКО ЧТО сделанный вызов. -> int.
+
+    ═══ ПО ЗАГОЛОВКУ ПЛОЩАДКИ, А НЕ КОНСТАНТОЙ (Д6, пробы 27.09) ═══
+    «Кредитов сожжено сегодня» копило 5 за опрос ленты и 10 за `confirm` при ЛЮБОМ исходе, в
+    том числе при 402, когда площадка не списала ничего, и при ответе из кэша. Площадка отдаёт
+    `x-nansen-credits-cost` на каждый сетевой ответ; берём его. Ответ из кэша сети не делал -
+    ноль. Заголовка нет (проба показала: на `market-screener` его не было) - верхняя оценка.
+    """
+    try:
+        import nansen_api as _n
+        # `cache_only` в коробке сбрасывает ТОЛЬКО сетевой ответ (`note_age`); попадание в кэш
+        # тоже считается вызовом (`calls`), поэтому по нему сеть от кэша не отличить.
+        if (_tele.box() or {}).get('cache_only', True):
+            return 0                                   # ответ из кэша: платить не за что
+        c = _n.last_cost()
+        return int(c) * int(calls) if c is not None else _credits_guess() * int(calls)
+    except Exception:                                  # noqa: BLE001
+        return _credits_guess() * int(calls)
 
 
 #: ОКНО ОНЧЕЙН-КОНТЕКСТА ДЛЯ ЖИВОГО СОБЫТИЯ, ЧАСЫ. Три, а не сутки: контекст пятнадцати-
@@ -557,7 +578,7 @@ async def confirm(symbol, price, chain_hint=None, hours=None):
                                               _h, 20)
                 rows[side] = got or []
                 why[side] = None if got else _n.fail_reason('empty')
-        out['credits'] = 2 * _CREDITS_SM_DEX
+                out['credits'] += _spent()             # цена заголовком, внутри коробки
         store.spend_add(credits=out['credits'])
         # ═══ ОТКАЗ ЛЮБОЙ СТОРОНЫ - «ОНЧЕЙН НЕ ПРОЧИТАН», И СТРОК НЕТ ВОВСЕ (Д4) ═══
         # Нетто - это покупки МИНУС продажи. Без одной стороны оно не измерение, а половина
