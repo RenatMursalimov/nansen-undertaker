@@ -697,6 +697,7 @@ _EP_HUMAN = {
     'tgm/pnl-leaderboard': ('топ по PnL', 'top PnL'),
     'tgm/who-bought-sold': ('сделки', 'trades'),
     'tgm/token-information': ('справка по токену', 'token information'),
+    'search/general': ('поиск токена по имени', 'token search by name'),
 }
 
 
@@ -1565,6 +1566,89 @@ def tgm_token_information(chain, token_address, timeframe="1d"):
     if isinstance(j, list):
         return j or None
     return None
+
+
+#: ТО, ЧТО ПРИНИМАЮТ ТОКЕН-КОМАНДЫ: 0x-адрес или адрес Solana. Площадка в поиске отдаёт и
+#: «адреса» вида `kPEPE` (перп на Hyperliquid) - такой строкой ни одна наша команда не
+#: воспользуется, и показать её кандидатом значило бы предложить кнопку, ведущую в отказ.
+_TOKEN_ADDR_RX = re.compile(r'^(?:0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$')
+
+
+def search_general(query, result_type='token', limit=25):
+    """ПОИСК NANSEN ПО ИМЕНИ/ТИКЕРУ. -> dict {'tokens': [...], 'entities': [...]} | {}.
+
+    Проба 27.09 (`probe_new.py`): тело `search_query`, `result_type` (token|entity|any),
+    `limit`; ответ - ОБЪЕКТ (не `data[]`) с `tokens` (name, symbol, chain, address, price,
+    volume_24h, market_cap, rank), `entities` и `total_results`. Цена 0 кредитов (заголовок
+    openapi и живое списание)."""
+    q = str(query or '').strip()
+    if not q:
+        return {}
+    j = _post("search/general",
+              {"search_query": q, "result_type": str(result_type), "limit": int(limit)},
+              ckey=f"srch:{result_type}:{q.lower()}:{int(limit)}")
+    return j if isinstance(j, dict) else {}
+
+
+def token_candidates(query, limit=8):
+    """ТИКЕР ИЛИ ИМЯ -> КАНДИДАТЫ-ТОКЕНЫ С АДРЕСОМ. -> [dict].
+
+    РЕЗОЛВ ТОЧНЫЙ (закон №11): кандидат - только токен, у которого тикер или имя СОВПАДАЕТ со
+    словом целиком, без учёта регистра. Поиск площадки нечёткий («pepe» приносит и «PEPE2.0»),
+    и подстрока здесь привела бы человека к чужому токену с похожим именем.
+
+    ПОРЯДОК - rank площадки, при равенстве больший объём 24ч. Порядок только подсказывает;
+    выбирает человек: одинаковый тикер в разных сетях - разные токены."""
+    want = str(query or '').strip().lstrip('$').lower()
+    if not want:
+        return []
+    j = search_general(want, 'token', 25)
+    out, seen = [], set()
+    for r in (j.get('tokens') or []):
+        if not isinstance(r, dict):
+            continue
+        _shape('search-token', r)
+        sym, name = str(r.get('symbol') or ''), str(r.get('name') or '')
+        if want not in (sym.lower(), name.lower()):
+            continue
+        a = str(r.get('address') or '')
+        if not _TOKEN_ADDR_RX.match(a):
+            continue
+        ch = str(r.get('chain') or '?').lower()
+        k = (ch, a.lower() if a.startswith('0x') else a)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append({'sym': sym[:16] or '?', 'name': name[:40], 'chain': ch[:14], 'addr': a,
+                    'rank': _num_or_none(r.get('rank')),
+                    'vol': _num_or_none(r.get('volume_24h')),
+                    'mcap': _num_or_none(r.get('market_cap'))})
+    out.sort(key=lambda c: (c['rank'] is None, c['rank'] or 0, -(c['vol'] or 0)))
+    return out[:int(limit)]
+
+
+def token_choice_block(query, cands, lang='ru'):
+    """НЕСКОЛЬКО ТОКЕНОВ С ОДНИМ ТИКЕРОМ - текст к кнопкам выбора. -> str | None.
+
+    ПЕРВОГО НАУГАД НЕ БЕРЁМ (закон №11): PEPE на Ethereum, BNB и Solana - три разных токена с
+    разными держателями, и молча выбрать один значило бы ответить не на тот вопрос."""
+    if not cands:
+        return None
+    en = (lang == 'en')
+    q = _esc(str(query or '').strip()[:32])
+    L = [('🔎 <b>«%s»: %d tokens with this name</b>' if en else
+          '🔎 <b>«%s»: нашлось токенов с таким именем - %d</b>') % (q, len(cands)),
+         ('<i>The same ticker on different chains is a different token. Pick one below - '
+          'I do not take the first one at random.</i>' if en else
+          '<i>Один тикер в разных сетях - разные токены. Выбери кнопкой ниже - первого '
+          'наугад не беру.</i>')]
+    for i, c in enumerate(cands, 1):
+        seg = ['%s (%s)' % (_esc(c['name'] or c['sym']), _esc(c['sym'])), _esc(c['chain'])]
+        if c.get('vol') is not None:
+            seg.append(('vol 24h $%s' if en else 'объём 24ч $%s') % _usd(c['vol']))
+        seg.append('<code>%s</code>' % _esc(c['addr']))
+        L.append('%d. %s' % (i, ' · '.join(seg)))
+    return with_source('\n'.join(L), lang)
 
 
 def tgm_indicators(chain, token_address):
