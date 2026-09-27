@@ -110,6 +110,8 @@ SCENES = (
     # существовало. Имена в реестре появляются ВМЕСТЕ с дверью, а не заранее «под будущее».
     'smart_dca',               # «dca»: кто покупает по расписанию (smart-money/dcas)
     'chain_rank',              # «рейтинг сетей» (chains/chain-rank)
+    # СЦЕНА ПРОБЫ 27.09: появилась вместе с дверью (кнопка, команда, каталог), а не заранее.
+    'score_top',               # «лучшие по score» (nansen-score/top-tokens)
     'defi_holdings',           # «дефи 0x…» (portfolio/defi-holdings)
     'pm_positions',            # «позиции рынка <id>» (prediction-market/position-detail)
     # ПОСЛЕДНЯЯ РУЧКА БЕЗ СХЕМЫ ПЕРЕСТАЛА БЫТЬ БЕЗ СХЕМЫ: круг 4 живой пробы (24.09) дал 200 и
@@ -161,6 +163,7 @@ _EP_EST = {
     'prediction-market/trades-by-market': 1,
     # ЦЕНА ИЗ ЗАГОЛОВКА `x-credit-cost` ДОКУМЕНТА openapi (проба 27.09, probe_new.py): там она
     # названа площадкой для этой ручки, а живой вызов списал ровно столько же.
+    'nansen-score/top-tokens': 1,
     'profiler/perp-pnl-summary': 1,
     'profiler/address/first-funder': 1,
 }

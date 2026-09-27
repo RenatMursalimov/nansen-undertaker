@@ -336,6 +336,16 @@ SCENARIOS = [
             'уровне токена',
      'hook': 'Where to look today is a question about chains before it is a question about '
              'tokens: TVL, DEX volume and active addresses with their daily change.'},
+    {'id': 'scoretop', 'title': '🏆 Лучшие токены по Nansen Score: потенциал, риск, капитализация',
+     'cmds': ['лучшие по score', 'top by nansen score'],
+     'btns': ['🧠 Nansen → 🔎 Кошелёк и токен → 🏆 Лучшие по Nansen Score'],
+     'eps': ['nansen-score/top-tokens'], 'scene': 'score_top', 'menu': 'nsn_score',
+     'price': '1 кредит',
+     'gives': 'токены с наибольшим Nansen Score, рядом риск и капитализация; тап по тикеру '
+              'открывает карточку токена',
+     'why': 'Score без риска вводит в заблуждение: одинаковый потенциал при разном риске - '
+            'разные токены, а капитализация говорит, насколько велика ставка',
+     'hook': 'Nansen Score top list with risk and market cap next to it, one tap to the token card.'},
     {'id': 'defi', 'title': '💠 DeFi-часть кошелька: активы МИНУС долги',
      'cmds': ['дефи 0x…'], 'btns': ['🧠 Nansen → 🔎 Кошелёк и токен → 💠 DeFi-часть'],
      'eps': ['portfolio/defi-holdings'], 'scene': 'defi_holdings', 'menu': 'nsn_defi',
@@ -620,6 +630,14 @@ _EN = {
                'gives': 'chains by TVL with their daily change, DEX volume and active addresses',
                'why': '"where to look today" is a question about chains before it is a question '
                       'about tokens'},
+    'scoretop': {'cmds': ['top by nansen score'],
+                 'btns': ['🧠 Nansen → 🔎 Wallet and token → 🏆 Top by Nansen Score'],
+                 'title': '🏆 Top tokens by Nansen Score: potential, risk, market cap',
+                 'price': '1 credit',
+                 'gives': 'the tokens with the highest Nansen Score, with risk and market cap '
+                          'next to it; tap a ticker to open the token card',
+                 'why': 'a Score without risk misleads: the same potential at different risk is a '
+                        'different token, and market cap says how big the bet is'},
     'pmcard': {'cmds': ['polymarket market 654412'],
                'btns': ['🎲 Trending markets → the button carrying the question',
                         'mini app: 🎭 Whose % → 📲 open in the bot'],
